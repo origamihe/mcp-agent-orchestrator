@@ -13,17 +13,32 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>mcp-gateway</artifactId>   <!-- ← 这里改成对应模块名 -->
+    <artifactId>mcp-gateway</artifactId>
     <packaging>jar</packaging>
 
     <name>mcp-gateway</name>
-    <description>模块描述...</description>
+    <description>MCP 协议网关 + REST + SSE/WebSocket 支持</description>
 
     <dependencies>
-        <!-- 依赖后续按需添加 -->
         <dependency>
             <groupId>io.github.origamihe</groupId>
             <artifactId>mcp-common</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-agent-engine</artifactId>
+        </dependency>
+
+        <!-- WebFlux + SSE 支持 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
     </dependencies>
 </project>

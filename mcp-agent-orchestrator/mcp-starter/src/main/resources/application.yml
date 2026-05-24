@@ -1,0 +1,24 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: mcp-agent-orchestrator
+
+  ai:
+    openai:
+      api-key: sk-xxxxxx
+      base-url: https://api.siliconflow.cn/v1
+      chat:
+        options:
+          model: deepseek-ai/DeepSeek-V3
+
+logging:
+  level:
+    com.mcp: INFO
+    org.springframework.ai: DEBUG
+
+# MCP 配置
+mcp:
+  protocol-version: "2024-11-05"
+  server-name: "MCP-Agent-Orchestrator"

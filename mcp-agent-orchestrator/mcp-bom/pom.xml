@@ -14,13 +14,15 @@
     <description>统一依赖版本管理 BOM</description>
 
     <properties>
-        <spring.boot.version>4.0.6</spring.boot.version>
+        <spring.boot.version>3.4.5</spring.boot.version>
+        <!-- 将 Spring AI 的版本号提取到 properties，方便以后升级 -->
+        <spring.ai.version>1.0.0-M7</spring.ai.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
     <dependencyManagement>
         <dependencies>
-            <!-- 导入 Spring 依赖 -->
+            <!-- 导入 Spring Boot 依赖 -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
@@ -28,6 +30,16 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+
+            <!-- 所有的子模块受Spring AI 的版本管理 -->
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring.ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <!-- 管理业务子模块的版本 -->
             <dependency>
                 <groupId>io.github.origamihe</groupId>

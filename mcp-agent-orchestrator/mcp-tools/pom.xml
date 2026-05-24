@@ -17,12 +17,23 @@
     <packaging>jar</packaging>
 
     <name>mcp-tools</name>
-    <description>模块描述...</description>
+    <description>MCP Tool 定义、注册中心与执行框架</description>
 
     <dependencies>
         <dependency>
             <groupId>io.github.origamihe</groupId>
             <artifactId>mcp-common</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-core</artifactId>
+        </dependency>
+
+        <!-- 反射与动态调用需要 -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
         </dependency>
     </dependencies>
 </project>

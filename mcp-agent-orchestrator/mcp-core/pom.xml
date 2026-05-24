@@ -13,17 +13,28 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>mcp-core</artifactId>   <!-- ← 这里改成对应模块名 -->
+    <artifactId>mcp-core</artifactId>
     <packaging>jar</packaging>
 
     <name>mcp-core</name>
-    <description>模块描述...</description>
+    <description>MCP 协议核心实现（Model Context Protocol）</description>
 
     <dependencies>
-        <!-- 依赖后续按需添加 -->
         <dependency>
             <groupId>io.github.origamihe</groupId>
             <artifactId>mcp-common</artifactId>
+        </dependency>
+
+        <!-- JSON 处理 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- Reactive 支持（MCP 推荐异步） -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
         </dependency>
     </dependencies>
 </project>

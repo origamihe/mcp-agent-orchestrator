@@ -28,7 +28,6 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-
             <!-- 管理业务子模块的版本 -->
             <dependency>
                 <groupId>io.github.origamihe</groupId>

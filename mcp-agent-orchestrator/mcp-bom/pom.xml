@@ -4,25 +4,19 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
          http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
     <groupId>io.github.origamihe</groupId>
     <artifactId>mcp-bom</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
-
     <name>mcp-bom</name>
-    <description>统一依赖版本管理 BOM</description>
-
     <properties>
         <spring.boot.version>3.4.5</spring.boot.version>
-        <!-- 将 Spring AI 的版本号提取到 properties，方便以后升级 -->
-        <spring.ai.version>1.0.0-M7</spring.ai.version>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- 正式版 -->
+        <spring.ai.version>1.1.0-M2</spring.ai.version>
     </properties>
-
     <dependencyManagement>
         <dependencies>
-            <!-- 导入 Spring Boot 依赖 -->
+            <!-- Spring Boot -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
@@ -30,17 +24,69 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-
-            <!-- 所有的子模块受Spring AI 的版本管理 -->
+            <!-- Spring AI -->
             <dependency>
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>
                 <version>${spring.ai.version}</version>
+
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
 
-            <!-- 管理业务子模块的版本 -->
+            <!-- JPA -->
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-data-jpa</artifactId>
+                <version>${spring.boot.version}</version>
+            </dependency>
+
+            <!-- MySQL 驱动 -->
+            <dependency>
+                <groupId>com.mysql</groupId>
+                <artifactId>mysql-connector-j</artifactId>
+                <version>8.3.0</version>
+            </dependency>
+            <!-- Flyway -->
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-core</artifactId>
+                <version>11.14.1</version>
+            </dependency>
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-mysql</artifactId>
+                <version>11.14.1</version>
+            </dependency>
+            <!-- Lombok -->
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>1.18.34</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <!-- Lombok + MapStruct 绑定 -->
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok-mapstruct-binding</artifactId>
+                <version>0.2.0</version>
+            </dependency>
+
+            <!-- MapStruct -->
+            <dependency>
+                <groupId>org.mapstruct</groupId>
+                <artifactId>mapstruct</artifactId>
+                <version>1.6.0</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.mapstruct</groupId>
+                <artifactId>mapstruct-processor</artifactId>
+                <version>1.6.0</version>
+            </dependency>
+
+            <!-- 管理自己模块版本 -->
             <dependency>
                 <groupId>io.github.origamihe</groupId>
                 <artifactId>mcp-common</artifactId>
@@ -78,4 +124,32 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+    <repositories>
+        <repository>
+            <id>aliyun-maven</id>
+            <name>Aliyun Public Repository</name>
+            <url>https://maven.aliyun.com/repository/public</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+
+        <repository>
+            <id>central</id>
+            <name>Central Repository</name>
+            <url>https://repo.maven.apache.org/maven2</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+
+        <repository>
+            <id>spring-milestones</id>
+            <name>Spring Milestones</name>
+            <url>https://repo.spring.io/milestone</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
 </project>

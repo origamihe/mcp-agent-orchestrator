@@ -1,39 +1,90 @@
-package com.mcp.engine.orchestrator;
+package com.mcp.engine.orchestrator;   // 请根据你的实际包路径调整
 
+import com.mcp.core.domain.prompt.PromptType;
+import com.mcp.core.service.ChatHistoryService;
+import com.mcp.core.service.PromptService;
 import com.mcp.engine.agent.Agent;
+import com.mcp.engine.orchestrator.AgentOrchestrator;
 import com.mcp.llm.client.LlmClient;
-import com.mcp.tools.executor.ToolExecutor;
-import com.mcp.tools.registry.ToolRegistry;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * 默认 Agent 编排器 - 完整接入数据库 Prompt + 历史记录
+ */
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
     private final LlmClient llmClient;
-    private final ToolRegistry toolRegistry;
-    private final ToolExecutor toolExecutor;
+    private final PromptService promptService;
+    private final ChatHistoryService chatHistoryService;
 
     private final Map<String, Agent> agents = new ConcurrentHashMap<>();
 
-    public DefaultAgentOrchestrator(LlmClient llmClient,
-                                    ToolRegistry toolRegistry,
-                                    ToolExecutor toolExecutor) {
-        this.llmClient = llmClient;
-        this.toolRegistry = toolRegistry;
-        this.toolExecutor = toolExecutor;
-    }
-
     @Override
     public Mono<String> processRequest(String request, String sessionId) {
-        // TODO: 实现完整的 ReAct / Plan-and-Execute 流程
-        return llmClient.generateWithSystemPrompt(
-                "你是一个智能 Agent Orchestrator，请分析用户请求并决定是否需要调用工具。",
-                request
-        ).map(response -> "Orchestrator 处理结果: " + response);
+        if (request == null || request.trim().isEmpty()) {
+            return Mono.just("请输入有效的问题。");
+        }
+
+        long startTime = System.currentTimeMillis();
+
+        log.info("[Orchestrator] Receive request: {} | Session: {}", request, sessionId);
+
+        return Mono.zip(
+                        promptService.getCoreSystemPrompt(),                    // 1. 获取系统 Prompt
+                        chatHistoryService.getHistorySummary(sessionId, 10)    // 2. 获取历史摘要（最近10条）
+                )
+                .flatMap(tuple -> {
+                    String systemPrompt = tuple.getT1();
+                    String historySummary = tuple.getT2();
+
+                    // 构建用户 Prompt（带历史）
+                    String userPrompt = buildUserPrompt(request, historySummary);
+
+                    return llmClient.generateWithSystemPrompt(systemPrompt, userPrompt);
+                })
+                .flatMap(response -> {
+                    // 3. 保存对话历史
+                    return chatHistoryService.saveUserAndAssistantMessage(sessionId, request, response)
+                            .thenReturn(response);
+                })
+                .doOnSuccess(result -> {
+                    long duration = System.currentTimeMillis() - startTime;
+                    log.info("[Orchestrator] Success! Duration: {}ms | Session: {}", duration, sessionId);
+                })
+                .doOnError(error -> {
+                    long duration = System.currentTimeMillis() - startTime;
+                    log.error("[Orchestrator] Error! Duration: {}ms | Error: {}", duration, error.getMessage(), error);
+                })
+                .onErrorResume(error -> {
+                    String msg = error.getMessage() != null ? error.getMessage() : "Unknown error";
+                    if (msg.contains("429")) {
+                        return Mono.just("当前 Gemini API 配额已用尽，请稍后再试。");
+                    }
+                    return Mono.just("处理请求时发生错误: " + msg);
+                });
+    }
+
+    /**
+     * 构建带历史的用户 Prompt
+     */
+    private String buildUserPrompt(String request, String historySummary) {
+        return """
+            历史对话摘要：
+            %s
+            
+            用户最新问题：%s
+            
+            请一步一步思考并给出专业、清晰的回答。
+            """.formatted(historySummary.isEmpty() ? "（无历史对话）" : historySummary, request);
     }
 
     @Override
@@ -48,10 +99,12 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     @Override
     public void registerAgent(Agent agent) {
         agents.put(agent.getName(), agent);
+        log.info("[Orchestrator] Agent registered: {}", agent.getName());
     }
 
     @Override
     public void registerDefaultTools() {
-        // 后续实现自动注册工具
+        // TODO: 后续实现工具自动注册
+        log.info("[Orchestrator] Default tools registration placeholder.");
     }
 }

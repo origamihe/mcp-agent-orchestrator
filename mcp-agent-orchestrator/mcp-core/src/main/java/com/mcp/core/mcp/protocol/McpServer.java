@@ -1,4 +1,4 @@
-package com.mcp.core.protocol;
+package com.mcp.core.mcp.protocol;
 
 
 /**

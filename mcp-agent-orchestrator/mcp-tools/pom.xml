@@ -18,7 +18,6 @@
 
     <name>mcp-tools</name>
     <description>MCP Tool 定义、注册中心与执行框架</description>
-
     <dependencies>
         <dependency>
             <groupId>io.github.origamihe</groupId>

@@ -1,4 +1,4 @@
-package com.mcp.core.protocol;
+package com.mcp.core.mcp.protocol;
 
 import com.mcp.core.mcp.model.McpMessage;
 import reactor.core.publisher.Mono;

@@ -18,33 +18,32 @@
 
     <name>mcp-llm</name>
     <description>LLM 客户端集成层（支持多模型提供商）</description>
-
     <dependencies>
         <dependency>
             <groupId>io.github.origamihe</groupId>
             <artifactId>mcp-common</artifactId>
         </dependency>
-
         <dependency>
             <groupId>io.github.origamihe</groupId>
             <artifactId>mcp-core</artifactId>
         </dependency>
 
-        <!--引用deepSeek-->
-        <!-- <dependency>
-                <groupId>org.springframework.ai</groupId>
-                <artifactId>spring-ai-starter-model-deepseek</artifactId>
-            </dependency>-->
-
-        <!-- 引用openai -->
         <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-openai</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-google-genai</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-retry</artifactId>
+        </dependency>
     </dependencies>
 
-    <!-- 如果 Maven 依然报找不到（Could not find...），需要添加 Spring 官方的里程碑仓库 -->
     <repositories>
         <repository>
             <id>spring-milestones</id>

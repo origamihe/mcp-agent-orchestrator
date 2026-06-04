@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.origamihe</groupId>
+        <artifactId>mcp-agent-orchestrator</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>mcp-starter</artifactId>
+    <packaging>jar</packaging>
+
+    <name>mcp-starter</name>
+    <description>MCP Agent Orchestrator 启动模块</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-common</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-gateway</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-llm</artifactId>
+        </dependency>
+
+        <!-- Flyway -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <!-- 显式引入 JPA, PostGreSQL  -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.mcp.starter.McpOrchestratorApplication</mainClass>
+                    <image>
+                        <name>origamihe/mcp-orchestrator:${project.version}</name>
+                    </image>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.origamihe</groupId>
+        <artifactId>mcp-agent-orchestrator</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>mcp-agent-engine</artifactId>
+    <packaging>jar</packaging>
+
+    <name>mcp-agent-engine</name>
+    <description>AI Agent 编排引擎核心（Orchestrator + Agent + Workflow）</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-common</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-tools</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-llm</artifactId>
+        </dependency>
+
+        <!-- Reactor 响应式编程 -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
+        </dependency>
+    </dependencies>
+</project>

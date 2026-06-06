@@ -7,10 +7,11 @@ import com.mcp.llm.client.LlmClient;
 import com.mcp.core.domain.chat.CoreChatMessage;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
 import org.springframework.ai.chat.messages.*;
+import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,7 +35,7 @@ public class SpringAiLlmClient implements LlmClient {
                                 .options(buildOptions(config))
                                 .call()
                                 .content()
-                        )
+                        ).subscribeOn(Schedulers.boundedElastic())
                 )
                 .defaultIfEmpty("No response generated.");
     }
@@ -49,7 +50,7 @@ public class SpringAiLlmClient implements LlmClient {
                                 .options(buildOptions(config))
                                 .call()
                                 .content()
-                        )
+                        ).subscribeOn(Schedulers.boundedElastic())
                 )
                 .defaultIfEmpty("No response from AI model.");
     }
@@ -68,7 +69,8 @@ public class SpringAiLlmClient implements LlmClient {
                             .messages(messages)
                             .options(buildOptions(config))
                             .call()
-                            .content());
+                            .content())
+                            .subscribeOn(Schedulers.boundedElastic());
                 })
                 .defaultIfEmpty("No response from AI model.");
     }
@@ -82,7 +84,8 @@ public class SpringAiLlmClient implements LlmClient {
                             .messages(messages)
                             .options(buildOptions(config))
                             .call()
-                            .content());
+                            .content())
+                            .subscribeOn(Schedulers.boundedElastic());
                 })
                 .defaultIfEmpty("No response from AI model.");
     }
@@ -122,11 +125,10 @@ public class SpringAiLlmClient implements LlmClient {
         return messages;
     }
 
-    private GoogleGenAiChatOptions buildOptions(LlmModelConfig config) {
-        return GoogleGenAiChatOptions.builder()
+    private OllamaChatOptions buildOptions(LlmModelConfig config) {
+        return OllamaChatOptions.builder()
                 .model(config.getModelName())
                 .temperature(config.getTemperature())
-                .maxOutputTokens(config.getMaxTokens())
                 .build();
     }
 }

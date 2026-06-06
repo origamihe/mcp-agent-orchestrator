@@ -14,11 +14,7 @@ import java.util.List;
  * 聊天会话实体
  */
 @Entity
-@Table(name = "chat_sessions",
-        indexes = {
-                @Index(name = "idx_session_user", columnList = "userId"),
-                @Index(name = "idx_last_active", columnList = "lastActiveAt")
-        })
+@Table(name = "chat_sessions", schema = "mcp_agent")
 @Getter
 @Setter
 @NoArgsConstructor

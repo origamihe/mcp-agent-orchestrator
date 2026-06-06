@@ -46,9 +46,15 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     String systemPrompt = tuple.getT1();
                     String historySummary = tuple.getT2();
 
-                    // 构建用户 Prompt（带历史）
-                    String userPrompt = buildUserPrompt(request, historySummary);
+                    // 如果有注册的 Agent，优先使用 Agent（支持工具调用）
+                    Agent defaultAgent = agents.isEmpty() ? null : agents.values().iterator().next();
+                    if (defaultAgent != null) {
+                        log.info("[Orchestrator] Delegating to agent: {}", defaultAgent.getName());
+                        return defaultAgent.execute(request);
+                    }
 
+                    // 没有 Agent 时，直接调用 LLM
+                    String userPrompt = buildUserPrompt(request, historySummary);
                     return llmClient.generateWithSystemPrompt(systemPrompt, userPrompt);
                 })
                 .flatMap(response -> {

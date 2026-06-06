@@ -7,17 +7,16 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.LocalDateTime;
 
 /**
  * 聊天消息实体
  */
 @Entity
-@Table(name = "chat_messages",
-        indexes = {
-                @Index(name = "idx_message_session", columnList = "sessionId"),
-                @Index(name = "idx_message_created", columnList = "createdAt")
-        })
+@Table(name = "chat_messages", schema = "mcp_agent")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -38,8 +37,9 @@ public class ChatMessageEntity {
     @Column(columnDefinition = "TEXT", nullable = false)
     private String content;
 
-    @Column(columnDefinition = "json")
-    private String toolCalls;       // 工具调用记录（JSON）
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private String toolCalls;    // 工具调用记录（JSON）
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

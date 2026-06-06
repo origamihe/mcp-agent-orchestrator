@@ -1,24 +1,25 @@
 server:
-  port: 8081
+  port: 8080
 
 spring:
   application:
     name: mcp-agent-orchestrator
 
+  # ==================== LLM 配置（切换为 Ollama + Qwen3）====================
   ai:
-    google:
-      genai:
-        api-key:
-        #gemini-2.0-flash、gemini-2.5-flash-lite、gemini-2.5-pro 任选
-        chat:
-          options:
-            model: gemini-2.5-flash-lite
-            temperature: 0.7
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        options:
+          model: qwen3:8b                # 或 qwen3.5:8b 等，确认 ollama list 中的名称
+          temperature: 0.7
+
+  # ==================== 数据库配置====================
   datasource:
-    url: jdbc:mysql://localhost:3306/mcp_agent?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
-    username: root
+    url: jdbc:postgresql://localhost:5432/mcp_agent?currentSchema=mcp_agent
+    username: postgres
     password: Pass1234
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    driver-class-name: org.postgresql.Driver
 
   jpa:
     hibernate:
@@ -26,7 +27,7 @@ spring:
     show-sql: true
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect
+        dialect: org.hibernate.dialect.PostgreSQLDialect   # 重要！
 
   flyway:
     enabled: true

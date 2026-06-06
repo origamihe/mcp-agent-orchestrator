@@ -2,9 +2,15 @@ package com.mcp.llm.config;
 
 import com.mcp.core.service.PromptService;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.google.genai.GoogleGenAiChatModel;
+import org.springframework.ai.ollama.OllamaChatModel;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.http.client.ReactorClientHttpRequestFactory;
+import org.springframework.web.client.RestClient;
+import reactor.netty.http.client.HttpClient;
+
+import java.time.Duration;
 /**
  * LLM 配置类 - 优先使用数据库中的 Prompt
  */
@@ -21,7 +27,7 @@ public class LlmConfig {
      * 创建 ChatClient，使用数据库中的 Prompt
      */
     @Bean
-    public ChatClient chatClient(GoogleGenAiChatModel chatModel,
+    public ChatClient chatClient(OllamaChatModel  chatModel,
                                  PromptService promptService) {
 
         String defaultSystemPrompt = null;
@@ -64,10 +70,15 @@ public class LlmConfig {
     }
 
     /**
-     * 注入 Builder
+     * 自定义 RestClient.Builder，延长超时时间以适应 CPU 推理速度（120秒）
+     * OllamaApi 的构造函数是 private 的，所以通过覆盖 RestClient.Builder 来设置超时
      */
     @Bean
-    public ChatClient.Builder chatClientBuilder(GoogleGenAiChatModel chatModel) {
-        return ChatClient.builder(chatModel);
+    @Primary
+    public RestClient.Builder restClientBuilder() {
+        HttpClient httpClient = HttpClient.create()
+                .responseTimeout(Duration.ofSeconds(240));
+        return RestClient.builder()
+                .requestFactory(new ReactorClientHttpRequestFactory(httpClient));
     }
 }

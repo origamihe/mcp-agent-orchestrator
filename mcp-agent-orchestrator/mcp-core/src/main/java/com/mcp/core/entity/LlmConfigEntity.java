@@ -14,7 +14,7 @@ import java.util.Map;
  * LLM 配置实体
  */
 @Entity
-@Table(name = "llm_config")
+@Table(name = "llm_config", schema = "mcp_agent")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -38,7 +38,7 @@ public class LlmConfigEntity {
     @Column
     private Integer maxTokens = 2048;
 
-    @Column(columnDefinition = "json")
+    @Column(columnDefinition = "jsonb")
     private String parameters;  // JSON 字符串存储扩展参数
 
     @Column(nullable = false)

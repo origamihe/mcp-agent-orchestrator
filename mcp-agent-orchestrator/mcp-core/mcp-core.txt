@@ -1,0 +1,67 @@
+卷 D 的文件夹 PATH 列表
+卷序列号为 000000E3 523B:23A9
+D:.
+│  mcp-core.txt
+│  pom.xml
+│  
+└─src
+    └─main
+        └─java
+            └─com
+                └─mcp
+                    └─core
+                        ├─domain
+                        │  ├─chat
+                        │  │      ChatSession.java
+                        │  │      CoreChatMessage.java
+                        │  │      MessageRole.java
+                        │  │      
+                        │  ├─llm
+                        │  │      LlmModelConfig.java
+                        │  │      LlmProviderType.java
+                        │  │      
+                        │  └─prompt
+                        │          PromptTemplate.java
+                        │          PromptType.java
+                        │          
+                        ├─entity
+                        │      ChatMessageEntity.java
+                        │      ChatSessionEntity.java
+                        │      LlmConfigEntity.java
+                        │      PromptTemplateEntity.java
+                        │      
+                        ├─mapper
+                        │      ChatMessageMapper.java
+                        │      ChatSessionMapper.java
+                        │      LlmConfigMapper.java
+                        │      PromptTemplateMapper.java
+                        │      
+                        ├─mcp
+                        │  ├─exception
+                        │  │      McpException.java
+                        │  │      
+                        │  ├─handler
+                        │  │      DefaultMcpMessageHandler.java
+                        │  │      McpMessageHandler.java
+                        │  │      
+                        │  ├─model
+                        │  │      InitializeRequest.java
+                        │  │      McpError.java
+                        │  │      McpMessage.java
+                        │  │      
+                        │  └─protocol
+                        │          McpClient.java
+                        │          McpServer.java
+                        │          McpTransport.java
+                        │          
+                        ├─repository
+                        │      ChatMessageRepository.java
+                        │      ChatSessionRepository.java
+                        │      LlmConfigRepository.java
+                        │      PromptTemplateRepository.java
+                        │      
+                        └─service
+                                ChatHistoryService.java
+                                LlmConfigService.java
+                                PromptService.java
+                                

@@ -46,13 +46,13 @@ public class LlmConfigService {
     }
 
     /**
-     * 兜底默认 Gemini 配置
+     * 兜底默认 Ollama 配置
      */
     private LlmModelConfig getDefaultGoogleConfig() {
         return LlmModelConfig.builder()
-                .configId("default-gemini")
-                .provider(LlmProviderType.GOOGLE_GENAI)
-                .modelName("gemini-2.0-flash-exp")
+                .configId("default-ollama")
+                .provider(LlmProviderType.LOCAL_OLLAMA)
+                .modelName("qwen3:8b")
                 .temperature(0.7)
                 .maxTokens(2048)
                 .enabled(true)

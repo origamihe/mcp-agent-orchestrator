@@ -13,11 +13,7 @@ import java.time.LocalDateTime;
  * Prompt 模板实体
  */
 @Entity
-@Table(name = "prompt_templates",
-        indexes = {
-                @Index(name = "idx_prompt_type", columnList = "type"),
-                @Index(name = "idx_prompt_name", columnList = "name")
-        })
+@Table(name = "prompt_templates", schema = "mcp_agent")
 @Getter
 @Setter
 @NoArgsConstructor

@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -55,12 +56,12 @@ public class ChatHistoryService {
     @Transactional
     public Mono<Void> saveUserAndAssistantMessage(String sessionId, String userMessage, String assistantResponse) {
         return Mono.fromRunnable(() -> {
-            // 获取或创建会话
-            ChatSessionEntity session = sessionRepository.findById(sessionId)
+            // 确保会话存在（不存在则创建）
+            sessionRepository.findById(sessionId)
                     .orElseGet(() -> {
                         ChatSessionEntity newSession = new ChatSessionEntity();
                         newSession.setSessionId(sessionId);
-                        newSession.setUserId("default-user"); // 可后续扩展
+                        newSession.setUserId("default-user");
                         return sessionRepository.save(newSession);
                     });
 
@@ -69,7 +70,6 @@ public class ChatHistoryService {
             userMsg.setSessionId(sessionId);
             userMsg.setRole(MessageRole.USER);
             userMsg.setContent(userMessage);
-            session.addMessage(userMsg);
             messageRepository.save(userMsg);
 
             // 保存 Assistant 消息
@@ -77,8 +77,10 @@ public class ChatHistoryService {
             assistantMsg.setSessionId(sessionId);
             assistantMsg.setRole(MessageRole.ASSISTANT);
             assistantMsg.setContent(assistantResponse);
-            session.addMessage(assistantMsg);
             messageRepository.save(assistantMsg);
+
+            // 更新会话最后活跃时间
+            sessionRepository.updateLastActiveTime(sessionId, LocalDateTime.now());
         });
     }
 

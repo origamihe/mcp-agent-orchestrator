@@ -10,6 +10,7 @@ import java.util.Map;
 @Builder
 public class AgentContext {
     private String sessionId;
+    private String systemPrompt;
     private Map<String, Object> variables = new HashMap<>();
     private String memory;
 }

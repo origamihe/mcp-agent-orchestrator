@@ -5,14 +5,14 @@ spring:
   application:
     name: mcp-agent-orchestrator
 
-  # ==================== LLM 配置（切换为 Ollama + Qwen3）====================
+  # ==================== LLM 配置（切换为 Ollama + llama3.2:3b-instruct-q4_K_M）====================
   ai:
     ollama:
       base-url: http://localhost:11434
       chat:
         options:
-          model: qwen3:8b                # 或 qwen3.5:8b 等，确认 ollama list 中的名称
-          temperature: 0.7
+          model: llama3.2:3b-instruct-q4_K_M                # 或 qwen3.5:8b 等，确认 ollama list 中的名称
+          temperature: 0.3
 
   # ==================== 数据库配置====================
   datasource:

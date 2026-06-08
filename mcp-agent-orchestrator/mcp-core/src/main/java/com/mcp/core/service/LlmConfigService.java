@@ -46,13 +46,35 @@ public class LlmConfigService {
     }
 
     /**
+     * 根据 configId 获取配置
+     */
+    public Mono<LlmModelConfig> getConfigById(String configId) {
+        return Mono.fromCallable(() -> repository.findById(configId)
+                .map(mapper::toDomain)
+                .orElseGet(() -> {
+                    if (configId != null && configId.startsWith("ollama-")) {
+                        String modelName = configId.substring("ollama-".length()).replace("-", ":");
+                        return LlmModelConfig.builder()
+                                .configId(configId)
+                                .provider(LlmProviderType.LOCAL_OLLAMA)
+                                .modelName(modelName)
+                                .temperature(0.7)
+                                .maxTokens(2048)
+                                .enabled(true)
+                                .build();
+                    }
+                    throw new RuntimeException("LLM Config not found: " + configId);
+                }));
+    }
+
+    /**
      * 兜底默认 Ollama 配置
      */
     private LlmModelConfig getDefaultGoogleConfig() {
         return LlmModelConfig.builder()
                 .configId("default-ollama")
                 .provider(LlmProviderType.LOCAL_OLLAMA)
-                .modelName("qwen3:8b")
+                .modelName("llama3.2:3b-instruct-q4_K_M")
                 .temperature(0.7)
                 .maxTokens(2048)
                 .enabled(true)

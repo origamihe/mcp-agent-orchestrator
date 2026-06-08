@@ -1,8 +1,16 @@
-﻿<template>
+﻿﻿﻿﻿<template>
     <div class="chat-container">
         <div class="header">
             <h1>MCP AI Agent</h1>
-            <span :class="statusClass">{{ connectionStatus }}</span>
+            <div class="header-right">
+                <select v-model="selectedModel" class="model-selector">
+                    <option value="">默认模型</option>
+                    <option v-for="m in availableModels" :key="m.configId" :value="m.configId">
+                        {{ m.provider }} / {{ m.modelName }}
+                    </option>
+                </select>
+                <span :class="statusClass">{{ connectionStatus }}</span>
+            </div>
         </div>
 
         <div class="messages" ref="messagesRef">
@@ -28,12 +36,29 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 
+interface ModelInfo {
+  configId: string
+  provider: string
+  modelName: string
+}
+
 const messages = ref<Array<{ type: 'user' | 'agent', content: string }>>([])
 const inputMessage = ref('')
+const selectedModel = ref('')
+const availableModels = ref<ModelInfo[]>([])
 const socket = ref<WebSocket | null>(null)
 const isConnected = ref(false)
 const connectionStatus = ref('未连接')
 const messagesRef = ref<HTMLElement | null>(null)
+
+const fetchModels = async () => {
+  try {
+    const res = await fetch('http://localhost:8080/mcp/configs')
+    availableModels.value = await res.json()
+  } catch (e) {
+    console.error('获取模型列表失败:', e)
+  }
+}
 
 const connectWebSocket = () => {
   socket.value = new WebSocket('ws://localhost:8080/ws/mcp')
@@ -65,7 +90,11 @@ const sendMessage = () => {
   const msg = inputMessage.value.trim()
   addMessage('user', msg)
 
-  socket.value.send(msg)
+  const payload = JSON.stringify({
+    message: msg,
+    modelConfigId: selectedModel.value || null
+  })
+  socket.value.send(payload)
   inputMessage.value = ''
 }
 
@@ -81,6 +110,7 @@ const addMessage = (type: 'user' | 'agent', content: string) => {
 }
 
 onMounted(() => {
+  fetchModels()
   connectWebSocket()
 })
 
@@ -106,6 +136,27 @@ onUnmounted(() => {
         display: flex;
         justify-content: space-between;
         align-items: center;
+    }
+
+    .header-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .model-selector {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid #7f8c8d;
+        background: #34495e;
+        color: white;
+        font-size: 14px;
+        cursor: pointer;
+        outline: none;
+    }
+
+    .model-selector:hover {
+        border-color: #3498db;
     }
 
     .messages {

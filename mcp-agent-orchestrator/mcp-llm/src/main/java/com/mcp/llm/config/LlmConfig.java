@@ -64,9 +64,7 @@ public class LlmConfig {
             defaultSystemPrompt = fallbackPrompt;
         }
 
-        return ChatClient.builder(chatModel)
-                .defaultSystem(defaultSystemPrompt)
-                .build();
+        return ChatClient.builder(chatModel).build();
     }
 
     /**

@@ -1,0 +1,122 @@
+:root:root {
+  --color-primary: #1d1d1f;
+  --color-accent: #6a85ff;
+  --color-accent-2: #b163e8;
+  --color-accent-3: #f472b6;
+  --color-success: #34c759;
+  --color-danger: #ff3b30;
+  --color-bg: #f8f9fc;
+  --color-surface: #ffffff;
+  --color-text: #1d1d1f;
+  --color-text-secondary: #6b7280;
+  --color-border: #e5e7eb;
+  --gradient-dream: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+  --gradient-subtle: linear-gradient(135deg, #f8f9fc 0%, #eef1f9 40%, #f5f0fc 70%, #fdf2f8 100%);
+  --glass-bg: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.7);
+  --glass-shadow: 0 8px 32px rgba(106, 133, 255, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --glass-blur: blur(20px);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-glow: 0 4px 24px rgba(106, 133, 255, 0.25);
+}
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+  'Helvetica Neue', Arial, sans-serif;
+  font-size: 16px;
+  color: var(--color-text);
+  background: var(--gradient-subtle);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  height: 100%;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  border-radius: 14px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-glow);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  outline: none;
+  border-radius: 14px;
+  border: 1.5px solid var(--color-border);
+  padding: 10px 16px;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.75);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
+}
+
+input:hover, select:hover, textarea:hover {
+  border-color: #c4b5fd;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 4px rgba(106, 133, 255, 0.12);
+  background: #fff;
+}
+
+.status-connected {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.status-disconnected {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+/* Heroicons SVG 全局默认尺寸 —— 防止未设置宽高时渲染为巨大尺寸 */
+svg[data-slot="icon"] {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: inline-block;
+  vertical-align: middle;
+}

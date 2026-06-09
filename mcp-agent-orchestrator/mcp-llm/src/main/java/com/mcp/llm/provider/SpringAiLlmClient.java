@@ -2,6 +2,7 @@ package com.mcp.llm.provider;
 
 import com.mcp.core.domain.llm.LlmModelConfig;
 import com.mcp.core.service.LlmConfigService;
+import com.mcp.core.service.PromptService;
 import com.mcp.llm.client.ChatMessage;
 import com.mcp.llm.client.LlmClient;
 import com.mcp.core.domain.chat.CoreChatMessage;
@@ -25,17 +26,22 @@ public class SpringAiLlmClient implements LlmClient {
 
     private final ChatClient chatClient;
     private final LlmConfigService llmConfigService;
+    private final PromptService promptService;
 
     @Override
     public Mono<String> generate(String prompt) {
-        return llmConfigService.getDefaultConfig()
-                .flatMap(config ->
-                        Mono.fromCallable(() -> chatClient.prompt()
-                                .user(prompt)
-                                .options(buildOptions(config))
-                                .call()
-                                .content()
-                        ).subscribeOn(Schedulers.boundedElastic())
+        return promptService.getCoreSystemPrompt()
+                .flatMap(systemPrompt ->
+                        llmConfigService.getDefaultConfig()
+                                .flatMap(config ->
+                                        Mono.fromCallable(() -> chatClient.prompt()
+                                                .system(systemPrompt)
+                                                .user(prompt)
+                                                .options(buildOptions(config))
+                                                .call()
+                                                .content()
+                                        ).subscribeOn(Schedulers.boundedElastic())
+                                )
                 )
                 .defaultIfEmpty("No response generated.");
     }
@@ -93,6 +99,35 @@ public class SpringAiLlmClient implements LlmClient {
     @Override
     public Mono<String> chatWithSession(String sessionId, String newMessage) {
         return Mono.error(new UnsupportedOperationException("chatWithSession 方法暂未实现"));
+    }
+
+    @Override
+    public Mono<String> generateWithConfig(String configId, String prompt) {
+        return llmConfigService.getConfigById(configId)
+                .flatMap(config ->
+                        Mono.fromCallable(() -> chatClient.prompt()
+                                .user(prompt)
+                                .options(buildOptions(config))
+                                .call()
+                                .content()
+                        ).subscribeOn(Schedulers.boundedElastic())
+                )
+                .defaultIfEmpty("No response generated.");
+    }
+
+    @Override
+    public Mono<String> generateWithConfigAndSystem(String configId, String systemPrompt, String userPrompt) {
+        return llmConfigService.getConfigById(configId)
+                .flatMap(config ->
+                        Mono.fromCallable(() -> chatClient.prompt()
+                                .system(systemPrompt)
+                                .user(userPrompt)
+                                .options(buildOptions(config))
+                                .call()
+                                .content()
+                        ).subscribeOn(Schedulers.boundedElastic())
+                )
+                .defaultIfEmpty("No response from AI model.");
     }
 
     // ====================== 辅助方法 ======================

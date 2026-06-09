@@ -69,4 +69,20 @@ public class PromptService {
         PromptTemplateEntity entity = mapper.toEntity(template);
         repository.save(entity);
     }
+
+    /**
+     * 获取所有活跃的 Prompt 模板
+     */
+    public Mono<java.util.List<PromptTemplate>> getAllActivePrompts() {
+        return Mono.fromCallable(() -> repository.findAllActiveTemplates().stream()
+                .map(mapper::toDomain)
+                .collect(java.util.stream.Collectors.toList()));
+    }
+
+    /**
+     * 删除指定名称的 Prompt 模板
+     */
+    public void deletePrompt(String name) {
+        repository.deleteById(name);
+    }
 }

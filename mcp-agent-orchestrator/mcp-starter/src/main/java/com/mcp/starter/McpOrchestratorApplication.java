@@ -5,9 +5,7 @@ import com.mcp.engine.orchestrator.AgentOrchestrator;
 import com.mcp.llm.client.LlmClient;
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.registry.ToolRegistry;
-import com.mcp.tools.tool.FileReadTool;
-import com.mcp.tools.tool.FileWriteTool;
-import com.mcp.tools.tool.WebSearchTool;
+import com.mcp.tools.tool.*;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
@@ -38,6 +36,10 @@ public class McpOrchestratorApplication {
         toolRegistry.register(fileWriteTool);
         WebSearchTool webSearchTool = context.getBean(WebSearchTool.class);
         toolRegistry.register(webSearchTool);
+        MultiSearchTool multiSearchTool = context.getBean(MultiSearchTool.class);
+        toolRegistry.register(multiSearchTool);
+        FetchWebpageTool fetchWebpageTool = context.getBean(FetchWebpageTool.class);
+        toolRegistry.register(fetchWebpageTool);
         orchestrator.registerDefaultTools();
 
         // 2. 配置并注册 Agent

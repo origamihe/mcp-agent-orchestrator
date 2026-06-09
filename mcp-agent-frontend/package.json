@@ -11,14 +11,20 @@
     "type-check": "vue-tsc --build"
   },
   "dependencies": {
-    "vue": "^3.5.32"
+    "@heroicons/vue": "^2.2.0",
+    "axios": "^1.9.0",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.32",
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",
     "@types/node": "^24.12.2",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/tsconfig": "^0.9.1",
+    "autoprefixer": "^10.5.0",
     "npm-run-all2": "^8.0.4",
+    "sass": "^1.89.2",
     "typescript": "~6.0.0",
     "vite": "^8.0.8",
     "vite-plugin-vue-devtools": "^8.1.1",

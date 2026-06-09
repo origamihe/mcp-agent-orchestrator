@@ -30,4 +30,14 @@ public interface LlmClient {
      * 支持带 SessionId 的完整对话（未来扩展性更好）
      */
     Mono<String> chatWithSession(String sessionId, String newMessage);
+
+    /**
+     * 使用指定模型配置生成回复
+     */
+    Mono<String> generateWithConfig(String configId, String prompt);
+
+    /**
+     * 使用指定模型配置 + 系统提示生成回复
+     */
+    Mono<String> generateWithConfigAndSystem(String configId, String systemPrompt, String userPrompt);
 }

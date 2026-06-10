@@ -72,7 +72,16 @@ function markDone() {
     isProcessing.value = false
 }
 
-defineExpose({ setDownloadUrl, markDone })
+function addResult(msg: string) {
+    isProcessing.value = false
+    if (msg && msg.startsWith('/mcp/download/')) {
+        downloadUrl.value = msg
+    } else if (msg) {
+        downloadUrl.value = msg
+    }
+}
+
+defineExpose({ setDownloadUrl, markDone, addResult })
 </script>
 
 <style scoped>

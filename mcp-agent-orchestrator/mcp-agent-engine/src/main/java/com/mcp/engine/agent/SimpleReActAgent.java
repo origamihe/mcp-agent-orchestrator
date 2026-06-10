@@ -55,18 +55,24 @@ public class SimpleReActAgent implements Agent {
 
     @Override
     public Mono<String> executeWithContext(String task, AgentContext context) {
-        String systemPrompt = (context != null && context.getSystemPrompt() != null && !context.getSystemPrompt().isEmpty())
+        String customPrompt = (context != null && context.getSystemPrompt() != null && !context.getSystemPrompt().isEmpty())
                 ? context.getSystemPrompt()
-                : buildDefaultToolSystemPrompt();
+                : null;
+        String toolInstructions = buildToolInstructions();
+        String systemPrompt = (customPrompt != null)
+                ? customPrompt + "\n\n" + toolInstructions
+                : "你是一个专业、友好的智能助手。\n\n" + toolInstructions;
         return executeWithSystemPrompt(task, systemPrompt);
     }
 
     private static final int MAX_TOOL_ROUNDS = 3;
 
     private String buildDefaultToolSystemPrompt() {
-        return """
-                你是一个专业、友好的智能助手。
+        return "你是一个专业、友好的智能助手。\n\n" + buildToolInstructions();
+    }
 
+    private String buildToolInstructions() {
+        return """
                 【工具调用规则 - 必须严格遵守】
                 1. 对于问候、闲聊、常识问答、观点交流等不需要外部操作的对话，你必须直接回答，绝对不要调用任何工具。
                 2. 只有在用户明确要求以下操作时，才可以调用工具：
@@ -76,6 +82,14 @@ public class SimpleReActAgent implements Agent {
                 4. 滥用工具会导致糟糕的用户体验，是严重的错误。
                 5. 如果不调用工具，确保你的回答完整、有帮助。
                 6. 每次回答时，直接给出最终答案，不要展示"第一步"、"第二步"等思考过程。
+
+                【文件路径规则 - 极其重要】
+                7. 调用 read_file 或 write_file 时，必须使用用户提供的完整绝对路径。
+                   例如用户说"读取 C:\\Users\\xxx\\Desktop\\数据标注 的文件，分析 bolt.txt"，
+                   你应调用 read_file(path="C:\\Users\\xxx\\Desktop\\数据标注\\bolt.txt")，
+                   而不是 read_file(path="bolt.txt")。
+                8. 如果用户提到了目录和文件名，请将它们拼接成完整的绝对路径后再调用工具。
+                9. 如果用户只提到目录未提到文件名，可以先列出目录内容查看有哪些文件。
                 """;
     }
 

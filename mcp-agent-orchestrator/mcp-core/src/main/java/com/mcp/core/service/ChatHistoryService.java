@@ -16,7 +16,10 @@ import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -102,5 +105,51 @@ public class ChatHistoryService {
                 .stream()
                 .map(messageMapper::toDomain)
                 .collect(Collectors.toList()));
+    }
+
+    /**
+     * 获取所有会话列表（含消息数量）
+     */
+    public Mono<List<Map<String, Object>>> getAllSessions(String userId) {
+        return Mono.fromCallable(() ->
+                sessionRepository.findByUserIdOrderByLastActiveAtDesc(userId).stream().map(s -> {
+                    Map<String, Object> map = new LinkedHashMap<>();
+                    map.put("sessionId", s.getSessionId());
+                    map.put("userId", s.getUserId());
+                    map.put("createdAt", s.getCreatedAt());
+                    map.put("lastActiveAt", s.getLastActiveAt());
+                    map.put("messageCount", messageRepository.countBySessionId(s.getSessionId()));
+                    ChatMessageEntity firstMsg = messageRepository.findFirstBySessionIdOrderByCreatedAtAsc(s.getSessionId());
+                    map.put("firstMessage", firstMsg != null ? firstMsg.getContent() : null);
+                    return map;
+                }).collect(Collectors.toList()));
+    }
+
+    /**
+     * 获取会话的所有消息
+     */
+    public Mono<List<ChatMessageEntity>> getSessionMessages(String sessionId) {
+        return Mono.fromCallable(() ->
+                messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
+    }
+
+    /**
+     * 删除会话及其所有消息
+     */
+    @Transactional
+    public Mono<Void> deleteSession(String sessionId) {
+        return Mono.fromRunnable(() -> {
+            messageRepository.deleteBySessionId(sessionId);
+            sessionRepository.deleteById(sessionId);
+        });
+    }
+
+    /**
+     * 删除单条消息
+     */
+    @Transactional
+    public Mono<Void> deleteMessage(Long messageId) {
+        return Mono.fromRunnable(() ->
+                messageRepository.deleteById(messageId));
     }
 }

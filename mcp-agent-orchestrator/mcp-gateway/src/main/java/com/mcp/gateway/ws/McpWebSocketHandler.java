@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcp.core.service.PromptService;
 import com.mcp.engine.orchestrator.AgentOrchestrator;
+import com.mcp.tools.tool.DocxGeneratorTool;
 import com.mcp.tools.tool.FetchWebpageTool;
 import com.mcp.tools.tool.MultiSearchTool;
+import com.mcp.tools.tool.PptGeneratorTool;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -19,14 +21,19 @@ public class McpWebSocketHandler implements WebSocketHandler {
     private final PromptService promptService;
     private final MultiSearchTool multiSearchTool;
     private final FetchWebpageTool fetchWebpageTool;
+    private final PptGeneratorTool pptGeneratorTool;
+    private final DocxGeneratorTool docxGeneratorTool;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public McpWebSocketHandler(AgentOrchestrator orchestrator, PromptService promptService,
-                                MultiSearchTool multiSearchTool, FetchWebpageTool fetchWebpageTool) {
+                                MultiSearchTool multiSearchTool, FetchWebpageTool fetchWebpageTool,
+                                PptGeneratorTool pptGeneratorTool, DocxGeneratorTool docxGeneratorTool) {
         this.orchestrator = orchestrator;
         this.promptService = promptService;
         this.multiSearchTool = multiSearchTool;
         this.fetchWebpageTool = fetchWebpageTool;
+        this.pptGeneratorTool = pptGeneratorTool;
+        this.docxGeneratorTool = docxGeneratorTool;
     }
 
     @Override
@@ -77,6 +84,76 @@ public class McpWebSocketHandler implements WebSocketHandler {
                                 .flatMap(response -> session.send(Mono.just(session.textMessage(response))));
                     }
 
+                    if ("ppt-generator".equals(featureId)) {
+                        JsonNode params = pm.parameters;
+                        String pptTitle = (params != null && params.has("title")) ? params.get("title").asText() : "未命名PPT";
+                        String pptContent = (params != null && params.has("content")) ? params.get("content").asText() : userMessage;
+
+                        String pptPrompt = """
+                                你是一位专业的演示文稿设计专家。请根据用户提供的主题和内容描述，生成一份结构清晰的PPT内容。
+
+                                【严格要求】
+                                1. 必须以纯JSON格式输出，不要包含任何其他文字、解释或markdown标记
+                                2. JSON结构必须严格遵循以下格式：
+                                {"title": "PPT主标题", "slides": [{"title": "页面标题", "content": ["要点1", "要点2", "要点3"]}, ...]}
+                                3. 第一个slide作为封面（包含主标题和副标题），后续slides展开详细内容
+                                4. 每页slides的content数组包含3-5个要点，每个要点的文字简洁有力
+                                5. 总共生成5-8页slides
+                                6. 内容要专业、有条理，适合演讲展示
+                                7. 只输出JSON，不要输出```json```等标记
+
+                                用户PPT主题：%s
+                                内容描述：%s
+                                """.formatted(pptTitle, pptContent);
+
+                        return orchestrator.processRequestWithModel(pptPrompt, session.getId(), modelConfigId)
+                                .flatMap(llmResponse -> {
+                                    try {
+                                        PptGeneratorTool.PptResult result = pptGeneratorTool.generatePptx(llmResponse, pptTitle);
+                                        System.out.println("PPT generated: " + result.downloadUrl());
+                                        return session.send(Mono.just(session.textMessage(result.downloadUrl())));
+                                    } catch (Exception e) {
+                                        System.err.println("PPT generation failed: " + e.getMessage());
+                                        return session.send(Mono.just(session.textMessage("PPT生成失败: " + e.getMessage())));
+                                    }
+                                });
+                    }
+
+                    if ("docx-generator".equals(featureId)) {
+                        JsonNode params = pm.parameters;
+                        String docTitle = (params != null && params.has("title")) ? params.get("title").asText() : "未命名文档";
+                        String docContent = (params != null && params.has("content")) ? params.get("content").asText() : userMessage;
+
+                        String docPrompt = """
+                                你是一位专业的文档编写专家。请根据用户提供的标题和内容描述，生成一份结构清晰的 Word 文档内容。
+
+                                【严格要求】
+                                1. 必须以纯JSON格式输出，不要包含任何其他文字、解释或markdown标记
+                                2. JSON结构必须严格遵循以下格式：
+                                {"title": "文档主标题", "sections": [{"title": "章节标题", "content": ["段落1内容", "段落2内容", ...]}, ...]}
+                                3. 第一个章节作为文档开头，后续章节展开详细内容
+                                4. 每个章节的content数组包含1-5个段落，段落内容详细充实
+                                5. 总共生成3-6个章节
+                                6. 内容要专业、有条理，适合正式文档
+                                7. 只输出JSON，不要输出```json```等标记
+
+                                文档标题：%s
+                                内容描述：%s
+                                """.formatted(docTitle, docContent);
+
+                        return orchestrator.processRequestWithModel(docPrompt, session.getId(), modelConfigId)
+                                .flatMap(llmResponse -> {
+                                    try {
+                                        DocxGeneratorTool.DocxResult result = docxGeneratorTool.generateDocx(llmResponse, docTitle);
+                                        System.out.println("DOCX generated: " + result.downloadUrl());
+                                        return session.send(Mono.just(session.textMessage(result.downloadUrl())));
+                                    } catch (Exception e) {
+                                        System.err.println("DOCX generation failed: " + e.getMessage());
+                                        return session.send(Mono.just(session.textMessage("Word 文档生成失败: " + e.getMessage())));
+                                    }
+                                });
+                    }
+
                     if (systemPromptName != null && !systemPromptName.isEmpty()) {
                         final String mid = modelConfigId;
                         return promptService.getPrompt(systemPromptName)
@@ -116,7 +193,7 @@ public class McpWebSocketHandler implements WebSocketHandler {
                 .then();
     }
 
-    private record ParsedMessage(String userMessage, String modelConfigId, String systemPromptName, String featureId) {}
+    private record ParsedMessage(String userMessage, String modelConfigId, String systemPromptName, String featureId, JsonNode parameters) {}
 
     private ParsedMessage parseMessage(String rawMessage) {
         try {
@@ -128,9 +205,10 @@ public class McpWebSocketHandler implements WebSocketHandler {
                     ? json.get("systemPromptName").asText() : null;
             String featureId = (json.has("featureId") && !json.get("featureId").isNull())
                     ? json.get("featureId").asText() : null;
-            return new ParsedMessage(msg, cfgId, promptName, featureId);
+            JsonNode params = json.has("parameters") ? json.get("parameters") : null;
+            return new ParsedMessage(msg, cfgId, promptName, featureId, params);
         } catch (Exception e) {
-            return new ParsedMessage(rawMessage, null, null, null);
+            return new ParsedMessage(rawMessage, null, null, null, null);
         }
     }
 }

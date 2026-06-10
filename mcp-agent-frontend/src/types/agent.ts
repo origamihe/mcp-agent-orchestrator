@@ -5,6 +5,7 @@ export type AgentFeature =
     | 'ppt-generator'  // 制作PPT
     | 'docx-generator' // 制作Word文档
     | 'prompt-manager' // 角色管理
+    | 'qq-bot'         // QQ机器人
 
 export interface AgentFeatureMeta {
     id: AgentFeature

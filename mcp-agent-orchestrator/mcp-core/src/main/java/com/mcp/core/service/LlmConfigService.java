@@ -74,7 +74,7 @@ public class LlmConfigService {
         return LlmModelConfig.builder()
                 .configId("default-ollama")
                 .provider(LlmProviderType.LOCAL_OLLAMA)
-                .modelName("llama3.2:3b-instruct-q4_K_M")
+                .modelName("gemma4")
                 .temperature(0.7)
                 .maxTokens(2048)
                 .enabled(true)

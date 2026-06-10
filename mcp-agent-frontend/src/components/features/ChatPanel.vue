@@ -3,6 +3,14 @@
         <div class="chat-header">
             <span class="chat-title"><ChatBubbleLeftRightIcon /> 智能对话</span>
             <span v-if="enableExpertMode" class="expert-active-badge">🐝 专家模式 · 深度思考中</span>
+            <div class="header-actions">
+                <button class="btn-history" @click="showHistoryPanel = !showHistoryPanel" title="历史记录">
+                    <ClockIcon /> 历史
+                </button>
+                <button class="btn-clear" @click="handleClearChat" title="清空当前对话">
+                    <TrashIcon />
+                </button>
+            </div>
             <div class="model-selector" v-if="props.models && props.models.length > 0">
                 <label>模型：</label>
                 <select :value="props.selectedModelId" @change="$emit('update:selectedModelId', ($event.target as HTMLSelectElement).value)">
@@ -17,6 +25,7 @@
                 :key="msg.id"
                 :class="['message', msg.role]"
             >
+                <button class="msg-delete-btn" @click="removeMessage(msg.id)" title="删除此消息">&times;</button>
                 <strong>{{ msg.role === 'user' ? '你' : 'Agent' }}:</strong>
                 <div class="message-content" v-html="renderContent(msg.content)"></div>
                 <span class="message-time">{{ formatTimestamp(msg.timestamp) }}</span>
@@ -54,6 +63,25 @@
                 {{ enableExpertMode ? '深度分析' : enableWebSearch ? '搜索' : '发送' }}
             </button>
         </div>
+        <div v-if="showHistoryPanel" class="history-overlay" @click.self="showHistoryPanel = false">
+            <div class="history-panel">
+                <div class="history-panel-header">
+                    <h4><ClockIcon /> 历史会话</h4>
+                    <button class="btn-close" @click="showHistoryPanel = false">&times;</button>
+                </div>
+                <div v-if="sessions.length === 0" class="history-empty">暂无历史会话</div>
+                <div v-for="s in sessions" :key="s.sessionId" class="history-item">
+                    <div class="history-item-info" @click="handleLoadSession(s.sessionId)">
+                        <span class="history-item-id" :title="s.firstMessage || s.sessionId">{{ truncateTitle(s.firstMessage) || truncateId(s.sessionId) }}</span>
+                        <span class="history-item-meta">{{ s.messageCount }} 条消息 · {{ formatSessionDate(s.lastActiveAt) }}</span>
+                    </div>
+                    <button class="btn-delete-session" @click.stop="handleDeleteSession(s.sessionId)" title="删除会话">
+                        <TrashIcon />
+                    </button>
+                </div>
+                <div v-if="isLoadingHistory" class="history-loading">加载中...</div>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -64,21 +92,23 @@ import { useAgentTask } from '@/composables/useAgentTask'
 import type { WebSocketMessage, PromptInfo } from '@/types/agent'
 import { formatTimestamp } from '@/utils/format'
 import http from '@/utils/request'
-import { ChatBubbleLeftRightIcon, UserGroupIcon, CpuChipIcon } from '@heroicons/vue/24/outline'
+import { ChatBubbleLeftRightIcon, UserGroupIcon, CpuChipIcon, ClockIcon, TrashIcon, MagnifyingGlassIcon } from '@heroicons/vue/24/outline'
 
 const props = defineProps<{
     isConnected: boolean
     selectedModelId: string
     models?: Array<{ configId: string; provider: string; modelName: string }>
+    selectedRole?: string
 }>()
 
 const emit = defineEmits<{
     (e: 'send-message', payload: WebSocketMessage): void
     (e: 'processing', value: boolean): void
     (e: 'update:selectedModelId', value: string): void
+    (e: 'update:selectedRole', value: string): void
 }>()
 
-const { messages, addMessage: _addMessage, clearHistory } = useChatHistory()
+const { messages, sessions, isLoadingHistory, addMessage: _addMessage, removeMessage, clearHistory, fetchSessions, loadSession, deleteSession } = useChatHistory()
 const { isProcessing, executeTask } = useAgentTask((payload) => {
     emit('send-message', payload)
 })
@@ -103,7 +133,11 @@ const expertPhase = ref(0)
 const expertContext = ref({ question: '', analysis: '', critique: '' })
 const messagesContainer = ref<HTMLElement | null>(null)
 const availableRoles = ref<PromptInfo[]>([])
-const selectedRole = ref('')
+const showHistoryPanel = ref(false)
+const selectedRole = computed({
+    get: () => props.selectedRole ?? '',
+    set: (val) => emit('update:selectedRole', val)
+})
 
 const currentModelLabel = computed(() => {
     if (!props.selectedModelId) return null
@@ -216,6 +250,35 @@ function renderContent(text: string): string {
     return html
 }
 
+function handleClearChat() {
+    clearHistory()
+}
+
+function handleLoadSession(sessionId: string) {
+    loadSession(sessionId)
+    showHistoryPanel.value = false
+}
+
+function handleDeleteSession(sessionId: string) {
+    deleteSession(sessionId)
+}
+
+function formatSessionDate(dateStr: string): string {
+    if (!dateStr) return ''
+    const d = new Date(dateStr)
+    return d.toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function truncateId(id: string): string {
+    if (!id) return ''
+    return id.length > 12 ? id.substring(0, 12) + '...' : id
+}
+
+function truncateTitle(text?: string): string {
+    if (!text) return ''
+    return text.length > 20 ? text.substring(0, 20) + '...' : text
+}
+
 function scrollToBottom() {
     nextTick(() => {
         messagesContainer.value?.scrollTo({
@@ -247,6 +310,14 @@ function handleExpertPhase(content: string) {
     }
 }
 
+watch(enableWebSearch, (val) => {
+    if (val) enableExpertMode.value = false
+})
+
+watch(enableExpertMode, (val) => {
+    if (val) enableWebSearch.value = false
+})
+
 watch(
     () => messages.value.length,
     () => scrollToBottom(),
@@ -264,7 +335,10 @@ async function fetchRoles() {
     } catch { /* ignore */ }
 }
 
-onMounted(fetchRoles)
+onMounted(() => {
+    fetchRoles()
+    fetchSessions()
+})
 
 watch(() => props.models, (models) => {
     if (models && models.length > 0 && !props.selectedModelId) {
@@ -392,6 +466,37 @@ watch(() => props.models, (models) => {
     opacity: 0.7;
 }
 
+.message {
+    position: relative;
+}
+
+.msg-delete-btn {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 18px;
+    height: 18px;
+    background: rgba(239, 68, 68, 0.9);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    font-size: 14px;
+    line-height: 16px;
+    cursor: pointer;
+    display: none;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+}
+
+.message:hover .msg-delete-btn {
+    display: flex;
+}
+
+.msg-delete-btn:hover {
+    background: rgba(220, 38, 38, 1);
+}
+
 .message-time {
     display: block;
     font-size: 11px;
@@ -483,6 +588,43 @@ watch(() => props.models, (models) => {
 .chat-title :deep(svg) {
     width: 24px;
     height: 24px;
+}
+
+.header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.btn-history,
+.btn-clear {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 9999px;
+    background: var(--color-surface);
+    font-size: 12px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: all 0.2s;
+}
+
+.btn-history:hover,
+.btn-clear:hover {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+}
+
+.btn-history :deep(svg) {
+    width: 14px;
+    height: 14px;
+}
+
+.btn-clear :deep(svg) {
+    width: 14px;
+    height: 14px;
 }
 
 .web-search-toggle {
@@ -634,5 +776,138 @@ button:not(:disabled):hover {
     font-size: 12px;
     color: var(--color-accent);
     font-weight: 500;
+}
+
+.history-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(2px);
+}
+
+.history-panel {
+    background: #fff;
+    border-radius: 12px;
+    width: 420px;
+    max-height: 70vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.history-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.history-panel-header h4 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--color-text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.history-panel-header h4 :deep(svg) {
+    width: 20px;
+    height: 20px;
+}
+
+.btn-close {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    font-size: 24px;
+    line-height: 28px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+}
+
+.btn-close:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--color-text);
+}
+
+.history-empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--color-text-secondary);
+}
+
+.history-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    cursor: pointer;
+}
+
+.history-item:hover {
+    background: rgba(106, 133, 255, 0.05);
+}
+
+.history-item-info {
+    flex: 1;
+    overflow: hidden;
+}
+
+.history-item-id {
+    display: block;
+    font-weight: 500;
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.history-item-meta {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+}
+
+.btn-delete-session {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    color: #ef4444;
+    opacity: 0.7;
+}
+
+.btn-delete-session:hover {
+    background: rgba(239, 68, 68, 0.1);
+    opacity: 1;
+}
+
+.btn-delete-session :deep(svg) {
+    width: 16px;
+    height: 16px;
+}
+
+.history-loading {
+    padding: 20px;
+    text-align: center;
+    color: var(--color-text-secondary);
 }
 </style>

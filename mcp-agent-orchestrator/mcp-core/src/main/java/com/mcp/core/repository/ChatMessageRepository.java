@@ -4,9 +4,11 @@ import com.mcp.core.domain.chat.MessageRole;
 import com.mcp.core.entity.ChatMessageEntity;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -37,6 +39,11 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
     long countBySessionId(String sessionId);
 
     /**
+     * 获取会话的第一条消息
+     */
+    ChatMessageEntity findFirstBySessionIdOrderByCreatedAtAsc(String sessionId);
+
+    /**
      * 分页查询会话消息（推荐用于大消息量场景）
      */
     @Query("SELECT m FROM ChatMessageEntity m WHERE m.sessionId = :sessionId ORDER BY m.createdAt ASC")
@@ -49,4 +56,11 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
             "WHERE m.sessionId = :sessionId AND m.role = 'ASSISTANT' " +
             "ORDER BY m.createdAt DESC LIMIT 1")
     ChatMessageEntity findLatestAssistantMessage(@Param("sessionId") String sessionId);
+
+    /**
+     * 删除会话的所有消息
+     */
+    @Modifying
+    @Transactional
+    void deleteBySessionId(@Param("sessionId") String sessionId);
 }

@@ -14,6 +14,7 @@
                     :isConnected="isConnected"
                     :selectedModelId="selectedModelId"
                     :models="availableModels"
+                    v-model:selectedRole="selectedRole"
                     @send-message="handleSendMessage"
                     @update:selectedModelId="selectedModelId = $event"
                 />
@@ -32,6 +33,13 @@
                     @send-message="handleSendMessage"
                 />
                 <PromptManager v-else-if="activeFeature === 'prompt-manager'" />
+                <QqBotPanel
+                    v-else-if="activeFeature === 'qq-bot'"
+                    ref="qqBotPanelRef"
+                    :isConnected="isConnected"
+                    :selectedModelId="selectedModelId"
+                    @send-message="handleSendMessage"
+                />
             </div>
         </div>
     </div>
@@ -46,17 +54,20 @@ import StatusBar from '@/components/common/StatusBar.vue'
 import ChatPanel from '@/components/features/ChatPanel.vue'
 import PptGenerator from '@/components/features/PptGenerator.vue'
 import DocxGenerator from '@/components/features/DocxGenerator.vue'
+import QqBotPanel from '@/components/features/QqBotPanel.vue'
 import PromptManager from '@/components/features/PromptManager.vue'
 import { useWebSocket } from '@/composables/useWebSocket.ts'
 import http from '@/utils/request.ts'
 
 const activeFeature = ref<AgentFeature>('chat')
 const selectedModelId = ref('')
+const selectedRole = ref('')
 const availableModels = ref<LlmModelInfo[]>([])
 
 const chatPanelRef = ref<any>(null)
 const pptPanelRef = ref<any>(null)
 const docxPanelRef = ref<any>(null)
+const qqBotPanelRef = ref<any>(null)
 
 const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/mcp`
 const { isConnected, connect, send, lastMessage } = useWebSocket(wsUrl)
@@ -77,6 +88,9 @@ watch(lastMessage, (msg) => {
             docxPanelRef.value?.addResult(msg)
             break
         case 'prompt-manager':
+            break
+        case 'qq-bot':
+            qqBotPanelRef.value?.addMessage('assistant', msg)
             break
     }
 })

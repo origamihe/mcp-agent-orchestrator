@@ -29,6 +29,7 @@ import {
   PresentationChartBarIcon,
   DocumentTextIcon,
   UserGroupIcon,
+  BoltIcon,
 } from '@heroicons/vue/24/outline'
 
 const activeTab = ref<AgentFeature>('chat')
@@ -37,6 +38,7 @@ const navItems = [
     { id: 'chat' as AgentFeature, label: '聊天', icon: 'chat-bubble' },
     { id: 'ppt-generator' as AgentFeature, label: '制作PPT', icon: 'presentation-chart' },
     { id: 'docx-generator' as AgentFeature, label: '制作Word', icon: 'document-text' },
+    { id: 'qq-bot' as AgentFeature, label: 'QQ机器人', icon: 'bolt' },
     { id: 'prompt-manager' as AgentFeature, label: '角色管理', icon: 'user-group' },
 ]
 
@@ -50,6 +52,7 @@ const iconMap: Record<string, any> = {
   'presentation-chart': PresentationChartBarIcon,
   'document-text': DocumentTextIcon,
   'user-group': UserGroupIcon,
+  'bolt': BoltIcon,
 }
 
 function iconComponent(name: string) {

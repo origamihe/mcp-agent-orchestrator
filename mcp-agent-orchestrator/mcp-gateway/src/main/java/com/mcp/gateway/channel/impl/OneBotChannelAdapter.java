@@ -93,10 +93,20 @@ public class OneBotChannelAdapter implements ChannelAdapter {
     }
 
     /**
-     * OneBot API 发送消息
+     * OneBot API 发送消息（支持文本 + 语音）
      */
     @Override
     public Mono<Void> sendReply(ChannelReply reply) {
+        if (reply.isSendAsFile() && reply.getFilePath() != null) {
+            return sendFileReply(reply);
+        }
+        if (reply.isSendAsVoice() && reply.getVoiceData() != null && reply.getVoiceData().length > 0) {
+            return sendVoiceReply(reply);
+        }
+        return sendTextReply(reply);
+    }
+
+    private Mono<Void> sendTextReply(ChannelReply reply) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("message_type", reply.getChatType() == ChannelMessage.ChatType.GROUP ? "group" : "private");
         body.put(reply.getChatType() == ChannelMessage.ChatType.GROUP ? "group_id" : "user_id", reply.getTargetId());
@@ -109,8 +119,53 @@ public class OneBotChannelAdapter implements ChannelAdapter {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(String.class)
-                .doOnSuccess(r -> log.info("[OneBot] Sent to {}", reply.getTargetId()))
+                .doOnSuccess(r -> log.info("[OneBot] Sent text to {}", reply.getTargetId()))
                 .doOnError(e -> log.error("[OneBot] Send failed: {}", e.getMessage()))
+                .then();
+    }
+
+    private Mono<Void> sendVoiceReply(ChannelReply reply) {
+        String base64Voice = Base64.getEncoder().encodeToString(reply.getVoiceData());
+        String cqCode = "[CQ:record,file=base64://" + base64Voice + "]";
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("message_type", reply.getChatType() == ChannelMessage.ChatType.GROUP ? "group" : "private");
+        body.put(reply.getChatType() == ChannelMessage.ChatType.GROUP ? "group_id" : "user_id", reply.getTargetId());
+        body.put("message", cqCode);
+        body.put("auto_escape", false);
+
+        return buildWebClient()
+                .post()
+                .uri("/send_msg")
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(String.class)
+                .doOnSuccess(r -> log.info("[OneBot] Sent voice to {}", reply.getTargetId()))
+                .doOnError(e -> log.error("[OneBot] Voice send failed: {}", e.getMessage()))
+                .then();
+    }
+
+    private Mono<Void> sendFileReply(ChannelReply reply) {
+        boolean isGroup = reply.getChatType() == ChannelMessage.ChatType.GROUP;
+        String apiPath = isGroup ? "/upload_group_file" : "/upload_private_file";
+        String targetKey = isGroup ? "group_id" : "user_id";
+
+        String fileName = reply.getFilePath().substring(
+                reply.getFilePath().replace('\\', '/').lastIndexOf('/') + 1);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put(targetKey, reply.getTargetId());
+        body.put("file", reply.getFilePath());
+        body.put("name", fileName);
+
+        return buildWebClient()
+                .post()
+                .uri(apiPath)
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(String.class)
+                .doOnSuccess(r -> log.info("[OneBot] File uploaded: {} to {}", fileName, reply.getTargetId()))
+                .doOnError(e -> log.error("[OneBot] File upload failed: {}", e.getMessage()))
                 .then();
     }
 

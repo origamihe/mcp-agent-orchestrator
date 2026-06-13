@@ -1,7 +1,8 @@
-package com.mcp.engine.orchestrator;   // 请根据你的实际包路径调整
+package com.mcp.engine.orchestrator;  
 
 import com.mcp.core.domain.prompt.PromptType;
 import com.mcp.core.service.ChatHistoryService;
+import com.mcp.core.service.LongTermMemoryService;
 import com.mcp.core.service.PromptService;
 import com.mcp.engine.agent.Agent;
 import com.mcp.engine.agent.AgentContext;
@@ -33,6 +34,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     private final LlmClient llmClient;
     private final PromptService promptService;
     private final ChatHistoryService chatHistoryService;
+    private final LongTermMemoryService memoryService;
 
     private final Map<String, Agent> agents = new ConcurrentHashMap<>();
 
@@ -43,24 +45,20 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         }
 
         long startTime = System.currentTimeMillis();
-
         log.info("[Orchestrator] Receive request: {} | Session: {}", request, sessionId);
 
         return preloadFiles(request)
                 .flatMap(fileContext -> Mono.zip(
-                        promptService.getCoreSystemPrompt(),                    // 1. 获取系统 Prompt
-                        chatHistoryService.getHistorySummary(sessionId, 10),    // 2. 获取历史摘要（最近10条）
+                        promptService.getCoreSystemPrompt(),
+                        memoryService.buildWorkingContext(sessionId),
                         Mono.just(fileContext)
                 ))
                 .flatMap(tuple -> {
                     String systemPrompt = tuple.getT1();
-                    String historySummary = tuple.getT2();
+                    String memoryContext = tuple.getT2();
                     String fileContext = tuple.getT3();
-                    String enrichedSystemPrompt = (fileContext != null && !fileContext.isEmpty())
-                            ? systemPrompt + "\n\n" + fileContext
-                            : systemPrompt;
+                    String enrichedSystemPrompt = buildEnrichedPrompt(systemPrompt, fileContext, memoryContext);
 
-                    // 意图分类：判断是否需要工具调用
                     Agent defaultAgent = agents.isEmpty() ? null : agents.values().iterator().next();
                     if (defaultAgent != null && likelyNeedsTools(request)) {
                         log.info("[Orchestrator] Delegating to agent: {}", defaultAgent.getName());
@@ -71,6 +69,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                                 .build())
                                 .flatMap(response ->
                                         chatHistoryService.saveUserAndAssistantMessage(sessionId, request, response)
+                                                .then(memoryService.checkAndCompressIfNeeded(sessionId))
                                                 .thenReturn(response)
                                 );
                     }
@@ -79,15 +78,14 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                         log.info("[Orchestrator] Simple chat, using direct LLM (no tools)");
                     }
 
-                    // 没有 Agent 时，直接调用 LLM
-                    String userPrompt = buildUserPrompt(request, historySummary);
+                    String userPrompt = "用户消息：" + request;
                     return llmClient.generateWithSystemPrompt(enrichedSystemPrompt, userPrompt);
                 })
-                .flatMap(response -> {
-                    // 3. 保存对话历史
-                    return chatHistoryService.saveUserAndAssistantMessage(sessionId, request, response)
-                            .thenReturn(response);
-                })
+                .flatMap(response ->
+                        chatHistoryService.saveUserAndAssistantMessage(sessionId, request, response)
+                                .then(memoryService.checkAndCompressIfNeeded(sessionId))
+                                .thenReturn(response)
+                )
                 .doOnSuccess(result -> {
                     long duration = System.currentTimeMillis() - startTime;
                     log.info("[Orchestrator] Success! Duration: {}ms | Session: {}", duration, sessionId);
@@ -104,7 +102,6 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     return Mono.just("处理请求时发生错误: " + msg);
                 });
     }
-
     /**
      * 构建带历史的用户 Prompt
      */
@@ -131,17 +128,16 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         return preloadFiles(request)
                 .flatMap(fileContext -> Mono.zip(
                         promptService.getCoreSystemPrompt(),
-                        chatHistoryService.getHistorySummary(sessionId, 10),
+                        memoryService.buildWorkingContext(sessionId),
                         Mono.just(fileContext)
                 ))
                 .flatMap(tuple -> {
                     String systemPrompt = tuple.getT1();
-                    String historySummary = tuple.getT2();
+                    String memoryContext = tuple.getT2();
                     String fileContext = tuple.getT3();
-                    String enrichedSystemPrompt = (fileContext != null && !fileContext.isEmpty())
-                            ? systemPrompt + "\n\n" + fileContext
-                            : systemPrompt;
-                    String userPrompt = buildUserPrompt(request, historySummary);
+                    String enrichedSystemPrompt = buildEnrichedPrompt(systemPrompt, fileContext, memoryContext);
+
+                    String userPrompt = "用户消息：" + request;
 
                     Agent defaultAgent = agents.isEmpty() ? null : agents.values().iterator().next();
                     if (defaultAgent != null && likelyNeedsTools(request)) {
@@ -153,6 +149,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                                 .build())
                                 .flatMap(response ->
                                         chatHistoryService.saveUserAndAssistantMessage(sessionId, request, response)
+                                                .then(memoryService.checkAndCompressIfNeeded(sessionId))
                                                 .thenReturn(response)
                                 )
                                 .doOnSuccess(result -> {
@@ -175,6 +172,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 })
                 .flatMap(response ->
                         chatHistoryService.saveUserAndAssistantMessage(sessionId, request, response)
+                                .then(memoryService.checkAndCompressIfNeeded(sessionId))
                                 .thenReturn(response)
                 )
                 .doOnSuccess(result -> {
@@ -213,68 +211,38 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
         return systemPromptMono
                 .flatMap(resolvedPrompt ->
-                    preloadFiles(request)
-                    .flatMap(fileContext -> {
-                        final String enrichedSystemPrompt;
-                        if (fileContext != null && !fileContext.isEmpty()) {
-                            enrichedSystemPrompt = resolvedPrompt + "\n\n" + fileContext;
-                            log.info("[Orchestrator] Preloaded {} file(s) into context", fileContext.lines().filter(l -> l.startsWith("---")).count());
-                        } else {
-                            enrichedSystemPrompt = resolvedPrompt;
-                        }
+                        memoryService.buildWorkingContext(sessionId)
+                                .flatMap(memoryContext ->
+                                        preloadFiles(request)
+                                                .flatMap(fileContext -> {
+                                                    String enrichedPrompt = buildEnrichedPrompt(resolvedPrompt, fileContext, memoryContext);
 
-                    Agent defaultAgent = agents.isEmpty() ? null : agents.values().iterator().next();
-                    if (defaultAgent != null && likelyNeedsTools(request)) {
-                        log.info("[Orchestrator] Delegating to agent: {}", defaultAgent.getName());
-                        return defaultAgent.executeWithContext(request,
-                                        AgentContext.builder()
-                                                .systemPrompt(enrichedSystemPrompt)
-                                                .sessionId(sessionId)
-                                                .build())
+                                                    Agent defaultAgent = agents.isEmpty() ? null : agents.values().iterator().next();
+                                                    if (defaultAgent != null && likelyNeedsTools(request)) {
+                                                        log.info("[Orchestrator] Delegating to agent: {}", defaultAgent.getName());
+                                                        return defaultAgent.executeWithContext(request,
+                                                                        AgentContext.builder()
+                                                                                .systemPrompt(enrichedPrompt)
+                                                                                .sessionId(sessionId)
+                                                                                .build())
+                                                                .flatMap(response ->
+                                                                        chatHistoryService.saveUserAndAssistantMessage(sessionId, request, response)
+                                                                                .then(memoryService.checkAndCompressIfNeeded(sessionId))
+                                                                                .thenReturn(response));
+                                                    }
+
+                                                    String userPrompt = "用户消息：" + request;
+                                                    if (modelConfigId != null && !modelConfigId.isEmpty()) {
+                                                        return llmClient.generateWithConfigAndSystem(modelConfigId, enrichedPrompt, userPrompt);
+                                                    }
+                                                    return llmClient.generateWithSystemPrompt(enrichedPrompt, userPrompt);
+                                                })
+                                )
                                 .flatMap(response ->
                                         chatHistoryService.saveUserAndAssistantMessage(sessionId, request, response)
-                                                .thenReturn(response)
-                                )
-                                .doOnSuccess(result -> {
-                                    long duration = System.currentTimeMillis() - startTime;
-                                    log.info("[Orchestrator] Agent Success! Duration: {}ms | Session: {}", duration, sessionId);
-                                })
-                                .doOnError(error -> {
-                                    long duration = System.currentTimeMillis() - startTime;
-                                    log.error("[Orchestrator] Agent Error! Duration: {}ms | Error: {}", duration, error.getMessage(), error);
-                                })
-                                .onErrorResume(error ->
-                                        Mono.just("处理请求时发生错误: " + error.getMessage())
-                                );
-                    }
-
-                    return chatHistoryService.getHistorySummary(sessionId, 10)
-                            .flatMap(historySummary -> {
-                                String userPrompt = historySummary.isEmpty()
-                                        ? request
-                                        : "历史对话摘要：%s\n\n当前问题：%s".formatted(historySummary, request);
-                                if (modelConfigId != null && !modelConfigId.isEmpty()) {
-                                    return llmClient.generateWithConfigAndSystem(modelConfigId, enrichedSystemPrompt, userPrompt);
-                                }
-                                return llmClient.generateWithSystemPrompt(enrichedSystemPrompt, userPrompt);
-                            })
-                            .flatMap(response ->
-                                    chatHistoryService.saveUserAndAssistantMessage(sessionId, request, response)
-                                            .thenReturn(response)
-                            )
-                            .doOnSuccess(result -> {
-                                long duration = System.currentTimeMillis() - startTime;
-                                log.info("[Orchestrator] Success! Duration: {}ms | Session: {}", duration, sessionId);
-                            })
-                            .doOnError(error -> {
-                                long duration = System.currentTimeMillis() - startTime;
-                                log.error("[Orchestrator] Error! Duration: {}ms | Error: {}", duration, error.getMessage(), error);
-                            })
-                            .onErrorResume(error ->
-                                    Mono.just("处理请求时发生错误: " + error.getMessage())
-                            );
-                })
-        );
+                                                .then(memoryService.checkAndCompressIfNeeded(sessionId))
+                                                .thenReturn(response))
+                );
     }
 
     private static final Pattern WINDOWS_PATH_PATTERN =
@@ -398,5 +366,41 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     public void registerDefaultTools() {
         // TODO: 后续实现工具自动注册
         log.info("[Orchestrator] Default tools registration placeholder.");
+    }
+    /**
+     * 构建增强的 System Prompt，包含文件内容、记忆上下文
+     */
+    /**
+     * 构建增强的 System Prompt，包含文件内容、记忆上下文
+     */
+    private String buildEnrichedPrompt(String systemPrompt, String fileContext, String memoryContext) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(systemPrompt);
+
+        if (memoryContext != null && !memoryContext.isEmpty()) {
+            int memoryTokens = estimateTokens(memoryContext);
+            if (memoryTokens > 6000) {
+                sb.append("\n\n## 重要记忆（精简）\n");
+                sb.append(truncateByTokens(memoryContext, 6000));
+            } else {
+                sb.append("\n\n").append(memoryContext);
+            }
+        }
+
+        if (fileContext != null && !fileContext.isEmpty()) {
+            sb.append("\n\n## 附加文件内容\n").append(fileContext);
+        }
+
+        return sb.toString();
+    }
+
+    private int estimateTokens(String text) {
+        return text == null ? 0 : text.length() / 4;
+    }
+
+    private String truncateByTokens(String text, int maxTokens) {
+        int maxChars = maxTokens * 4;
+        if (text.length() <= maxChars) return text;
+        return text.substring(0, maxChars - 3) + "...";
     }
 }

@@ -90,7 +90,11 @@ watch(lastMessage, (msg) => {
         case 'prompt-manager':
             break
         case 'qq-bot':
-            qqBotPanelRef.value?.addMessage('assistant', msg)
+            if (msg && msg.startsWith('/mcp/download/')) {
+                qqBotPanelRef.value?.addResult(msg)
+            } else {
+                qqBotPanelRef.value?.addMessage('assistant', msg)
+            }
             break
     }
 })

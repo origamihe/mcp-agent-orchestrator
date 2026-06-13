@@ -105,6 +105,11 @@
             </div>
             <div class="log-content">{{ log.content }}</div>
             <div class="log-reply" v-if="log.reply">{{ log.reply }}</div>
+            <div class="log-file" v-if="log.downloadUrl">
+              <a :href="log.downloadUrl" target="_blank" class="file-download-link">
+                📎 {{ log.fileName || '下载生成的文件' }}
+              </a>
+            </div>
           </div>
           <div v-if="messageLogs.length === 0" class="log-empty">
             暂无消息记录，启动 Bot 后将在此显示实时消息
@@ -141,6 +146,8 @@ interface MessageLog {
   content: string
   direction: 'incoming' | 'outgoing'
   reply?: string
+  downloadUrl?: string
+  fileName?: string
 }
 
 const props = defineProps<{
@@ -239,6 +246,8 @@ function addLog(
     content: string,
     reply?: string,
     groupId?: string,
+    downloadUrl?: string,
+    fileName?: string,
 ) {
   messageLogs.value.push({
     timestamp: Date.now(),
@@ -247,6 +256,8 @@ function addLog(
     content,
     direction: direction === 'system' ? 'outgoing' : direction,
     reply,
+    downloadUrl,
+    fileName,
   })
   scrollLogToBottom()
 }
@@ -255,7 +266,24 @@ function clearLogs() {
   messageLogs.value = []
 }
 
-defineExpose({ addMessage: addLog })
+function addMessage(direction: 'incoming' | 'outgoing' | 'system', sender: string, content: string) {
+  const downloadMatch = content.match(/^\/mcp\/download\/(.+)/)
+  if (downloadMatch) {
+    const fileName = downloadMatch[1].split('/').pop() || '下载文件'
+    addLog(direction, sender, '📁 生成文件: ' + fileName, undefined, undefined, content, fileName)
+  } else {
+    addLog(direction, sender, content)
+  }
+}
+
+function addResult(msg: string) {
+  if (msg && msg.startsWith('/mcp/download/')) {
+    const fileName = msg.replace('/mcp/download/', '').split('/').pop() || '下载文件'
+    addLog('outgoing', 'Bot', '📁 已生成文件: ' + fileName, undefined, undefined, msg, fileName)
+  }
+}
+
+defineExpose({ addMessage, addResult })
 
 async function fetchBotStatus() {
   try {
@@ -601,5 +629,26 @@ onMounted(() => {
   padding: 40px;
   color: #94a3b8;
   font-size: 14px;
+}
+
+.log-file {
+  margin-top: 6px;
+}
+
+.file-download-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 8px;
+  font-size: 13px;
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+
+.file-download-link:hover {
+  opacity: 0.85;
 }
 </style>

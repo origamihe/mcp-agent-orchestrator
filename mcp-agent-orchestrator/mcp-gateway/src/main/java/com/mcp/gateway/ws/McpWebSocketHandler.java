@@ -24,21 +24,25 @@ public class McpWebSocketHandler implements WebSocketHandler {
     private final PptGeneratorTool pptGeneratorTool;
     private final DocxGeneratorTool docxGeneratorTool;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final WebSocketSessionManager sessionManager;
 
     public McpWebSocketHandler(AgentOrchestrator orchestrator, PromptService promptService,
                                 MultiSearchTool multiSearchTool, FetchWebpageTool fetchWebpageTool,
-                                PptGeneratorTool pptGeneratorTool, DocxGeneratorTool docxGeneratorTool) {
+                                PptGeneratorTool pptGeneratorTool, DocxGeneratorTool docxGeneratorTool,
+                                WebSocketSessionManager sessionManager) {
         this.orchestrator = orchestrator;
         this.promptService = promptService;
         this.multiSearchTool = multiSearchTool;
         this.fetchWebpageTool = fetchWebpageTool;
         this.pptGeneratorTool = pptGeneratorTool;
         this.docxGeneratorTool = docxGeneratorTool;
+        this.sessionManager = sessionManager;
     }
 
     @Override
     public Mono<Void> handle(WebSocketSession session) {
         System.out.println("WebSocket success connect: " + session.getId());
+        sessionManager.register(session.getId(), session);
 
         return session.receive()
                 .map(msg -> msg.getPayloadAsText())
@@ -190,6 +194,7 @@ public class McpWebSocketHandler implements WebSocketHandler {
                 .onErrorContinue((err, obj) ->
                         System.err.println("process error: " + err.getMessage())
                 )
+                .doFinally(signal -> sessionManager.unregister(session.getId()))
                 .then();
     }
 

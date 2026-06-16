@@ -40,6 +40,8 @@ public class McpOrchestratorApplication {
         toolRegistry.register(multiSearchTool);
         FetchWebpageTool fetchWebpageTool = context.getBean(FetchWebpageTool.class);
         toolRegistry.register(fetchWebpageTool);
+        DeepResearchTool deepResearchTool = context.getBean(DeepResearchTool.class);
+        toolRegistry.register(deepResearchTool);
         orchestrator.registerDefaultTools();
 
         // 2. 配置并注册 Agent

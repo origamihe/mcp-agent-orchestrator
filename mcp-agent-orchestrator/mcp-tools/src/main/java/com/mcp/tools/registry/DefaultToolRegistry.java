@@ -4,7 +4,6 @@ import com.mcp.tools.annotation.McpTool;
 import com.mcp.tools.model.ToolDefinition;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.util.MethodInvoker;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -30,10 +29,8 @@ public class DefaultToolRegistry implements ToolRegistry {
             if (annotation == null) {
                 continue;
             }
-
             String toolName = annotation.name().isEmpty() ? method.getName() : annotation.name();
             String description = annotation.description();
-
             ToolDefinition definition = ToolDefinition.builder()
                     .name(toolName)
                     .description(description)
@@ -41,11 +38,9 @@ public class DefaultToolRegistry implements ToolRegistry {
                     .tags(List.of(annotation.tags()))
                     .version("1.0.0")
                     .build();
-
             tools.put(toolName, definition);
             methods.put(toolName, method);
             targets.put(toolName, bean);
-
             log.info("Tool registered: {} -> {}", toolName, description);
         }
     }
@@ -83,9 +78,20 @@ public class DefaultToolRegistry implements ToolRegistry {
         Parameter[] params = method.getParameters();
         for (int i = 0; i < params.length; i++) {
             if (i > 0) schema.append(",");
-            schema.append("\"").append(params[i].getName()).append("\":{\"type\":\"string\"}");
+            String paramName = params[i].getName();
+            String jsonType = mapToJsonType(params[i].getType());
+            schema.append("\"").append(paramName).append("\":{\"type\":\"").append(jsonType).append("\"}");
         }
         schema.append("}}");
         return schema.toString();
+    }
+
+    private String mapToJsonType(Class<?> type) {
+        if (type == int.class || type == Integer.class) return "integer";
+        if (type == long.class || type == Long.class) return "integer";
+        if (type == double.class || type == Double.class) return "number";
+        if (type == float.class || type == Float.class) return "number";
+        if (type == boolean.class || type == Boolean.class) return "boolean";
+        return "string";
     }
 }

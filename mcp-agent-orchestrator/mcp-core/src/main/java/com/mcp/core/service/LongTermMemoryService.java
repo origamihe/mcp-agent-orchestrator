@@ -1,6 +1,7 @@
 package com.mcp.core.service;
 
 import com.mcp.core.domain.memory.MemoryCategory;
+import com.mcp.core.domain.memory.MemoryScope;
 import com.mcp.core.entity.MemoryPackageEntity;
 import com.mcp.core.repository.MemoryPackageRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,40 +25,86 @@ import java.util.stream.Collectors;
 public class LongTermMemoryService {
 
     private final MemoryPackageRepository memoryPackageRepository;
+    private final MemoryBoundaryGuard memoryBoundaryGuard;
+    private final PersonaMemoryStore personaMemoryStore;
 
     private static final int MAX_WORKING_CONTEXT_TOKENS = 8000;
     private static final int COMPRESSION_THRESHOLD = 20;
 
     /**
-     * 构建工作上下文 - 将会话相关的记忆包拼装成 LLM 可读的上下文字符串
+     * 构建分层工作上下文
+     * Layer 1: Persona 记忆（不可变，永久注入）
+     * Layer 2: User 记忆（按 userId 过滤，经 MemoryBoundaryGuard 校验）
+     * Layer 3: Group 记忆（按 groupId 过滤）
      */
     public Mono<String> buildWorkingContext(String sessionId) {
+        return buildWorkingContext(sessionId, null, null);
+    }
+
+    public Mono<String> buildWorkingContext(String sessionId, String userId, String groupId) {
         return Mono.fromCallable(() -> {
-                    List<MemoryPackageEntity> packages = memoryPackageRepository
-                            .findBySessionIdOrderByWeightDesc(sessionId);
-
-                    if (packages.isEmpty()) {
-                        return "";
-                    }
-
-                    // 增加访问计数
-                    for (MemoryPackageEntity pkg : packages) {
-                        memoryPackageRepository.incrementAccess(pkg.getId(), LocalDateTime.now());
-                    }
-
                     StringBuilder sb = new StringBuilder();
-                    sb.append("## 长期记忆上下文\n");
 
-                    int totalTokens = 0;
-                    for (MemoryPackageEntity pkg : packages) {
-                        String entry = formatMemoryEntry(pkg);
-                        int entryTokens = estimateTokens(entry);
-                        if (totalTokens + entryTokens > MAX_WORKING_CONTEXT_TOKENS) {
-                            sb.append("\n*(记忆过多，已截断)*\n");
-                            break;
+                    // ===== Layer 1: Persona 记忆（不可变，永远在最前面）=====
+                    String personaText = personaMemoryStore.getPersonaMemoryText();
+                    if (!personaText.isEmpty()) {
+                        sb.append(personaText).append("\n");
+                    }
+
+                    // ===== Layer 2 & 3: User 和 Group 记忆（按 scope 过滤）=====
+                    List<MemoryPackageEntity> userPackages;
+                    List<MemoryPackageEntity> groupPackages;
+
+                    if (userId != null && groupId != null) {
+                        userPackages = memoryPackageRepository
+                                .findBySessionIdAndUserIdAndScopeOrderByWeightDesc(
+                                        sessionId, userId, MemoryScope.USER);
+                        groupPackages = memoryPackageRepository
+                                .findBySessionIdAndGroupIdAndScopeOrderByWeightDesc(
+                                        sessionId, groupId, MemoryScope.GROUP);
+                    } else if (userId != null) {
+                        userPackages = memoryPackageRepository
+                                .findBySessionIdAndUserIdAndScopeOrderByWeightDesc(
+                                        sessionId, userId, MemoryScope.USER);
+                        groupPackages = List.of();
+                    } else {
+                        userPackages = memoryPackageRepository
+                                .findBySessionIdAndScopeOrderByWeightDesc(
+                                        sessionId, MemoryScope.USER);
+                        groupPackages = List.of();
+                    }
+
+                    // 过滤与 Persona 冲突的 UserMemory
+                    List<MemoryPackageEntity> filteredUser = memoryBoundaryGuard.filterConflicting(userPackages);
+                    List<MemoryPackageEntity> filteredGroup = memoryBoundaryGuard.filterConflicting(groupPackages);
+
+                    List<MemoryPackageEntity> allPackages = new java.util.ArrayList<>();
+                    allPackages.addAll(filteredUser);
+                    allPackages.addAll(filteredGroup);
+                    allPackages.sort((a, b) -> Double.compare(b.getWeight(), a.getWeight()));
+
+                    if (!allPackages.isEmpty()) {
+                        sb.append("【用户偏好与长期记忆 - 可动态调整】\n");
+
+                        int totalTokens = 0;
+                        int count = 0;
+                        for (MemoryPackageEntity pkg : allPackages) {
+                            String entry = formatMemoryEntry(pkg);
+                            int entryTokens = estimateTokens(entry);
+                            if (totalTokens + entryTokens > MAX_WORKING_CONTEXT_TOKENS) {
+                                sb.append("\n*(记忆过多，已截断)*\n");
+                                break;
+                            }
+                            sb.append(entry);
+                            totalTokens += entryTokens;
+                            count++;
+
+                            memoryPackageRepository.incrementAccess(pkg.getId(), LocalDateTime.now());
                         }
-                        sb.append(entry);
-                        totalTokens += entryTokens;
+
+                        if (count > 0) {
+                            sb.append("\n*(以上为长期记忆，仅供参考，不改变你的人格设定)*\n");
+                        }
                     }
 
                     return sb.toString();
@@ -70,9 +117,9 @@ public class LongTermMemoryService {
      */
     public Mono<Void> checkAndCompressIfNeeded(String sessionId) {
         return Mono.fromRunnable(() -> {
-            long count = memoryPackageRepository.countBySessionId(sessionId);
+            long count = memoryPackageRepository.countBySessionIdExcludingPersona(sessionId);
             if (count >= COMPRESSION_THRESHOLD) {
-                log.info("[Memory] Session {} 记忆包数量 {} 达到压缩阈值 {}，触发压缩",
+                log.info("[Memory] Session {} 非Persona记忆包数量 {} 达到压缩阈值 {}，触发压缩",
                         sessionId, count, COMPRESSION_THRESHOLD);
                 compressMemory(sessionId);
             }
@@ -80,18 +127,23 @@ public class LongTermMemoryService {
     }
 
     /**
-     * 记忆压缩 - 按分类合并低权重记忆，生成摘要
+     * 记忆压缩 - 只压缩 USER 和 GROUP 作用域的记忆，PERSONA 记忆永不参与压缩。
      */
     private void compressMemory(String sessionId) {
         List<MemoryPackageEntity> allPackages = memoryPackageRepository
                 .findBySessionIdOrderByWeightDesc(sessionId);
 
-        if (allPackages.size() <= COMPRESSION_THRESHOLD) {
+        // 过滤掉 PERSONA 作用域的记忆
+        List<MemoryPackageEntity> compressible = allPackages.stream()
+                .filter(p -> p.getScope() != MemoryScope.PERSONA)
+                .toList();
+
+        if (compressible.size() <= COMPRESSION_THRESHOLD) {
             return;
         }
 
         // 按分类分组
-        var groupedByCategory = allPackages.stream()
+        var groupedByCategory = compressible.stream()
                 .collect(Collectors.groupingBy(MemoryPackageEntity::getCategory));
 
         for (var entry : groupedByCategory.entrySet()) {
@@ -123,6 +175,7 @@ public class LongTermMemoryService {
                 summary.setSessionId(sessionId);
                 summary.setCategory(MemoryCategory.SUMMARY);
                 summary.setContent("[压缩摘要] " + mergedContent);
+                summary.setScope(MemoryScope.USER);
                 summary.setVersion(toKeep.get(0).getVersion() + 1);
                 summary.setAccessCount(0);
                 summary.setWeight(1.5);

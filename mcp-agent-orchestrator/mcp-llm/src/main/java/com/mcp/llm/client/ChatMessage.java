@@ -21,14 +21,11 @@ public class ChatMessage {
     // ========== 与 Core Domain 互转 ==========
 
     public CoreChatMessage toCore(String sessionId) {
-        return new CoreChatMessage(
-                null,                           // messageId 可由数据库生成
-                sessionId,
-                MessageRole.valueOf(role.toUpperCase()),
-                content,
-                null,                           // toolCalls
-                null                            // createdAt
-        );
+        return CoreChatMessage.builder()
+                .sessionId(sessionId)
+                .role(MessageRole.valueOf(role.toUpperCase()))
+                .content(content)
+                .build();
     }
 
     public static ChatMessage fromCore(CoreChatMessage core) {

@@ -3,17 +3,20 @@ package com.mcp.tools.tool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcp.tools.annotation.McpTool;
+import com.mcp.tools.model.ToolResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.util.retry.Retry;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
@@ -22,11 +25,15 @@ public class WebSearchTool {
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
 
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration SINGLE_SOURCE_TIMEOUT = Duration.ofSeconds(3);
+    private static final Duration TOTAL_SEARCH_BUDGET = Duration.ofSeconds(5);
     private static final int MAX_RESULTS = 5;
+    private static final long CACHE_TTL_SECONDS = 60;
 
     @Value("${websearch.serpapi.key:}")
     private String serpApiKey;
+
+    private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
     public WebSearchTool() {
         this.webClient = WebClient.builder()
@@ -40,35 +47,44 @@ public class WebSearchTool {
             description = "进行联网搜索，获取最新的信息、新闻、技术文档等。参数 query：搜索关键词",
             tags = {"search", "web", "internet"}
     )
-    public String webSearch(String query) {
+    public ToolResult webSearch(String query) {
         if (query == null || query.isBlank()) {
-            return "错误：未提供搜索关键词，请提供有效的 query 参数。";
+            return ToolResult.failure("未提供搜索关键词", null, "web_search");
+        }
+
+        CacheEntry cached = cache.get(query);
+        if (cached != null && !cached.isExpired()) {
+            log.info("[WebSearch] Cache hit for: {}", query);
+            return cached.result;
         }
 
         log.info("Starting web search for query: {}", query);
 
-        // 策略1：如果配置了 SerpAPI Key，优先使用（付费服务，最稳定）
+        List<Mono<SourceResult>> searchTasks = new ArrayList<>();
+
         if (serpApiKey != null && !serpApiKey.isBlank()) {
-            String result = searchWithSerpApi(query);
-            if (result != null) {
-                return result;
+            searchTasks.add(searchWithSerpApiAsync(query));
+        }
+        searchTasks.add(searchWithDuckDuckGoAsync(query));
+        searchTasks.add(searchWithWikipediaAsync(query));
+
+        Map<String, SourceResult> results = new LinkedHashMap<>();
+        try {
+            List<SourceResult> collected = FluxMergeWithBudget(searchTasks);
+            for (SourceResult sr : collected) {
+                results.put(sr.sourceName, sr);
             }
-            log.warn("SerpAPI 搜索失败，降级到 DuckDuckGo...");
+        } catch (Exception e) {
+            log.error("[WebSearch] Search budget exceeded: {}", e.getMessage());
         }
 
-        // 策略2：DuckDuckGo 匿名搜索
-        String result = searchWithDuckDuckGo(query);
-        if (result != null) {
-            return result;
-        }
-
-        // 策略3：Wikipedia API 作为最后备选
-        log.warn("DuckDuckGo 搜索失败，降级到 Wikipedia...");
-        return searchWithWikipedia(query);
+        ToolResult result = buildStructuredResult(query, results);
+        cache.put(query, new CacheEntry(result, Instant.now().plusSeconds(CACHE_TTL_SECONDS)));
+        return result;
     }
 
-    private String searchWithSerpApi(String query) {
-        try {
+    private Mono<SourceResult> searchWithSerpApiAsync(String query) {
+        return Mono.fromCallable(() -> {
             String url = "https://serpapi.com/search?q=" +
                     URLEncoder.encode(query, StandardCharsets.UTF_8) +
                     "&api_key=" + serpApiKey +
@@ -78,17 +94,15 @@ public class WebSearchTool {
                     .uri(url)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .timeout(REQUEST_TIMEOUT)
-                    .retryWhen(Retry.max(2))
-                    .block(REQUEST_TIMEOUT);
+                    .timeout(SINGLE_SOURCE_TIMEOUT)
+                    .block(SINGLE_SOURCE_TIMEOUT);
 
             if (response == null || response.isBlank()) {
-                return null;
+                return SourceResult.empty("SerpAPI");
             }
 
             JsonNode json = objectMapper.readTree(response);
             List<String> results = new ArrayList<>();
-
             JsonNode organic = json.path("organic_results");
             if (organic.isArray()) {
                 int count = 0;
@@ -105,18 +119,19 @@ public class WebSearchTool {
             }
 
             if (results.isEmpty()) {
-                return null;
+                return SourceResult.empty("SerpAPI");
             }
             log.info("SerpAPI 搜索完成: {} ({} 条结果)", query, results.size());
-            return "搜索关键词: " + query + "\n数据来源: Google (SerpAPI)\n\n" + String.join("\n\n", results);
-        } catch (Exception e) {
-            log.warn("SerpAPI 搜索异常: {}", e.getMessage());
-            return null;
-        }
+            return SourceResult.success("SerpAPI", results);
+        }).subscribeOn(Schedulers.boundedElastic())
+          .onErrorResume(e -> {
+              log.warn("SerpAPI 搜索异常: {}", e.getMessage());
+              return Mono.just(SourceResult.failure("SerpAPI", e.getMessage()));
+          });
     }
 
-    private String searchWithDuckDuckGo(String query) {
-        try {
+    private Mono<SourceResult> searchWithDuckDuckGoAsync(String query) {
+        return Mono.fromCallable(() -> {
             String url = "https://api.duckduckgo.com/?q=" +
                     URLEncoder.encode(query, StandardCharsets.UTF_8) +
                     "&format=json&no_html=1&skip_disambig=1";
@@ -125,61 +140,55 @@ public class WebSearchTool {
                     .uri(url)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .timeout(REQUEST_TIMEOUT)
-                    .retryWhen(Retry.max(2))
-                    .doOnError(e -> log.warn("DuckDuckGo 请求错误: {}", e.getMessage()))
+                    .timeout(SINGLE_SOURCE_TIMEOUT)
                     .onErrorReturn("")
-                    .block(REQUEST_TIMEOUT);
+                    .block(SINGLE_SOURCE_TIMEOUT);
 
             if (response == null || response.isBlank()) {
-                return null;
+                return SourceResult.empty("DuckDuckGo");
             }
 
-            return parseDuckDuckGoResponse(query, response);
-        } catch (Exception e) {
-            log.warn("DuckDuckGo 搜索异常: {}", e.getMessage());
-            return null;
-        }
-    }
+            JsonNode json = objectMapper.readTree(response);
+            List<String> results = new ArrayList<>();
 
-    private String parseDuckDuckGoResponse(String query, String response) throws Exception {
-        JsonNode json = objectMapper.readTree(response);
-        List<String> results = new ArrayList<>();
+            String abstractText = json.path("Abstract").asText();
+            if (!abstractText.isBlank()) {
+                results.add("摘要: " + abstractText);
+            }
 
-        String abstractText = json.path("Abstract").asText();
-        if (!abstractText.isBlank()) {
-            results.add("摘要: " + abstractText);
-        }
+            String answer = json.path("Answer").asText();
+            if (!answer.isBlank()) {
+                results.add("答案: " + answer);
+            }
 
-        String answer = json.path("Answer").asText();
-        if (!answer.isBlank()) {
-            results.add("答案: " + answer);
-        }
-
-        JsonNode relatedTopics = json.path("RelatedTopics");
-        if (relatedTopics.isArray()) {
-            int count = 0;
-            for (JsonNode topic : relatedTopics) {
-                if (count >= MAX_RESULTS) break;
-                String title = topic.path("Text").asText();
-                String link = topic.path("FirstURL").asText();
-                if (!title.isBlank()) {
-                    count++;
-                    results.add(String.format("%d. %s\n   链接: %s", count, title, link));
+            JsonNode relatedTopics = json.path("RelatedTopics");
+            if (relatedTopics.isArray()) {
+                int count = 0;
+                for (JsonNode topic : relatedTopics) {
+                    if (count >= MAX_RESULTS) break;
+                    String title = topic.path("Text").asText();
+                    String link = topic.path("FirstURL").asText();
+                    if (!title.isBlank()) {
+                        count++;
+                        results.add(String.format("%d. %s\n   链接: %s", count, title, link));
+                    }
                 }
             }
-        }
 
-        if (results.isEmpty()) {
-            return null;
-        }
-
-        log.info("DuckDuckGo 搜索完成: {} ({} 条结果)", query, results.size());
-        return "搜索关键词: " + query + "\n数据来源: DuckDuckGo\n\n" + String.join("\n\n", results);
+            if (results.isEmpty()) {
+                return SourceResult.empty("DuckDuckGo");
+            }
+            log.info("DuckDuckGo 搜索完成: {} ({} 条结果)", query, results.size());
+            return SourceResult.success("DuckDuckGo", results);
+        }).subscribeOn(Schedulers.boundedElastic())
+          .onErrorResume(e -> {
+              log.warn("DuckDuckGo 搜索异常: {}", e.getMessage());
+              return Mono.just(SourceResult.failure("DuckDuckGo", e.getMessage()));
+          });
     }
 
-    private String searchWithWikipedia(String query) {
-        try {
+    private Mono<SourceResult> searchWithWikipediaAsync(String query) {
+        return Mono.fromCallable(() -> {
             String url = "https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=" +
                     URLEncoder.encode(query, StandardCharsets.UTF_8) +
                     "&format=json&srlimit=" + MAX_RESULTS;
@@ -188,17 +197,12 @@ public class WebSearchTool {
                     .uri(url)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .timeout(REQUEST_TIMEOUT)
-                    .doOnError(e -> log.warn("Wikipedia 请求错误: {}", e.getMessage()))
+                    .timeout(SINGLE_SOURCE_TIMEOUT)
                     .onErrorReturn("")
-                    .block(REQUEST_TIMEOUT);
+                    .block(SINGLE_SOURCE_TIMEOUT);
 
             if (response == null || response.isBlank()) {
-                return "搜索失败：所有搜索渠道（SerpAPI、DuckDuckGo、Wikipedia）均无法访问。\n" +
-                       "建议：\n" +
-                       "1. 检查网络连接是否正常\n" +
-                       "2. 确认是否需要配置代理\n" +
-                       "3. 可在 application.yml 中配置 websearch.serpapi.key 使用付费搜索 API";
+                return SourceResult.empty("Wikipedia");
             }
 
             JsonNode json = objectMapper.readTree(response);
@@ -220,16 +224,127 @@ public class WebSearchTool {
             }
 
             if (results.isEmpty()) {
-                return "搜索关键词: " + query + "\n\n所有搜索渠道均未返回有效结果，建议更换关键词重试。";
+                return SourceResult.empty("Wikipedia");
             }
-
             log.info("Wikipedia 搜索完成: {} ({} 条结果)", query, results.size());
-            return "搜索关键词: " + query + "\n数据来源: Wikipedia\n\n" + String.join("\n\n", results);
-        } catch (Exception e) {
-            log.error("所有搜索方式均失败，query: {}", query, e);
-            return "搜索失败：所有搜索渠道均不可用。\n" +
-                   "错误详情: " + e.getMessage() + "\n" +
-                   "建议检查网络连接或稍后重试。";
+            return SourceResult.success("Wikipedia", results);
+        }).subscribeOn(Schedulers.boundedElastic())
+          .onErrorResume(e -> {
+              log.warn("Wikipedia 搜索异常: {}", e.getMessage());
+              return Mono.just(SourceResult.failure("Wikipedia", e.getMessage()));
+          });
+    }
+
+    private List<SourceResult> FluxMergeWithBudget(List<Mono<SourceResult>> tasks) {
+        List<SourceResult> collected = Collections.synchronizedList(new ArrayList<>());
+        Instant deadline = Instant.now().plus(TOTAL_SEARCH_BUDGET);
+
+        List<Thread> threads = new ArrayList<>();
+        for (Mono<SourceResult> task : tasks) {
+            Thread t = new Thread(() -> {
+                try {
+                    SourceResult result = task.block(Duration.between(Instant.now(), deadline));
+                    if (result != null) {
+                        collected.add(result);
+                    }
+                } catch (Exception e) {
+                    log.debug("[WebSearch] Source task cancelled (budget): {}", e.getMessage());
+                }
+            });
+            threads.add(t);
+            t.start();
         }
+
+        for (Thread t : threads) {
+            try {
+                long remaining = Duration.between(Instant.now(), deadline).toMillis();
+                if (remaining <= 0) break;
+                t.join(remaining);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        return new ArrayList<>(collected);
+    }
+
+    private ToolResult buildStructuredResult(String query, Map<String, SourceResult> results) {
+        List<SourceStatus> sources = new ArrayList<>();
+        List<String> allContent = new ArrayList<>();
+
+        for (SourceResult sr : results.values()) {
+            sources.add(new SourceStatus(sr.sourceName, sr.ok, sr.error));
+            if (sr.ok && sr.items != null) {
+                allContent.add("【" + sr.sourceName + "】\n" + String.join("\n\n", sr.items));
+            }
+        }
+
+        if (allContent.isEmpty()) {
+            return ToolResult.failure(
+                    "搜索失败：所有搜索渠道均不可用。建议检查网络连接或稍后重试。",
+                    query, "web_search");
+        }
+
+        boolean allOk = sources.stream().allMatch(s -> s.ok);
+        if (allOk) {
+            return ToolResult.success("搜索完成，共 " + allContent.size() + " 条结果", query, "web_search")
+                    .withData(buildResultData(query, sources, allContent));
+        } else {
+            return ToolResult.failure(
+                    "部分搜索渠道不可用，仅返回可用结果", query, "web_search")
+                    .withData(buildResultData(query, sources, allContent));
+        }
+    }
+
+    private String buildResultData(String query, List<SourceStatus> sources, List<String> contentParts) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"query\":\"").append(escapeJson(query)).append("\"");
+        sb.append(",\"sources\":[");
+        for (int i = 0; i < sources.size(); i++) {
+            if (i > 0) sb.append(",");
+            SourceStatus s = sources.get(i);
+            sb.append("{\"name\":\"").append(escapeJson(s.name)).append("\"");
+            sb.append(",\"ok\":").append(s.ok);
+            if (s.error != null) {
+                sb.append(",\"error\":\"").append(escapeJson(s.error)).append("\"");
+            }
+            sb.append("}");
+        }
+        sb.append("]");
+        if (!contentParts.isEmpty()) {
+            sb.append(",\"content\":\"").append(escapeJson(String.join("\n\n", contentParts))).append("\"");
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+    private record SourceResult(String sourceName, boolean ok, List<String> items, String error) {
+        static SourceResult success(String name, List<String> items) {
+            return new SourceResult(name, true, items, null);
+        }
+        static SourceResult empty(String name) {
+            return new SourceResult(name, false, List.of(), "无结果");
+        }
+        static SourceResult failure(String name, String error) {
+            return new SourceResult(name, false, List.of(), error);
+        }
+    }
+
+    private record SourceStatus(String name, boolean ok, String error) {}
+
+    private enum SearchStatus { SUCCESS, PARTIAL_SUCCESS, FAILURE }
+
+    private record CacheEntry(ToolResult result, Instant expiresAt) {
+        boolean isExpired() { return Instant.now().isAfter(expiresAt); }
     }
 }

@@ -1,5 +1,7 @@
 package com.mcp.gateway.channel;
 
+import com.mcp.common.channel.IntentType;
+
 public record GenerationTask(
         IntentType type,
         String topic,

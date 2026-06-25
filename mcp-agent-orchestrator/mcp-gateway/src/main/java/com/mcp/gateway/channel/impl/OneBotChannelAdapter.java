@@ -107,10 +107,15 @@ public class OneBotChannelAdapter implements ChannelAdapter {
     }
 
     private Mono<Void> sendTextReply(ChannelReply reply) {
+        String content = reply.getContent();
+        if (content == null || content.isBlank()) {
+            log.warn("[OneBot] Skipping empty message to {}", reply.getTargetId());
+            return Mono.empty();
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("message_type", reply.getChatType() == ChannelMessage.ChatType.GROUP ? "group" : "private");
         body.put(reply.getChatType() == ChannelMessage.ChatType.GROUP ? "group_id" : "user_id", reply.getTargetId());
-        body.put("message", reply.getContent());
+        body.put("message", content);
         body.put("auto_escape", false);
 
         return buildWebClient()

@@ -6,5 +6,6 @@ public enum IntentType {
     GENERATE_PPT,
     SWITCH_TEXT_MODE,
     SWITCH_VOICE_MODE,
-    AMBIGUOUS
+    AMBIGUOUS,
+    RECALL_HISTORY
 }

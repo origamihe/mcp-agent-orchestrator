@@ -16,6 +16,9 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class MemoryEntry {
+    private String userId;
+    private String groupId;
+    private MemoryType type;
     private String conclusion;
     private String basis;
     private String scope;

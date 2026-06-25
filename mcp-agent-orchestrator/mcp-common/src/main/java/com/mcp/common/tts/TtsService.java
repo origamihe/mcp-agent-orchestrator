@@ -27,4 +27,10 @@ public interface TtsService {
      * 健康检查
      */
     Mono<Boolean> healthCheck();
+
+    /**
+     * 检查 TTS 服务当前是否可用（带熔断缓存）
+     * @return true 如果服务可用
+     */
+    boolean isAvailable();
 }

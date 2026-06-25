@@ -1,6 +1,6 @@
 # mcp-agent-orchestrator
 
-基于 MCP (Model Context Protocol) 的多渠道 AI Agent 编排平台，支持 QQ Bot（OneBot/NapCat）、WebSocket 实时通信、日语 TTS 语音合成、DOCX/PPT 文件生成。
+基于 MCP (Model Context Protocol) 的多渠道 AI Agent 编排平台，支持 QQ Bot（OneBot/NapCat）、WebSocket 实时通信、中文 TTS 语音合成（CosyVoice）、DOCX/PPT 文件生成。
 
 ## 架构
 
@@ -17,7 +17,7 @@
 │  ┌───────────┐  ┌──────────┐  ┌──────────────┐  │
 │  │ mcp-gateway│  │mcp-engine│  │  mcp-tools   │  │
 │  │ 渠道适配层  │  │Agent编排 │  │ 文件生成/工具 │  │
-│  │ QQ/Web/API │  │ LLM调度  │  │ DOCX/PPT/TTS │  │
+│  │ QQ/Web/API │  │ LLM调度  │  │DOCX/PPT/CosyVoice│  │
 │  └───────────┘  └──────────┘  └──────────────┘  │
 └─────────────────────────────────────────────────┘
 ```
@@ -25,7 +25,7 @@
 ## 功能特性
 
 - **多渠道接入**：QQ Bot（OneBot 协议）、Web 前端、REST API
-- **语音模式**：日语 TTS 语音合成，QQ 语音消息回复
+- **语音模式**：中文 TTS 语音合成（CosyVoice），QQ 语音消息回复
 - **文件生成**：AI 驱动的 DOCX 和 PPT 文件生成
 - **实时监控**：WebSocket 推送文件下载链接到前端监控面板
 - **Agent 编排**：可配置的 LLM Agent 会话管理
@@ -37,7 +37,7 @@
 | **JDK** | 21+ | 后端编译与运行 |
 | **Maven** | 3.8+ | 后端构建 |
 | **Node.js** | 20.19+ 或 22.12+ | 前端开发与构建 |
-| **Python** | 3.10+ | AivisSpeech-Engine 与 TTS Bridge |
+| **Python** | 3.10+ | CosyVoice TTS Server |
 | **PostgreSQL** | 16+（推荐 18） | 数据持久化 |
 | **Ollama** | 最新版 | 本地 LLM 推理 |
 
@@ -76,8 +76,7 @@
 |------|------|------|
 | Ollama | 11434 | 本地 LLM 推理 |
 | PostgreSQL | 5432 | 数据库 |
-| AivisSpeech-Engine | 10101 | 日语 TTS 引擎 |
-| TTS Bridge | 5000 | TTS API 桥接层 |
+| CosyVoice TTS Server | 5001 | 中文 TTS 引擎（CosyVoice） |
 | NapCatQQ (OneBot) | 3002 | QQ Bot 协议适配 |
 | 后端服务 | 8080 | Spring Boot 主服务 |
 | 前端开发服务器 | 5173 | Vite Dev Server |
@@ -95,14 +94,15 @@ cd mcp-agent-orchestrator
 
 本项目依赖以下第三方开源项目，请自行下载并放置到对应目录：
 
-#### AivisSpeech-Engine（日语 TTS 引擎）
+#### CosyVoice（中文 TTS 引擎）
 
-- **仓库**：https://github.com/AivisProject/AivisSpeech-Engine
-- **许可证**：LGPL v3
-- **安装**：将 AivisSpeech-Engine 克隆或下载到项目根目录，命名为 `AivisSpeech-Engine-master/`
+- **仓库**：https://github.com/FunAudioLLM/CosyVoice
+- **许可证**：Apache License 2.0
+- **安装**：将 CosyVoice 克隆或下载到 `cosyvoice-server/` 目录下
 
 ```bash
-git clone https://github.com/AivisProject/AivisSpeech-Engine.git AivisSpeech-Engine-master
+cd cosyvoice-server
+git clone https://github.com/FunAudioLLM/CosyVoice.git
 ```
 
 #### NapCatQQ（QQ Bot 框架）
@@ -175,23 +175,25 @@ spring:
 
 ### 5. 启动 TTS 服务（可选：语音模式需要）
 
-语音模式需要 AivisSpeech-Engine 和 TTS Bridge 两个服务配合工作：
+语音模式需要 CosyVoice TTS Server 提供中文语音合成服务：
 
 ```bash
-# 方式一：使用启动脚本（Windows）
-start_tts_services.bat
+# 方式一：使用 PowerShell 启动脚本（Windows）
+cd cosyvoice-server
+.\start.ps1
 
 # 方式二：手动启动
-# 终端1 - 启动 AivisSpeech-Engine
-cd AivisSpeech-Engine-master
-python run.py --host 127.0.0.1 --port 10101
-
-# 终端2 - 启动 TTS Bridge
-pip install -r tts_bridge_requirements.txt
-python tts_bridge.py
+cd cosyvoice-server
+# 创建并激活虚拟环境
+python -m venv .venv
+.venv\Scripts\activate
+# 安装依赖
+pip install fastapi uvicorn soundfile numpy torch librosa
+# 启动服务
+python main.py
 ```
 
-> 启动后 AivisSpeech-Engine 在 `http://127.0.0.1:10101`，TTS Bridge 在 `http://127.0.0.1:5000`
+> 启动后 CosyVoice TTS Server 在 `http://127.0.0.1:5001`，首次启动会自动从 ModelScope 下载模型。
 
 ### 6. 配置 QQ Bot（可选）
 
@@ -238,8 +240,7 @@ npm run dev
 │   └── Ollama     (端口 11434)   →  ollama serve          │
 ├─────────────────────────────────────────────────────────┤
 │ 第2步：TTS 服务（可选）                                   │
-│   ├── AivisSpeech-Engine (端口 10101) →  python run.py   │
-│   └── TTS Bridge         (端口 5000)  →  python tts_bridge.py │
+│   └── CosyVoice TTS Server (端口 5001) → python main.py  │
 ├─────────────────────────────────────────────────────────┤
 │ 第3步：QQ Bot（可选）                                     │
 │   └── NapCatQQ           (端口 3002)  →  napcat.exe      │
@@ -273,9 +274,14 @@ mcp-agent-orchestrator-main/
 │           ├── DocxGenerator.vue    # DOCX 文档生成
 │           ├── PptGenerator.vue     # PPT 演示文稿生成
 │           └── MainLayout.vue       # 主布局（WebSocket 路由）
-├── tts_bridge.py                    # TTS 桥接服务
-├── tts_bridge_requirements.txt      # TTS Bridge Python 依赖
-├── start_tts_services.bat           # TTS 服务一键启动脚本
+├── cosyvoice-server/                # CosyVoice TTS 服务（Python）
+│   ├── main.py                      # FastAPI TTS 服务（端口 5001）
+│   ├── start.ps1                    # PowerShell 启动脚本
+│   ├── .venv/                       # Python 虚拟环境（Git 忽略）
+│   └── CosyVoice/                   # CosyVoice 模型源码
+├── tts_bridge.py                    # TTS 桥接服务（已弃用，保留兼容）
+├── tts_bridge_requirements.txt      # TTS Bridge 依赖（已弃用）
+├── start_tts_services.bat           # 旧版 TTS 启动脚本（已弃用）
 └── README.md
 ```
 
@@ -287,7 +293,7 @@ mcp-agent-orchestrator-main/
 
 | 项目 | 许可证 | 用途 |
 |------|--------|------|
-| [AivisSpeech-Engine](https://github.com/AivisProject/AivisSpeech-Engine) | LGPL v3 | 日语 TTS 语音合成 |
+| [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | Apache 2.0 | 中文 TTS 语音合成 |
 | [NapCatQQ](https://github.com/NapNeko/NapCatQQ) | NapNeko 自定义许可证 | QQ Bot 协议适配 |
 
 详细信息请参阅 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
@@ -298,9 +304,10 @@ mcp-agent-orchestrator-main/
 确保 PostgreSQL 服务已启动，且 `application.yml` 中的用户名密码正确。
 
 ### Q: TTS 语音合成失败？
-1. 检查 AivisSpeech-Engine 是否正确启动（`http://127.0.0.1:10101/docs`）
-2. 检查 TTS Bridge 是否正确启动（`http://127.0.0.1:5000/docs`）
-3. 确认回复文本是日语，中文输入会导致 TTS 发音不正确
+1. 检查 CosyVoice TTS Server 是否正确启动（`http://127.0.0.1:5001/health`）
+2. 确认模型已下载完成（首次启动会自动从 ModelScope 下载，可能需要几分钟）
+3. 检查 Python 依赖是否完整安装（`fastapi`, `uvicorn`, `soundfile`, `torch`, `librosa`）
+4. 如果使用零样本克隆模式，需提供 `prompt_wav` 参数
 
 ### Q: QQ Bot 无法接收到消息？
 1. 确保 NapCat 已正确登录 QQ 并开启 OneBot HTTP 服务
@@ -315,7 +322,3 @@ mcp-agent-orchestrator-main/
 ## 免责声明
 
 本项目仅供学习和研究使用。使用 QQ Bot 功能时，请遵守 QQ 平台的服务条款和相关法律法规。开发者不对因使用本项目而产生的任何问题承担责任。
-
-## 免责声明
-
-本项目仅供学习和研究使用。使用 QQ Bot 功能时，请遵守 QQ 平台的服务条款和相关法律法规。

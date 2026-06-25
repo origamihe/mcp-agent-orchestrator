@@ -1,6 +1,7 @@
 package com.mcp.core.entity;
 
 import com.mcp.core.domain.memory.MemoryCategory;
+import com.mcp.core.domain.memory.MemoryScope;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -30,9 +31,19 @@ public class MemoryPackageEntity {
     @Column(length = 64, nullable = false)
     private String sessionId;
 
+    @Column(length = 64)
+    private String userId;
+
+    @Column(length = 64)
+    private String groupId;
+
     @Enumerated(EnumType.STRING)
     @Column(length = 30, nullable = false)
     private MemoryCategory category;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20, nullable = false)
+    private MemoryScope scope = MemoryScope.USER;
 
     @Column(columnDefinition = "TEXT", nullable = false)
     private String content;

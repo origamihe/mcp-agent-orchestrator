@@ -2,7 +2,11 @@ package com.mcp.gateway.channel;
 
 import com.mcp.common.channel.ChannelMessage;
 import com.mcp.common.channel.ChannelReply;
+import com.mcp.common.channel.IntentType;
+import com.mcp.common.channel.RecallMode;
 import com.mcp.common.channel.SessionState;
+import com.mcp.common.identity.GroupContext;
+import com.mcp.common.identity.UserProfile;
 import com.mcp.gateway.ws.WebSocketSessionManager;
 import com.mcp.tools.tool.DocxGeneratorTool;
 import com.mcp.tools.tool.PptGeneratorTool;
@@ -25,6 +29,7 @@ public class ChannelOrchestrator {
     private final PromptComposer promptComposer;
     private final AgentFacade agentFacade;
     private final ResponsePipeline responsePipeline;
+    private final UserProfileService userProfileService;
 
     @Value("${docx.output.dir:./generated/docx}")
     private String docxOutputDir;
@@ -39,7 +44,8 @@ public class ChannelOrchestrator {
                                 IntentRouter intentRouter,
                                 PromptComposer promptComposer,
                                 AgentFacade agentFacade,
-                                ResponsePipeline responsePipeline) {
+                                ResponsePipeline responsePipeline,
+                                UserProfileService userProfileService) {
         this.adapterRegistry = adapterRegistry;
         this.docxGeneratorTool = docxGeneratorTool;
         this.pptGeneratorTool = pptGeneratorTool;
@@ -48,6 +54,7 @@ public class ChannelOrchestrator {
         this.promptComposer = promptComposer;
         this.agentFacade = agentFacade;
         this.responsePipeline = responsePipeline;
+        this.userProfileService = userProfileService;
     }
 
     /**
@@ -83,19 +90,41 @@ public class ChannelOrchestrator {
             case GENERATE_DOCX -> handleDocxGeneration(msg, adapter, intentResult.task(), state);
             case GENERATE_PPT   -> handlePptGeneration(msg, adapter, intentResult.task(), state);
             case AMBIGUOUS      -> handleAmbiguous(msg, adapter, state);
+            case RECALL_HISTORY -> handleRecallHistory(msg, adapter, userMessage, sessionId, state, intentResult.recallMode());
             default             -> handleChat(msg, adapter, userMessage, sessionId, state);
         };
     }
 
     /**
-     * 普通聊天链路
+     * 普通聊天链路 - 注入身份信息、群上下文、分层 Prompt
      */
     private Mono<Void> handleChat(ChannelMessage msg, ChannelAdapter adapter,
                                    String userMessage, String sessionId, SessionState state) {
-        String systemPrompt = promptComposer.buildSystemPrompt(adapter.getSystemPrompt(), state);
+        // 获取用户身份
+        UserProfile userProfile = userProfileService.getUserProfile(msg.getSenderId());
 
-        log.info("[Channel:{}] Reply mode: {} | Session: {}",
-                adapter.getChannelType(), state.isVoiceMode() ? "VOICE(JA)" : "TEXT(ZH)", sessionId);
+        // 获取群上下文
+        GroupContext groupContext = null;
+        if (msg.getChatType() == ChannelMessage.ChatType.GROUP && msg.getChatId() != null) {
+            groupContext = userProfileService.getGroupContext(msg.getChatId());
+        }
+
+        // 构建分层 System Prompt
+        String systemPrompt = promptComposer.buildLayeredSystemPrompt(
+                adapter.getSystemPrompt(),
+                null,   // developerPrompt 从配置读取
+                null,   // personaPrompt 从配置读取
+                userProfile,
+                groupContext,
+                state);
+
+        log.info("[Channel:{}] User: {} ({}) | Role: {} | Relation: {} | Session: {}",
+                adapter.getChannelType(),
+                userProfile.getDisplayName(),
+                msg.getSenderId(),
+                userProfile.getRole(),
+                userProfile.getRelation(),
+                sessionId);
 
         return agentFacade.call(userMessage, sessionId, systemPrompt)
                 .flatMap(agentResponse -> responsePipeline.process(
@@ -103,6 +132,25 @@ public class ChannelOrchestrator {
                 .flatMap(adapter::sendReply)
                 .doOnSuccess(v -> log.info("[Channel:{}] Reply sent", adapter.getChannelType()))
                 .doOnError(e -> log.error("[Channel:{}] Error: {}", adapter.getChannelType(), e.getMessage(), e))
+                .then();
+    }
+
+    /**
+     * 聊天历史回顾链路 — 从数据库读取真实 chat_messages 注入 Prompt
+     */
+    private Mono<Void> handleRecallHistory(ChannelMessage msg, ChannelAdapter adapter,
+                                            String userMessage, String sessionId, SessionState state,
+                                            RecallMode recallMode) {
+        String systemPrompt = promptComposer.buildSystemPrompt(adapter.getSystemPrompt(), state);
+
+        log.info("[Channel:{}] RECALL_HISTORY ({} mode) | Session: {}", adapter.getChannelType(), recallMode, sessionId);
+
+        return agentFacade.callWithHistory(userMessage, sessionId, systemPrompt, recallMode)
+                .flatMap(agentResponse -> responsePipeline.process(
+                        adapter.getChannelType(), msg, agentResponse, state))
+                .flatMap(adapter::sendReply)
+                .doOnSuccess(v -> log.info("[Channel:{}] RECALL_HISTORY reply sent", adapter.getChannelType()))
+                .doOnError(e -> log.error("[Channel:{}] RECALL_HISTORY error: {}", adapter.getChannelType(), e.getMessage(), e))
                 .then();
     }
 

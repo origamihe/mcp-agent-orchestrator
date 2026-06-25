@@ -105,7 +105,7 @@ public class ResponsePipeline {
                     splitPos = i + 1;
                     break;
                 }
-                if ((c == 'は' || c == 'が' || c == 'を' || c == 'に' || c == 'で' || c == 'と' || c == 'へ' || c == 'も' || c == 'か' || c == 'ね' || c == 'よ') && i + 1 < sentence.length()) {
+                if ((c == '的' || c == '了' || c == '在' || c == '是' || c == '和' || c == '与' || c == '或' || c == '着' || c == '过' || c == '呢' || c == '吧' || c == '吗' || c == '啊') && i + 1 < sentence.length()) {
                     splitPos = i + 1;
                     break;
                 }
@@ -124,7 +124,18 @@ public class ResponsePipeline {
     }
 
     private Mono<ChannelReply> synthesizeVoice(String cleanText, String channelType, ChannelMessage msg) {
-        return ttsService.synthesizeToBytes(cleanText, "lingyin")
+        if (!ttsService.isAvailable()) {
+            log.info("[TTS] TTS service not available, using text-only reply");
+            return Mono.just(ChannelReply.builder()
+                    .channelType(channelType)
+                    .targetId(getReplyTargetId(msg))
+                    .content(cleanText)
+                    .chatType(msg.getChatType())
+                    .sendAsVoice(false)
+                    .build());
+        }
+
+        return ttsService.synthesizeToBytes(cleanText, "default")
                 .map(voiceData -> ChannelReply.builder()
                         .channelType(channelType)
                         .targetId(getReplyTargetId(msg))

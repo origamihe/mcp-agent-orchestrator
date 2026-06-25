@@ -2,6 +2,7 @@ package com.mcp.tools.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mcp.tools.model.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +18,7 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -79,11 +81,49 @@ public class PptGeneratorTool {
     private DocumentModel.PptModel parseToPptModel(String llmResponse, String userTitle) {
         try {
             String json = extractJson(llmResponse);
+            json = normalizeContentToBlocks(json);
             return objectMapper.readValue(json, DocumentModel.PptModel.class);
         } catch (Exception e) {
             log.warn("Failed to parse PptModel from LLM response, using fallback: {}", e.getMessage());
             return buildFallbackPptModel(llmResponse, userTitle);
         }
+    }
+
+    /**
+     * 将 LLM 输出的简化 content 数组转换为 blocks 格式。
+     * "content": ["要点1", "要点2"] → "blocks": [{"type":"bullet_list","items":["要点1","要点2"]}]
+     */
+    private String normalizeContentToBlocks(String json) {
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            JsonNode slidesNode = root.get("slides");
+            if (slidesNode != null && slidesNode.isArray()) {
+                for (JsonNode slide : slidesNode) {
+                    if (slide.has("content") && !slide.has("blocks")) {
+                        JsonNode contentNode = slide.get("content");
+                        if (contentNode.isArray()) {
+                            var blocksArray = objectMapper.createArrayNode();
+                            var bulletBlock = objectMapper.createObjectNode();
+                            bulletBlock.put("type", "bullet_list");
+                            bulletBlock.set("items", contentNode);
+                            blocksArray.add(bulletBlock);
+                            ((ObjectNode) slide).set("blocks", blocksArray);
+                            ((ObjectNode) slide).remove("content");
+                        }
+                    }
+                }
+            }
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            log.debug("Failed to normalize content to blocks: {}", e.getMessage());
+            return json;
+        }
+    }
+
+    /** 安全获取 blocks，避免 NPE */
+    private static List<Block> safeBlocks(DocumentModel.Slide slide) {
+        List<Block> blocks = slide.blocks();
+        return blocks != null ? blocks : Collections.emptyList();
     }
 
     // ===== 第二步：校验（委托给 ContentValidator） =====
@@ -167,7 +207,7 @@ public class PptGeneratorTool {
         XSLFTextShape body = s.getPlaceholder(1);
         if (body != null) {
             body.clearText();
-            for (Block block : slide.blocks()) {
+            for (Block block : safeBlocks(slide)) {
                 if (block instanceof Block.BulletList bl) {
                     for (int i = 0; i < bl.items().size(); i++) {
                         XSLFTextParagraph bp = body.addNewTextParagraph();
@@ -216,7 +256,7 @@ public class PptGeneratorTool {
             XSLFTextShape body = s.getPlaceholder(1);
             if (body != null) {
                 body.clearText();
-                for (Block block : subSlide.blocks()) {
+                for (Block block : safeBlocks(subSlide)) {
                     if (block instanceof Block.BulletList bl) {
                         for (String item : bl.items()) {
                             String displayText = item.length() > MAX_BULLET_LENGTH
@@ -253,7 +293,7 @@ public class PptGeneratorTool {
 
         setSlideTitle(s, slide.title(), "对比", theme);
 
-        List<Block> blocks = slide.blocks();
+        List<Block> blocks = safeBlocks(slide);
         if (blocks.size() >= 2) {
             renderColumnBlock(s, blocks.get(0), leftX, y, colWidth, theme);
             renderColumnBlock(s, blocks.get(1), rightX, y, colWidth, theme);
@@ -288,7 +328,7 @@ public class PptGeneratorTool {
         XSLFTextShape body = s.getPlaceholder(1);
         if (body != null) {
             body.clearText();
-            for (Block block : slide.blocks()) {
+            for (Block block : safeBlocks(slide)) {
                 if (block instanceof Block.BulletList bl) {
                     for (String item : bl.items()) {
                         XSLFTextParagraph bp = body.addNewTextParagraph();
@@ -314,7 +354,7 @@ public class PptGeneratorTool {
         List<DocumentModel.Slide> result = new ArrayList<>();
         List<String> allBullets = new ArrayList<>();
 
-        for (Block block : slide.blocks()) {
+        for (Block block : safeBlocks(slide)) {
             if (block instanceof Block.BulletList bl) {
                 allBullets.addAll(bl.items());
             }
@@ -376,11 +416,12 @@ public class PptGeneratorTool {
 
     /**
      * 升级版 fallback：识别 Markdown 标题为 slide，列表为 bullet，
-     * 返回结构化的 PptModel
+     * 返回结构化的 PptModel。
+     * 当 LLM 返回非结构化中文文本时，按句子/段落拆分生成多页幻灯片。
      */
     private DocumentModel.PptModel buildFallbackPptModel(String response, String userTitle) {
         String[] lines = response.split("\n");
-        var slides = new ArrayList<DocumentModel.Slide>();
+        List<DocumentModel.Slide> slides = new ArrayList<>();
         var currentBullets = new ArrayList<String>();
         String currentTitle = userTitle;
         boolean isFirstSlide = true;
@@ -427,11 +468,60 @@ public class PptGeneratorTool {
             ));
         }
 
-        return new DocumentModel.PptModel(userTitle, "business",
-                slides.isEmpty()
-                        ? List.of(new DocumentModel.Slide(
-                                userTitle, SlideType.COVER, List.of(), null))
-                        : slides);
+        // 如果仍然没有有效 slides（LLM 返回了完全无法解析的文本），
+        // 按中文句子/段落拆分，生成多页基础幻灯片
+        if (slides.isEmpty() || (slides.size() == 1 && slides.get(0).blocks().isEmpty())) {
+            slides = buildSlidesFromPlainText(response, userTitle);
+        }
+
+        return new DocumentModel.PptModel(userTitle, "business", slides);
+    }
+
+    /**
+     * 从纯文本中按句子拆分生成幻灯片（最后的兜底策略）
+     */
+    private List<DocumentModel.Slide> buildSlidesFromPlainText(String text, String userTitle) {
+        var slides = new ArrayList<DocumentModel.Slide>();
+
+        // 封面
+        slides.add(new DocumentModel.Slide(
+                userTitle, SlideType.COVER,
+                List.of(new Block.BulletList(List.of(text.length() > 100 ? text.substring(0, 100) + "…" : text))),
+                null
+        ));
+
+        // 按中文句号、分号、换行拆分
+        String[] sentences = text.split("[。；;\n]");
+        var pageBullets = new ArrayList<String>();
+        int pageIndex = 1;
+
+        for (String sentence : sentences) {
+            sentence = sentence.trim();
+            if (sentence.isEmpty() || sentence.length() < 2) continue;
+            pageBullets.add(sentence);
+
+            if (pageBullets.size() >= MAX_BULLETS_PER_SLIDE) {
+                slides.add(new DocumentModel.Slide(
+                        userTitle + " - 第" + pageIndex + "页",
+                        SlideType.BULLET,
+                        List.of(new Block.BulletList(List.copyOf(pageBullets))),
+                        null
+                ));
+                pageBullets = new ArrayList<>();
+                pageIndex++;
+            }
+        }
+
+        if (!pageBullets.isEmpty()) {
+            slides.add(new DocumentModel.Slide(
+                    userTitle + " - 第" + pageIndex + "页",
+                    SlideType.BULLET,
+                    List.of(new Block.BulletList(List.copyOf(pageBullets))),
+                    null
+            ));
+        }
+
+        return slides;
     }
 
     private String buildFileName(String title) {

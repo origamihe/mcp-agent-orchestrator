@@ -4,21 +4,21 @@
 
 ---
 
-## AivisSpeech-Engine
+## CosyVoice
 
-- **名称**：AivisSpeech-Engine
-- **版本**：master 分支
-- **仓库**：https://github.com/AivisProject/AivisSpeech-Engine
-- **许可证**：GNU Lesser General Public License v3.0 (LGPL v3)
-- **版权**：Copyright (c) AivisProject Contributors
-- **用途**：日语 TTS（文本转语音）语音合成引擎
+- **名称**：CosyVoice
+- **版本**：最新稳定版
+- **仓库**：https://github.com/FunAudioLLM/CosyVoice
+- **许可证**：Apache License 2.0
+- **版权**：Copyright (c) Alibaba Group / FunAudioLLM Contributors
+- **用途**：中文 TTS（文本转语音）语音合成引擎
 - **修改**：无修改，原样使用
 
-### LGPL v3 合规声明
+### Apache 2.0 合规声明
 
-根据 LGPL v3 第 4 条，本项目将 AivisSpeech-Engine 作为独立库使用（通过网络 API 调用），未将其代码与本项目代码合并编译。AivisSpeech-Engine 的完整源码和许可证文件保留在其原始目录 `AivisSpeech-Engine-master/` 中。
+本项目将 CosyVoice 作为独立库使用（通过网络 API 调用），CosyVoice 的完整源码和许可证文件保留在其原始目录 `cosyvoice-server/CosyVoice/` 中。
 
-用户可自行替换或升级 AivisSpeech-Engine 版本，而无需修改本项目代码。
+用户可自行替换或升级 CosyVoice 版本，而无需修改本项目代码。
 
 ---
 
@@ -63,10 +63,10 @@ NapCat 的 `node_modules/` 中包含以下 MIT 许可的依赖（部分列举）
 
 参见项目根目录下的 [LICENSE](LICENSE) 文件。
 
-### LGPL v3（AivisSpeech-Engine）
+### Apache 2.0（CosyVoice）
 
-参见 `AivisSpeech-Engine-master/LICENSE` 文件，或访问：
-https://www.gnu.org/licenses/lgpl-3.0.html
+参见 `cosyvoice-server/CosyVoice/LICENSE` 文件，或访问：
+https://www.apache.org/licenses/LICENSE-2.0.html
 
 ### NapNeko 自定义许可证（NapCatQQ）
 

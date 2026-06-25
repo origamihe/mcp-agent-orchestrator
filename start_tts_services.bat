@@ -1,30 +1,32 @@
 @echo off
 chcp 65001 >nul
 echo ============================================
-echo   AivisSpeech Engine + TTS Bridge Launcher
+echo   CosyVoice TTS Server Launcher
 echo ============================================
 echo.
 
 cd /d "%~dp0"
 
-REM 启动 AivisSpeech Engine (port 10101)
-echo [1/2] Starting AivisSpeech Engine on port 10101...
-start "AivisSpeech-Engine" cmd /c "cd /d AivisSpeech-Engine-master && python run.py --host 127.0.0.1 --port 10101"
-
-REM 等待 Engine 启动
-echo Waiting for AivisSpeech Engine to start...
-timeout /t 5 /nobreak >nul
-
-REM 启动 TTS Bridge (port 5000)
-echo [2/2] Starting TTS Bridge on port 5000...
-start "TTS-Bridge" cmd /c "cd /d %~dp0 && pip install -r tts_bridge_requirements.txt -q && python tts_bridge.py"
+REM 启动 CosyVoice TTS Server (port 5001)
+echo [1/1] Starting CosyVoice TTS Server on port 5001...
+cd cosyvoice-server
+if exist ".venv\Scripts\activate.bat" (
+    echo Activating virtual environment...
+    call .venv\Scripts\activate.bat
+) else (
+    echo Creating virtual environment...
+    python -m venv .venv
+    call .venv\Scripts\activate.bat
+    echo Installing dependencies...
+    pip install fastapi uvicorn soundfile numpy torch librosa -q
+)
+start "CosyVoice-TTS" cmd /c "cd /d %~dp0cosyvoice-server && .venv\Scripts\python.exe main.py"
 
 echo.
 echo ============================================
-echo   All services started!
-echo   - AivisSpeech Engine: http://127.0.0.1:10101
-echo   - TTS Bridge:         http://127.0.0.1:5000
+echo   CosyVoice TTS Server started!
+echo   - Health Check: http://127.0.0.1:5001/health
 echo ============================================
 echo.
-echo Press any key to exit this window (services will keep running)...
+echo Press any key to exit this window (service will keep running)...
 pause >nul

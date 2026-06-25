@@ -1,4 +1,4 @@
-server:
+﻿﻿﻿﻿server:
   port: 8080
 
 spring:
@@ -11,7 +11,7 @@ spring:
       base-url: http://localhost:11434
       chat:
         options:
-          model: gemma4            # 或 qwen3.5:8b 等，确认 ollama list 中的名称
+          model: granite3.2:8b        # 或 qwen3.5:8b 等，确认 ollama list 中的名称gemma4 qwen2.5:7b granite3.2:8b  gemma3:12b
           temperature: 0.3
 
   # ==================== 数据库配置====================
@@ -44,6 +44,8 @@ logging:
 mcp:
   protocol-version: "2024-11-05"
   server-name: "MCP-Agent-Orchestrator"
+  workspace:
+    root: ""
 
 app:
   proxy:
@@ -58,10 +60,10 @@ channel:
     enabled: true
     onebot-url: http://127.0.0.1:3002
     access-token: "agent123"
-    qq-number: ""   # 机器人QQ号，用于在QQ群中识别机器人
+    qq-number: ""
     reply-mode: all          # all | at_only | keyword
     keywords: ""
-    system-prompt: "" # 系统提示词，用于引导模型生成符合要求的回复
+    system-prompt: ""
   telegram:
     enabled: false
     bot-token: ""
@@ -69,13 +71,17 @@ channel:
   discord:
     enabled: false
     bot-token: ""
-# ==================== TTS 语音合成配置 ====================
+# ==================== TTS 语音合成配置（CosyVoice 3）====================
 tts:
   enabled: true                       # 是否启用语音功能
-  api-url: http://localhost:5000     # TTS Python 服务地址
+  api-url: http://localhost:5001     # CosyVoice 3 Python 服务地址
   output-dir: ./voice-output         # 语音文件输出目录
-  default-voice: AI            # 默认音色ID
+  default-voice: default             # 默认音色ID（CosyVoice 3 预置音色或 clone 音色）
   max-text-length: 500               # 语音合成最大文本长度（超过则截断）
+
+# ==================== 聊天回顾配置 ====================
+recall:
+  max-history-tokens: 5000        # 回顾历史最大 token 预算（默认 5000，可按模型上下文调整）
 
 # ==================== 长记忆系统配置 ====================
 memory:

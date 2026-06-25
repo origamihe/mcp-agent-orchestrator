@@ -3,8 +3,8 @@ package com.mcp.common.channel;
 import java.time.Instant;
 
 public class SessionState {
-    private boolean voiceMode = true;
-    private String language = "ja";
+    private boolean voiceMode = false;
+    private String language = "zh";
     private String pendingIntent;
     private Instant lastActiveAt = Instant.now();
 

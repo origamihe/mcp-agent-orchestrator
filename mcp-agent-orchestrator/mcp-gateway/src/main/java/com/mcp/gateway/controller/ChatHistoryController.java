@@ -21,8 +21,8 @@ public class ChatHistoryController {
     }
 
     @GetMapping("/sessions")
-    public Mono<List<Map<String, Object>>> getSessions() {
-        return chatHistoryService.getAllSessions("default-user");
+    public Mono<List<Map<String, Object>>> getSessions(@RequestParam(defaultValue = "default") String userId) {
+        return chatHistoryService.getAllSessions(userId);
     }
 
     @GetMapping("/{sessionId}")

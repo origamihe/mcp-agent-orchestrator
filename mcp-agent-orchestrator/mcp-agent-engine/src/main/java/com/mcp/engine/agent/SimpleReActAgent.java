@@ -77,9 +77,12 @@ public class SimpleReActAgent implements Agent {
                 ? context.getSystemPrompt()
                 : null;
         String toolInstructions = buildToolInstructions();
+        String sessionHint = (context != null && context.getSessionId() != null)
+                ? "\n\n【当前会话ID】" + context.getSessionId() + "\n调用 read_conversation_history 或 read_conversation_summary 时，请使用此 sessionId。"
+                : "";
         String systemPrompt = (customPrompt != null)
-                ? customPrompt + "\n\n" + toolInstructions
-                : "你是一个专业、友好的智能助手。\n\n" + toolInstructions;
+                ? customPrompt + "\n\n" + toolInstructions + sessionHint
+                : "你是一个专业、友好的智能助手。\n\n" + toolInstructions + sessionHint;
         return executeWithSystemPrompt(task, systemPrompt);
     }
 
@@ -106,6 +109,23 @@ public class SimpleReActAgent implements Agent {
                    你应调用 read_file(path="C:\\Users\\xxx\\Desktop\\数据标注\\bolt.txt")，
                    而不是 read_file(path="bolt.txt")。
                 9. 如果用户提到了目录和文件名，请将它们拼接成完整的绝对路径后再调用工具。
+
+                【文档文件规则 - 重要】
+                10. 对于 .docx（Word文档）和 .pdf（PDF文档）文件，不要使用 read_file 读取，
+                    应使用 read_document_meta 获取文档元信息，或使用 read_document_range 读取指定页面。
+                    例如：read_document_meta(path="C:\\Users\\xxx\\Desktop\\报告.docx")。
+                11. 对于 .txt、.md、.java 等纯文本文件，使用 read_file 正常读取。
+
+                【对话历史回放规则 - 极其重要】
+                12. 当用户要求"复述聊天记录"、"列出我说过的话"、"回顾对话"、"把聊天内容列出来"、
+                    "还记得我说了什么吗"、"总结刚才聊了什么"等需要回顾历史对话的请求时，
+                    必须调用 read_conversation_history 或 read_conversation_summary 工具获取真实数据，
+                    不要凭记忆猜测或编造。
+                13. 如果用户要求逐条列出所有发言，调用 read_conversation_history(role="user")，
+                    只获取用户发言。
+                14. 如果用户问"我们聊了什么"或"总结对话"，调用 read_conversation_summary 获取摘要。
+                15. 如果历史记录为空或工具返回空结果，必须明确告知用户"当前会话没有保存的历史记录"，
+                    不要假装记得。
                 """;
     }
 
@@ -130,7 +150,10 @@ public class SimpleReActAgent implements Agent {
         if (round >= maxRounds) {
             log.info("[ReAct] Max rounds ({}) reached, forcing final answer", maxRounds);
             return callOllamaWithTools(null, null, toolDefs, messages)
-                    .map(resp -> resp.content != null ? resp.content : "已达最大推理轮次，无法完成分析。");
+                    .map(resp -> {
+                        String c = resp.content;
+                        return (c != null && !c.isBlank()) ? c : "已达最大推理轮次，无法完成分析。";
+                    });
         }
 
         return callOllamaWithTools(null, null, toolDefs, messages)
@@ -192,7 +215,12 @@ public class SimpleReActAgent implements Agent {
                                     return reactLoop(updatedMessages, toolDefs, round + 1, updatedCalls);
                                 });
                     }
-                    return Mono.just(response.content != null ? response.content : "无响应");
+                    String finalContent = response.content;
+                    if (finalContent == null || finalContent.isBlank()) {
+                        log.warn("[ReAct Round {}] LLM returned empty content, using fallback", round);
+                        finalContent = buildSmartFallback(messages, round);
+                    }
+                    return Mono.just(finalContent);
                 });
     }
 
@@ -208,14 +236,23 @@ public class SimpleReActAgent implements Agent {
             return tr.toJson();
         }
         try {
+            String content = toolResult != null ? toolResult.toString() : "空结果";
+            boolean success = !isToolFailure(content);
             Map<String, Object> structured = new LinkedHashMap<>();
-            structured.put("success", true);
+            structured.put("success", success);
             structured.put("tool", toolCall.name);
-            structured.put("content", toolResult != null ? toolResult.toString() : "空结果");
+            structured.put("content", content);
             return objectMapper.writeValueAsString(structured);
         } catch (Exception e) {
             return "{\"success\":false,\"tool\":\"" + toolCall.name + "\",\"error\":\"serialization failed\"}";
         }
+    }
+
+    private boolean isToolFailure(String content) {
+        if (content == null) return true;
+        return content.contains("\"ok\":false")
+                || content.contains("\"success\":false")
+                || content.contains("\"status\":\"FAILURE\"");
     }
 
     private String canonicalArgs(Map<String, Object> args) {
@@ -225,6 +262,45 @@ public class SimpleReActAgent implements Agent {
         } catch (Exception e) {
             return args.toString();
         }
+    }
+
+    private String buildSmartFallback(List<Map<String, Object>> messages, int round) {
+        boolean hadToolFailure = false;
+        boolean hadSearchFailure = false;
+        String lastToolError = null;
+
+        for (Map<String, Object> msg : messages) {
+            if ("tool".equals(msg.get("role"))) {
+                String content = (String) msg.get("content");
+                if (content != null) {
+                    if (content.contains("\"status\":\"FAILURE\"") || content.contains("\"status\":\"PARTIAL_SUCCESS\"")) {
+                        hadSearchFailure = true;
+                    }
+                    if (content.contains("\"ok\":false") || content.contains("搜索失败") || content.contains("FAILURE")) {
+                        hadToolFailure = true;
+                        if (content.contains("\"error\":")) {
+                            int start = content.indexOf("\"error\":\"");
+                            if (start >= 0) {
+                                int end = content.indexOf("\"", start + 10);
+                                if (end > start) {
+                                    lastToolError = content.substring(start + 10, end);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (hadSearchFailure) {
+            return "抱歉，搜索服务暂时不可用，网络连接可能存在问题。" +
+                   "你可以稍后再试，或者尝试换一个更具体的关键词重新搜索。";
+        }
+        if (hadToolFailure) {
+            String detail = lastToolError != null ? "（" + lastToolError + "）" : "";
+            return "抱歉，工具执行遇到了问题" + detail + "。请稍后再试。";
+        }
+        return "抱歉，我暂时无法回答这个问题，请稍后再试。";
     }
 
     private List<Map<String, Object>> buildOllamaToolDefinitions() {

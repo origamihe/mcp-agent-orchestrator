@@ -6,6 +6,10 @@ import com.mcp.llm.client.LlmClient;
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.registry.ToolRegistry;
 import com.mcp.tools.tool.*;
+import com.mcp.tools.tool.document.DocumentReadToolSet;
+import com.mcp.tools.tool.document.DocumentSearchToolSet;
+import com.mcp.tools.tool.read.ReadToolSet;
+import com.mcp.tools.tool.edit.EditToolSet;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
@@ -30,10 +34,10 @@ public class McpOrchestratorApplication {
         LlmClient llmClient = context.getBean(LlmClient.class);
 
         // 1. 注册工具
-        FileReadTool fileReadTool = context.getBean(FileReadTool.class);
-        toolRegistry.register(fileReadTool);
-        FileWriteTool fileWriteTool = context.getBean(FileWriteTool.class);
-        toolRegistry.register(fileWriteTool);
+        ReadToolSet readToolSet = context.getBean(ReadToolSet.class);
+        toolRegistry.register(readToolSet);
+        EditToolSet editToolSet = context.getBean(EditToolSet.class);
+        toolRegistry.register(editToolSet);
         WebSearchTool webSearchTool = context.getBean(WebSearchTool.class);
         toolRegistry.register(webSearchTool);
         MultiSearchTool multiSearchTool = context.getBean(MultiSearchTool.class);
@@ -42,6 +46,10 @@ public class McpOrchestratorApplication {
         toolRegistry.register(fetchWebpageTool);
         DeepResearchTool deepResearchTool = context.getBean(DeepResearchTool.class);
         toolRegistry.register(deepResearchTool);
+        DocumentReadToolSet documentReadToolSet = context.getBean(DocumentReadToolSet.class);
+        toolRegistry.register(documentReadToolSet);
+        DocumentSearchToolSet documentSearchToolSet = context.getBean(DocumentSearchToolSet.class);
+        toolRegistry.register(documentSearchToolSet);
         orchestrator.registerDefaultTools();
 
         // 2. 配置并注册 Agent

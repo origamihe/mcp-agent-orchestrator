@@ -14,6 +14,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -50,7 +51,7 @@ public class ChatHistoryService {
             return messages.stream()
                     .map(m -> m.getRole().getCode() + ": " + m.getContent())
                     .collect(Collectors.joining("\n"));
-        });
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     /**
@@ -59,32 +60,28 @@ public class ChatHistoryService {
     @Transactional
     public Mono<Void> saveUserAndAssistantMessage(String sessionId, String userMessage, String assistantResponse) {
         return Mono.fromRunnable(() -> {
-            // 确保会话存在（不存在则创建）
             sessionRepository.findById(sessionId)
                     .orElseGet(() -> {
                         ChatSessionEntity newSession = new ChatSessionEntity();
                         newSession.setSessionId(sessionId);
-                        newSession.setUserId("default-user");
+                        newSession.setUserId(sessionId);
                         return sessionRepository.save(newSession);
                     });
 
-            // 保存用户消息
             ChatMessageEntity userMsg = new ChatMessageEntity();
             userMsg.setSessionId(sessionId);
             userMsg.setRole(MessageRole.USER);
             userMsg.setContent(userMessage);
             messageRepository.save(userMsg);
 
-            // 保存 Assistant 消息
             ChatMessageEntity assistantMsg = new ChatMessageEntity();
             assistantMsg.setSessionId(sessionId);
             assistantMsg.setRole(MessageRole.ASSISTANT);
             assistantMsg.setContent(assistantResponse);
             messageRepository.save(assistantMsg);
 
-            // 更新会话最后活跃时间
             sessionRepository.updateLastActiveTime(sessionId, LocalDateTime.now());
-        });
+        }).subscribeOn(Schedulers.boundedElastic()).then();
     }
 
     /**
@@ -93,7 +90,8 @@ public class ChatHistoryService {
     public Mono<ChatSession> getFullSession(String sessionId) {
         return Mono.fromCallable(() -> sessionRepository.findById(sessionId)
                 .map(sessionMapper::toDomain)
-                .orElseThrow(() -> new RuntimeException("Session not found: " + sessionId)));
+                .orElseThrow(() -> new RuntimeException("Session not found: " + sessionId)))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     /**
@@ -104,7 +102,20 @@ public class ChatHistoryService {
                 .findTopNBySessionIdOrderByCreatedAtDesc(sessionId, PageRequest.of(0, limit))
                 .stream()
                 .map(messageMapper::toDomain)
-                .collect(Collectors.toList()));
+                .collect(Collectors.toList()))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * 获取会话全部消息（领域对象，按时间升序）
+     */
+    public Mono<List<CoreChatMessage>> getAllMessages(String sessionId) {
+        return Mono.fromCallable(() -> messageRepository
+                .findBySessionIdOrderByCreatedAtAsc(sessionId)
+                .stream()
+                .map(messageMapper::toDomain)
+                .collect(Collectors.toList()))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     /**
@@ -122,7 +133,8 @@ public class ChatHistoryService {
                     ChatMessageEntity firstMsg = messageRepository.findFirstBySessionIdOrderByCreatedAtAsc(s.getSessionId());
                     map.put("firstMessage", firstMsg != null ? firstMsg.getContent() : null);
                     return map;
-                }).collect(Collectors.toList()));
+                }).collect(Collectors.toList()))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     /**
@@ -130,7 +142,8 @@ public class ChatHistoryService {
      */
     public Mono<List<ChatMessageEntity>> getSessionMessages(String sessionId) {
         return Mono.fromCallable(() ->
-                messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
+                messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     /**
@@ -141,7 +154,7 @@ public class ChatHistoryService {
         return Mono.fromRunnable(() -> {
             messageRepository.deleteBySessionId(sessionId);
             sessionRepository.deleteById(sessionId);
-        });
+        }).subscribeOn(Schedulers.boundedElastic()).then();
     }
 
     /**
@@ -150,6 +163,16 @@ public class ChatHistoryService {
     @Transactional
     public Mono<Void> deleteMessage(Long messageId) {
         return Mono.fromRunnable(() ->
-                messageRepository.deleteById(messageId));
+                messageRepository.deleteById(messageId))
+                .subscribeOn(Schedulers.boundedElastic()).then();
+    }
+
+    /**
+     * 仅更新会话活跃时间，不保存消息（用于回顾类操作）
+     */
+    public Mono<Void> touchSession(String sessionId) {
+        return Mono.fromRunnable(() ->
+                sessionRepository.updateLastActiveTime(sessionId, LocalDateTime.now()))
+                .subscribeOn(Schedulers.boundedElastic()).then();
     }
 }

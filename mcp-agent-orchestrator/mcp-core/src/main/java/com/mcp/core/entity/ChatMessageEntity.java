@@ -30,6 +30,12 @@ public class ChatMessageEntity {
     @Column(length = 64, nullable = false)
     private String sessionId;
 
+    @Column(length = 64)
+    private String senderId;
+
+    @Column(length = 100)
+    private String senderName;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private MessageRole role;

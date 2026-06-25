@@ -7,9 +7,12 @@ import com.mcp.core.service.PromptService;
 import com.mcp.engine.agent.Agent;
 import com.mcp.engine.agent.AgentContext;
 import com.mcp.engine.orchestrator.AgentOrchestrator;
+import com.mcp.common.channel.IntentType;
+import com.mcp.common.channel.RecallMode;
 import com.mcp.llm.client.LlmClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -22,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.Set;
 
 /**
  * 默认 Agent 编排器 - 完整接入数据库 Prompt + 历史记录
@@ -37,6 +41,9 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     private final LongTermMemoryService memoryService;
 
     private final Map<String, Agent> agents = new ConcurrentHashMap<>();
+
+    @Value("${recall.max-history-tokens:5000}")
+    private int maxHistoryTokens;
 
     @Override
     public Mono<String> processRequest(String request, String sessionId) {
@@ -251,6 +258,25 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     private static final Pattern FILENAME_PATTERN =
             Pattern.compile("[^\\s.,;:!?，。；：！？\"'<>`|]+\\.\\w{1,10}", Pattern.CASE_INSENSITIVE);
 
+    private static final Set<String> TEXT_EXTENSIONS = Set.of(
+            ".txt", ".md", ".java", ".py", ".js", ".ts", ".json", ".xml",
+            ".yaml", ".yml", ".properties", ".gradle", ".html", ".css", ".sql",
+            ".sh", ".bat", ".cfg", ".conf", ".ini", ".log", ".csv", ".kt",
+            ".go", ".rs", ".c", ".cpp", ".h", ".hpp", ".cs", ".php", ".rb", ".scala"
+    );
+
+    private static final Set<String> DOCUMENT_EXTENSIONS = Set.of(".docx", ".pdf");
+
+    private static boolean isTextFile(Path path) {
+        String name = path.getFileName().toString().toLowerCase();
+        return TEXT_EXTENSIONS.stream().anyMatch(name::endsWith);
+    }
+
+    private static boolean isDocumentFile(Path path) {
+        String name = path.getFileName().toString().toLowerCase();
+        return DOCUMENT_EXTENSIONS.stream().anyMatch(name::endsWith);
+    }
+
     private Mono<String> preloadFiles(String request) {
         return Mono.fromCallable(() -> {
             Set<String> paths = new LinkedHashSet<>();
@@ -329,6 +355,180 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     }
 
     @Override
+    public Mono<String> processRequestWithHistory(String request, String sessionId, String systemPrompt,
+                                                   RecallMode recallMode) {
+        if (request == null || request.trim().isEmpty()) {
+            return Mono.just("请输入有效的问题。");
+        }
+
+        long startTime = System.currentTimeMillis();
+        boolean userOnly = (recallMode == RecallMode.USER_ONLY);
+        log.info("[Orchestrator] RECALL_HISTORY ({} mode) request: {} | Session: {}",
+                recallMode, request, sessionId);
+
+        Mono<String> systemPromptMono = (systemPrompt != null && !systemPrompt.isBlank())
+                ? Mono.just(systemPrompt)
+                : promptService.getCoreSystemPrompt();
+
+        return systemPromptMono
+                .flatMap(resolvedPrompt ->
+                        chatHistoryService.getSessionMessages(sessionId)
+                                .flatMap(historyMessages -> {
+                                    java.util.List<com.mcp.core.domain.chat.CoreChatMessage> messages =
+                                            historyMessages.stream()
+                                                    .map(e -> {
+                                                        com.mcp.core.domain.chat.CoreChatMessage dm =
+                                                                new com.mcp.core.domain.chat.CoreChatMessage();
+                                                        dm.setMessageId(String.valueOf(e.getId()));
+                                                        dm.setSessionId(e.getSessionId());
+                                                        dm.setSenderId(e.getSenderId());
+                                                        dm.setSenderName(e.getSenderName());
+                                                        dm.setRole(e.getRole());
+                                                        dm.setContent(e.getContent());
+                                                        dm.setCreatedAt(e.getCreatedAt());
+                                                        return dm;
+                                                    })
+                                                    .collect(Collectors.toList());
+
+                                    String historyContext = buildHistoryContext(messages, userOnly);
+
+                                    log.info("[Orchestrator] History loaded for session {}: total={}, userOnly={}, " +
+                                                    "firstTime={}, lastTime={}, hasUserMsg={}, hasAssistantMsg={}",
+                                            sessionId,
+                                            messages.size(),
+                                            userOnly,
+                                            messages.isEmpty() ? "N/A" : messages.get(0).getCreatedAt(),
+                                            messages.isEmpty() ? "N/A" : messages.get(messages.size() - 1).getCreatedAt(),
+                                            messages.stream().anyMatch(m -> m.getRole() == com.mcp.core.domain.chat.MessageRole.USER),
+                                            messages.stream().anyMatch(m -> m.getRole() == com.mcp.core.domain.chat.MessageRole.ASSISTANT));
+
+                                    String userPrompt = buildRecallHistoryPrompt(request, historyContext, recallMode);
+
+                                    return llmClient.generateWithSystemPrompt(resolvedPrompt, userPrompt);
+                                })
+                )
+                .flatMap(response ->
+                    chatHistoryService.touchSession(sessionId)
+                            .then(memoryService.checkAndCompressIfNeeded(sessionId))
+                            .thenReturn(response)
+                )
+                .doOnSuccess(result -> {
+                    long duration = System.currentTimeMillis() - startTime;
+                    log.info("[Orchestrator] RECALL_HISTORY ({} mode) success! Duration: {}ms | Session: {}", recallMode, duration, sessionId);
+                })
+                .doOnError(error -> {
+                    long duration = System.currentTimeMillis() - startTime;
+                    log.error("[Orchestrator] RECALL_HISTORY error! Duration: {}ms | Error: {}", duration, error.getMessage(), error);
+                })
+                .onErrorResume(error ->
+                        Mono.just("回顾聊天记录时发生错误: " + error.getMessage())
+                );
+    }
+
+    /**
+     * 将 CoreChatMessage 列表格式化为可读的历史上下文
+     * 按总 token 预算截断，优先保留最近消息，超出部分从最早消息开始丢弃
+     */
+    private String buildHistoryContext(java.util.List<com.mcp.core.domain.chat.CoreChatMessage> messages,
+                                        boolean userOnly) {
+        if (messages == null || messages.isEmpty()) {
+            return "（暂无历史对话记录）";
+        }
+        java.util.List<com.mcp.core.domain.chat.CoreChatMessage> filtered = userOnly
+                ? messages.stream()
+                    .filter(m -> m.getRole() == com.mcp.core.domain.chat.MessageRole.USER)
+                    .collect(Collectors.toList())
+                : messages;
+
+        if (filtered.isEmpty()) {
+            return "（暂无" + (userOnly ? "用户" : "") + "历史消息记录）";
+        }
+
+        String label = userOnly ? "用户消息记录" : "真实聊天记录";
+        int totalTokens = 0;
+        boolean truncated = false;
+        java.util.List<String> entries = new java.util.ArrayList<>();
+
+        for (int i = filtered.size() - 1; i >= 0; i--) {
+            com.mcp.core.domain.chat.CoreChatMessage msg = filtered.get(i);
+            String senderLabel = resolveSenderLabel(msg);
+            String content = msg.getContent();
+            if (content == null) content = "";
+            if (content.length() > 2000) {
+                content = content.substring(0, 2000) + "...";
+            }
+            String entry = "[" + senderLabel + "] " + content + "\n";
+            int entryTokens = estimateTokens(entry);
+            if (totalTokens + entryTokens > maxHistoryTokens) {
+                truncated = true;
+                break;
+            }
+            entries.add(entry);
+            totalTokens += entryTokens;
+        }
+
+        java.util.Collections.reverse(entries);
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== ").append(label).append("（共 ").append(filtered.size()).append(" 条消息");
+        if (truncated) {
+            sb.append("，以下展示最近 ").append(entries.size()).append(" 条");
+        }
+        sb.append("） ===\n");
+        if (truncated) {
+            sb.append("...（更早的消息因上下文预算已省略）\n");
+        }
+        int seq = 1;
+        for (String entry : entries) {
+            sb.append("[").append(seq++).append("] ").append(entry);
+        }
+        sb.append("=== ").append(label).append("结束 ===");
+        return sb.toString();
+    }
+
+    /**
+     * 构建 RECALL_HISTORY 专用的用户 Prompt
+     */
+    private String buildRecallHistoryPrompt(String userRequest, String historyContext, RecallMode recallMode) {
+        String taskDesc = switch (recallMode) {
+            case USER_ONLY -> "用户要求回顾自己说过的话，以下仅列出用户发送的消息：";
+            case CONVERSATION -> "用户要求回顾完整聊天对话，以下是该会话的真实聊天历史：";
+            case BOTH -> "用户要求同时回顾自己说过的话和完整聊天记录，请先列出用户消息，再列出完整对话：";
+        };
+        String instructions = switch (recallMode) {
+            case USER_ONLY -> """
+                    要求：
+                    1. 只列出用户发送过的消息，按编号逐条回复
+                    2. 必须基于真实聊天记录，不要编造内容
+                    3. 如果用户要求"逐条列出"或"全部列举"，请完整列出所有用户消息
+                    4. 如果聊天记录为空，请如实告知用户
+                    """;
+            case CONVERSATION -> """
+                    要求：
+                    1. 必须基于真实聊天记录回答，不要编造内容
+                    2. 如果用户要求"逐条列出"，请按编号逐条回复（包含用户和助手双方）
+                    3. 如果用户要求"总结"，请按主题或时间线归纳
+                    4. 如果聊天记录为空，请如实告知用户
+                    """;
+            case BOTH -> """
+                    要求：
+                    1. 先列出用户消息部分（仅用户发送的消息）
+                    2. 再列出完整对话部分（包含用户和助手双方）
+                    3. 必须基于真实聊天记录，不要编造内容
+                    4. 如果聊天记录为空，请如实告知用户
+                    """;
+        };
+        return """
+                %s
+                
+                %s
+                
+                用户的具体请求：%s
+                
+                %s
+                """.formatted(taskDesc, historyContext, userRequest, instructions);
+    }
+
+    @Override
     public Mono<String> executeTask(String task, String agentName) {
         Agent agent = agents.get(agentName);
         if (agent == null) {
@@ -341,6 +541,20 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     public void registerAgent(Agent agent) {
         agents.put(agent.getName(), agent);
         log.info("[Orchestrator] Agent registered: {}", agent.getName());
+    }
+
+    private String resolveSenderLabel(com.mcp.core.domain.chat.CoreChatMessage msg) {
+        if (msg.getRole() == com.mcp.core.domain.chat.MessageRole.ASSISTANT) {
+            return "澪音";
+        }
+        if (msg.getSenderName() != null && !msg.getSenderName().isBlank()) {
+            return msg.getSenderName();
+        }
+        return msg.getSenderId() != null ? msg.getSenderId() : "未知用户";
+    }
+
+    private int estimateTokens(String text) {
+        return text == null ? 0 : text.length() / 4;
     }
 
     /**
@@ -370,9 +584,6 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     /**
      * 构建增强的 System Prompt，包含文件内容、记忆上下文
      */
-    /**
-     * 构建增强的 System Prompt，包含文件内容、记忆上下文
-     */
     private String buildEnrichedPrompt(String systemPrompt, String fileContext, String memoryContext) {
         StringBuilder sb = new StringBuilder();
         sb.append(systemPrompt);
@@ -392,10 +603,6 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         }
 
         return sb.toString();
-    }
-
-    private int estimateTokens(String text) {
-        return text == null ? 0 : text.length() / 4;
     }
 
     private String truncateByTokens(String text, int maxTokens) {

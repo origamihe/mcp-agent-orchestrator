@@ -1,6 +1,7 @@
 package com.mcp.gateway.channel;
 
 import com.mcp.engine.orchestrator.AgentOrchestrator;
+import com.mcp.common.channel.RecallMode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -20,6 +21,17 @@ public class AgentFacade {
                         sessionId,
                         systemPrompt,
                         null
+                )
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    public Mono<String> callWithHistory(String userMessage, String sessionId, String systemPrompt,
+                                         RecallMode recallMode) {
+        return agentOrchestrator.processRequestWithHistory(
+                        userMessage,
+                        sessionId,
+                        systemPrompt,
+                        recallMode
                 )
                 .subscribeOn(Schedulers.boundedElastic());
     }

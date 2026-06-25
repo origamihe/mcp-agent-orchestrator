@@ -1,5 +1,7 @@
 package com.mcp.gateway.channel;
 
+import com.mcp.common.channel.IntentType;
+import com.mcp.common.channel.RecallMode;
 import com.mcp.common.channel.SessionState;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -15,11 +17,11 @@ public class IntentRouter {
     private final Map<String, SessionState> sessions = new ConcurrentHashMap<>();
 
     private static final Pattern TEXT_MODE_TRIGGER = Pattern.compile(
-            "文字模式|テキストモード|用文字回复|文字で返信|テキストで|不用语音|不要语音|不要发语音|别发语音|用中文回复|中文で|关语音|关闭语音|关掉语音"
+            "文字模式|用文字回复|不用语音|不要语音|不要发语音|别发语音|用中文回复|关语音|关闭语音|关掉语音"
     );
 
     private static final Pattern VOICE_MODE_TRIGGER = Pattern.compile(
-            "语音模式|ボイスモード|用语音回复|语音で返信|ボイスで|用日语回复|日本語で|开语音|开启语音|打开语音"
+            "语音模式|用语音回复|用中文语音|开语音|开启语音|打开语音"
     );
 
     private static final Pattern DOCX_KEYWORDS = Pattern.compile(
@@ -36,6 +38,22 @@ public class IntentRouter {
             Pattern.CASE_INSENSITIVE
     );
 
+    private static final Pattern RECALL_MY_MESSAGES_PATTERN = Pattern.compile(
+            "列出.*我说|我说过.*话|逐条.*列出|我说.*全部|" +
+                    "还记得.*我说|把.*我说.*列出来|列举.*我说|" +
+                    "复述.*我说|我.*说过.*什么",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    private static final Pattern RECALL_CONVERSATION_PATTERN = Pattern.compile(
+            "复述聊天|聊天记录|回顾.*对话|回顾.*聊天|" +
+                    "聊天.*全部|历史.*对话|对话.*历史|" +
+                    "刚才.*说了.*什么|之前.*聊了.*什么|我们.*聊了.*什么|" +
+                    "总结.*聊天|总结.*对话|复盘.*聊天|列举.*聊天|" +
+                    "把.*聊天.*列出来",
+            Pattern.CASE_INSENSITIVE
+    );
+
     public SessionState getOrCreateSession(String sessionId) {
         return sessions.computeIfAbsent(sessionId, k -> new SessionState());
     }
@@ -49,14 +67,14 @@ public class IntentRouter {
             state.setLanguage("zh");
             state.touch();
             log.info("[IntentRouter] Session {} → TEXT mode", sessionId);
-            return new IntentResult(IntentType.SWITCH_TEXT_MODE, null, state);
+            return new IntentResult(IntentType.SWITCH_TEXT_MODE, null, state, null);
         }
         if (VOICE_MODE_TRIGGER.matcher(userMessage).find()) {
             state.setVoiceMode(true);
-            state.setLanguage("ja");
+            state.setLanguage("zh");
             state.touch();
             log.info("[IntentRouter] Session {} → VOICE mode", sessionId);
-            return new IntentResult(IntentType.SWITCH_VOICE_MODE, null, state);
+            return new IntentResult(IntentType.SWITCH_VOICE_MODE, null, state, null);
         }
 
         // 2. 文件生成检测（三层：粗分类 → 歧义处理 → 任务补全）
@@ -69,7 +87,7 @@ public class IntentRouter {
             log.info("[IntentRouter] Session {} → AMBIGUOUS (docx+ppt): {}", sessionId, topic);
             GenerationTask task = GenerationTask.of(IntentType.AMBIGUOUS, topic);
             state.touch();
-            return new IntentResult(IntentType.AMBIGUOUS, task, state);
+            return new IntentResult(IntentType.AMBIGUOUS, task, state, null);
         }
 
         if (isDocx) {
@@ -77,7 +95,7 @@ public class IntentRouter {
             log.info("[IntentRouter] Session {} → GENERATE_DOCX: {}", sessionId, topic);
             GenerationTask task = GenerationTask.of(IntentType.GENERATE_DOCX, topic);
             state.touch();
-            return new IntentResult(IntentType.GENERATE_DOCX, task, state);
+            return new IntentResult(IntentType.GENERATE_DOCX, task, state, null);
         }
 
         if (isPpt) {
@@ -85,12 +103,32 @@ public class IntentRouter {
             log.info("[IntentRouter] Session {} → GENERATE_PPT: {}", sessionId, topic);
             GenerationTask task = GenerationTask.of(IntentType.GENERATE_PPT, topic);
             state.touch();
-            return new IntentResult(IntentType.GENERATE_PPT, task, state);
+            return new IntentResult(IntentType.GENERATE_PPT, task, state, null);
         }
 
-        // 3. 默认：普通聊天
+        // 3. 聊天历史回顾检测（按 RecallMode 细分：USER_ONLY / CONVERSATION / BOTH）
+        boolean isRecallMy = RECALL_MY_MESSAGES_PATTERN.matcher(userMessage).find();
+        boolean isRecallConv = RECALL_CONVERSATION_PATTERN.matcher(userMessage).find();
+
+        if (isRecallMy && isRecallConv) {
+            log.info("[IntentRouter] Session {} → RECALL_HISTORY (BOTH): {}", sessionId, userMessage);
+            state.touch();
+            return new IntentResult(IntentType.RECALL_HISTORY, null, state, RecallMode.BOTH);
+        }
+        if (isRecallMy) {
+            log.info("[IntentRouter] Session {} → RECALL_HISTORY (USER_ONLY): {}", sessionId, userMessage);
+            state.touch();
+            return new IntentResult(IntentType.RECALL_HISTORY, null, state, RecallMode.USER_ONLY);
+        }
+        if (isRecallConv) {
+            log.info("[IntentRouter] Session {} → RECALL_HISTORY (CONVERSATION): {}", sessionId, userMessage);
+            state.touch();
+            return new IntentResult(IntentType.RECALL_HISTORY, null, state, RecallMode.CONVERSATION);
+        }
+
+        // 4. 默认：普通聊天
         state.touch();
-        return new IntentResult(IntentType.CHAT, null, state);
+        return new IntentResult(IntentType.CHAT, null, state, null);
     }
 
     String extractTopic(String userMessage) {
@@ -104,5 +142,5 @@ public class IntentRouter {
         return cleaned.isBlank() ? "未指定主题" : cleaned;
     }
 
-    public record IntentResult(IntentType intent, GenerationTask task, SessionState state) {}
+    public record IntentResult(IntentType intent, GenerationTask task, SessionState state, RecallMode recallMode) {}
 }

@@ -1,6 +1,7 @@
 package com.mcp.core.repository;
 
 import com.mcp.core.domain.memory.MemoryCategory;
+import com.mcp.core.domain.memory.MemoryScope;
 import com.mcp.core.entity.MemoryPackageEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -59,4 +60,47 @@ public interface MemoryPackageRepository extends JpaRepository<MemoryPackageEnti
      * 查找过期记忆（衰减机制：很久没访问的记忆降低权重）
      */
     List<MemoryPackageEntity> findByLastAccessedAtBefore(LocalDateTime cutoffTime);
+
+    /**
+     * 根据用户ID查找记忆包
+     */
+    List<MemoryPackageEntity> findByUserIdOrderByWeightDesc(String userId);
+
+    /**
+     * 根据群ID查找记忆包
+     */
+    List<MemoryPackageEntity> findByGroupIdOrderByWeightDesc(String groupId);
+
+    /**
+     * 根据会话和用户查找记忆包
+     */
+    List<MemoryPackageEntity> findBySessionIdAndUserIdOrderByWeightDesc(String sessionId, String userId);
+
+    /**
+     * 根据会话和群查找记忆包
+     */
+    List<MemoryPackageEntity> findBySessionIdAndGroupIdOrderByWeightDesc(String sessionId, String groupId);
+
+    /**
+     * 根据会话和作用域查找记忆包
+     */
+    List<MemoryPackageEntity> findBySessionIdAndScopeOrderByWeightDesc(String sessionId, MemoryScope scope);
+
+    /**
+     * 根据会话、用户ID和作用域查找记忆包
+     */
+    List<MemoryPackageEntity> findBySessionIdAndUserIdAndScopeOrderByWeightDesc(
+            String sessionId, String userId, MemoryScope scope);
+
+    /**
+     * 根据会话、群ID和作用域查找记忆包
+     */
+    List<MemoryPackageEntity> findBySessionIdAndGroupIdAndScopeOrderByWeightDesc(
+            String sessionId, String groupId, MemoryScope scope);
+
+    /**
+     * 统计会话中非 PERSONA 作用域的记忆包数量（用于压缩阈值判断）
+     */
+    @Query("SELECT COUNT(m) FROM MemoryPackageEntity m WHERE m.sessionId = :sessionId AND m.scope <> 'PERSONA'")
+    long countBySessionIdExcludingPersona(@Param("sessionId") String sessionId);
 }

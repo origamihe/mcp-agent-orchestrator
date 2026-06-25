@@ -26,7 +26,6 @@ public class ContentValidator {
             errors.add("文档至少需要一个章节");
             return ValidationResult.failure(errors);
         }
-
         for (int i = 0; i < model.sections().size(); i++) {
             var section = model.sections().get(i);
             if (section.blocks() == null || section.blocks().isEmpty()) {
@@ -36,7 +35,6 @@ public class ContentValidator {
                 validateBlock(block, errors, warnings, "章节 " + (i + 1));
             }
         }
-
         return ValidationResult.of(errors, warnings);
     }
 
@@ -57,6 +55,7 @@ public class ContentValidator {
             var slide = model.slides().get(i);
             if (slide.blocks() == null || slide.blocks().isEmpty()) {
                 warnings.add("第 " + (i + 1) + " 页（" + slide.title() + "）没有内容");
+                continue;
             }
 
             int bulletCount = 0;

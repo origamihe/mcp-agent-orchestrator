@@ -84,6 +84,13 @@
                 <version>1.6.0</version>
             </dependency>
 
+            <!-- JavaParser 代码解析 -->
+            <dependency>
+                <groupId>com.github.javaparser</groupId>
+                <artifactId>javaparser-core</artifactId>
+                <version>3.26.1</version>
+            </dependency>
+
             <!-- 管理自己模块版本 -->
             <dependency>
                 <groupId>io.github.origamihe</groupId>

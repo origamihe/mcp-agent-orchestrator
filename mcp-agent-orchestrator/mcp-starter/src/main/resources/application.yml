@@ -1,4 +1,4 @@
-﻿﻿﻿﻿server:
+﻿﻿﻿﻿﻿server:
   port: 8080
 
 spring:
@@ -33,6 +33,7 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    validate-on-migrate: false
     schemas: mcp_agent
 
 logging:
@@ -89,6 +90,30 @@ memory:
   summary-threshold: 30          # 每累积N条消息触发一次压缩
   decay-days: 7                  # 衰减天数：超过此天数未访问的记忆权重减半
   max-context-tokens: 8000       # 工作上下文最大 token 数
+
+  # ===== 记忆生命周期配置 =====
+  lifecycle:
+    judge:
+      enabled: true              # 是否启用 Memory Judge（LLM 判断）
+      window-size: 30            # 每次送入 Judge 的最近消息数
+      min-importance: 30         # 低于此分数的记忆直接丢弃
+    merge:
+      enabled: true              # 是否启用 Memory Merge（相似记忆合并）
+      similarity-threshold: 0.7  # 相似度阈值（0-1）
+    gc:
+      decay-cron: "0 0 3 * * ?"       # 衰减执行时间（默认每日凌晨3点）
+      collect-cron: "0 0 4 * * ?"      # 垃圾回收执行时间（默认每日凌晨4点）
+      hard-delete-cron: "0 0 5 * * 0"  # 硬删除执行时间（默认每周日凌晨5点）
+      stale-days: 30             # 超过此天数未访问的视为过期
+      low-importance: 30         # 重要性低于此值的可被回收
+      low-access-count: 3        # 访问次数低于此值的可被回收
+      low-weight: 20             # 权重低于此值的自动软删除
+    decay-rates:
+      permanent: 1.0             # 永久记忆不衰减
+      long: 0.995                # 长期记忆每日衰减 0.5%
+      medium: 0.98               # 中期记忆每日衰减 2%
+      short: 0.95                # 短期记忆每日衰减 5%
+
   compression-prompt: >
     请把以下聊天记录压缩成长期可继承的记忆包。
     要求：

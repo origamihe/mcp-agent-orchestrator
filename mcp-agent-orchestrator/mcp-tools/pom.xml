@@ -65,5 +65,11 @@
             <version>1.0.0</version>
             <optional>true</optional>
         </dependency>
+
+        <!-- JavaParser 代码解析与符号索引 -->
+        <dependency>
+            <groupId>com.github.javaparser</groupId>
+            <artifactId>javaparser-core</artifactId>
+        </dependency>
     </dependencies>
 </project>

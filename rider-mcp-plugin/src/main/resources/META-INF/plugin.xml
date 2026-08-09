@@ -1,0 +1,50 @@
+<idea-plugin>
+    <id>com.mcp.plugin</id>
+    <name>MCP Agent</name>
+    <vendor email="dev@mcp-agent.io" url="https://mcp-agent.io">MCP Agent Orchestrator</vendor>
+
+    <description><![CDATA[
+        MCP Agent Orchestrator 的 Rider 插件。
+        将 IDE 作为 Agent 的 Host，提供：
+        - 右侧 Chat ToolWindow
+        - IDE 事件总线（FileOpen, FileSave, Build, Git 等自动推送给 Agent）
+        - 能力注册表（Agent 按需调用 read_file, list_directory, get_git_status 等）
+        - Agent 代码修改一键 Apply
+        - 动态右键菜单（Explain, Optimize, Refactor, Review, Fix 等）
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Chat ToolWindow -->
+        <toolWindow
+            id="MCP Agent"
+            anchor="right"
+            factoryClass="com.mcp.plugin.toolwindow.ChatToolWindowFactory"/>
+
+        <!-- 应用级服务 -->
+        <applicationService
+                serviceImplementation="com.mcp.plugin.McpPluginSettings"/>
+
+        <!-- 项目级服务 -->
+        <projectService
+                serviceImplementation="com.mcp.plugin.event.IdeEventBus"/>
+        <projectService
+                serviceImplementation="com.mcp.plugin.capability.CapabilityAdapter"/>
+        <projectService
+                serviceImplementation="com.mcp.plugin.transport.WebSocketTransport"/>
+        <projectService
+                serviceImplementation="com.mcp.plugin.diff.DiffApplier"/>
+    </extensions>
+
+    <actions>
+        <group
+                id="MCP.AgentGroup"
+                class="com.mcp.plugin.prompt.PromptRegistry"
+                text="MCP Agent"
+                description="MCP Agent 操作"
+                popup="true">
+            <add-to-group group-id="EditorPopupMenu" anchor="before" relative-to-action="EditorPopupMenu.Cut"/>
+        </group>
+    </actions>
+</idea-plugin>

@@ -1,0 +1,40 @@
+plugins {
+    id("java")
+    id("org.jetbrains.kotlin.jvm") version "1.9.22"
+    id("org.jetbrains.intellij") version "1.17.0"
+}
+
+group = "com.mcp.plugin"
+version = "0.1.0"
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation("com.google.code.gson:gson:2.10.1")
+}
+
+intellij {
+    version.set("2023.3")
+    type.set("IC")
+    plugins.set(listOf(
+        "com.intellij.java",
+        "Git4Idea",
+        "com.intellij.tasks"
+    ))
+}
+
+tasks {
+    withType<JavaCompile> {
+        sourceCompatibility = "17"
+        targetCompatibility = "17"
+    }
+    withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+        kotlinOptions.jvmTarget = "17"
+    }
+    patchPluginXml {
+        sinceBuild.set("233")
+        untilBuild.set("242.*")
+    }
+}

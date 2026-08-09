@@ -1,41 +1,68 @@
 package com.mcp.engine.memory;
 
 import com.mcp.core.domain.memory.MemoryType;
+import com.mcp.core.entity.MemoryPackageEntity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 记忆评估器 - 对抽取的记忆候选进行评分。
- *
- * 评分维度：
- *   1. importance (0-100): 基于类型的基准分 + 置信度调整
- *   2. ttl (过期时间): 基于类型的生命周期
- *   3. 过滤低价值记忆: importance < 3 的直接丢弃
- *
- * 升级逻辑：
- *   连续出现 ≥3 次的记忆 → 升级生命周期（如 TEMPORARY → EVENT → FACT → PREFERENCE）
- */
 @Slf4j
 @Service
 public class MemoryEvaluator {
 
-    private static final int MIN_IMPORTANCE_TO_KEEP = 3;
+    public static final int MIN_IMPORTANCE_TO_KEEP = 3;
     private static final int UPGRADE_THRESHOLD = 3;
 
-    /**
-     * 评估记忆候选，返回评分后的记忆。
-     * importance < MIN_IMPORTANCE_TO_KEEP 的会被过滤掉（不进入数据库）。
-     */
     public List<ScoredMemory> evaluate(List<MemoryExtractor.MemoryCandidate> candidates) {
         return candidates.stream()
                 .map(this::score)
                 .filter(s -> s.importance >= MIN_IMPORTANCE_TO_KEEP)
-                .peek(s -> log.debug("[MemoryEvaluator] {} importance={} confidence={} ttl={}",
-                        s.memoryType, s.importance, s.confidence, s.ttl))
+                .peek(s -> log.info("[MemoryEvaluator] type={} baseImportance={} adjustedImportance={} confidence={} ttl={}",
+                        s.memoryType, getBaseImportance(s.memoryType), s.importance, s.confidence, s.ttl))
                 .toList();
+    }
+
+    public List<ScoredMemory> evaluateWithPriority(List<MemoryExtractor.MemoryCandidate> candidates,
+                                                    String query) {
+        return candidates.stream()
+                .map(c -> scoreWithPriority(c, query))
+                .filter(s -> s.importance >= MIN_IMPORTANCE_TO_KEEP)
+                .peek(s -> log.info("[MemoryEvaluator] type={} importance={} priority={} tier={} query=\"{}\"",
+                        s.memoryType, s.importance, s.priority != null ? s.priority.totalScore() : 0,
+                        s.priority != null ? s.priority.deriveTier() : MemoryTier.COLD, query))
+                .toList();
+    }
+
+    public List<ScoredMemory> reEvaluateExisting(List<MemoryPackageEntity> existingMemories,
+                                                  String query) {
+        List<ScoredMemory> result = new ArrayList<>();
+        for (MemoryPackageEntity mem : existingMemories) {
+            int recencyScore = MemoryPriority.calcRecencyScore(mem.getLastAccessedAt());
+            int frequencyScore = MemoryPriority.calcFrequencyScore(
+                    mem.getAccessCount(),
+                    (int) java.time.temporal.ChronoUnit.DAYS.between(
+                            mem.getCreatedAt().toLocalDate(), java.time.LocalDate.now()));
+            int relevanceScore = calcRelevanceScore(mem.getContent(), query);
+            double confidenceWeight = mem.getConfidence() / 100.0;
+
+            MemoryPriority priority = MemoryPriority.of(
+                    mem.getImportance(), recencyScore, frequencyScore,
+                    relevanceScore, confidenceWeight);
+
+            MemoryTier tier = priority.deriveTier();
+            if (mem.isPermanent()) {
+                tier = MemoryTier.HOT;
+            }
+
+            result.add(new ScoredMemory(
+                    mem.getContent(), mem.getMemoryType(), mem.getImportance(),
+                    mem.getConfidence(), mem.getTtl(), mem.getSourceQuote(),
+                    priority, tier));
+        }
+        return result;
     }
 
     private ScoredMemory score(MemoryExtractor.MemoryCandidate candidate) {
@@ -50,16 +77,65 @@ public class MemoryEvaluator {
                 adjustedImportance,
                 candidate.confidence(),
                 ttl,
-                candidate.sourceQuote()
-        );
+                candidate.sourceQuote(),
+                null, null);
     }
 
-    /**
-     * 基于记忆类型的基准重要性评分
-     */
+    private ScoredMemory scoreWithPriority(MemoryExtractor.MemoryCandidate candidate, String query) {
+        int baseImportance = getBaseImportance(candidate.memoryType());
+        int adjustedImportance = Math.min(100,
+                (int) (baseImportance * (candidate.confidence() / 100.0)));
+        LocalDateTime ttl = calculateTtl(candidate.memoryType());
+
+        int recencyScore = 100;
+        int frequencyScore = 0;
+        int relevanceScore = calcRelevanceScore(candidate.content(), query);
+        double confidenceWeight = candidate.confidence() / 100.0;
+
+        MemoryPriority priority = MemoryPriority.of(
+                adjustedImportance, recencyScore, frequencyScore,
+                relevanceScore, confidenceWeight);
+
+        return new ScoredMemory(
+                candidate.content(),
+                candidate.memoryType(),
+                adjustedImportance,
+                candidate.confidence(),
+                ttl,
+                candidate.sourceQuote(),
+                priority, priority.deriveTier());
+    }
+
+    private int calcRelevanceScore(String content, String query) {
+        if (query == null || query.isBlank()) return 50;
+        if (content == null || content.isBlank()) return 0;
+
+        String lowerContent = content.toLowerCase();
+        String lowerQuery = query.toLowerCase();
+
+        String[] queryWords = lowerQuery.split("[\\s，,。.!！?？]+");
+        int matchCount = 0;
+        for (String word : queryWords) {
+            if (word.length() >= 2 && lowerContent.contains(word)) {
+                matchCount++;
+            }
+        }
+
+        if (matchCount == 0) return 10;
+        if (queryWords.length == 0) return 10;
+
+        double ratio = (double) matchCount / queryWords.length;
+        if (ratio >= 0.8) return 100;
+        if (ratio >= 0.6) return 85;
+        if (ratio >= 0.4) return 65;
+        if (ratio >= 0.2) return 40;
+        return 20;
+    }
+
     private int getBaseImportance(MemoryType type) {
         return switch (type) {
             case PROFILE -> 95;
+            case IDENTITY -> 92;
             case RELATION -> 90;
             case PREFERENCE -> 85;
             case HABIT -> 80;
@@ -73,9 +149,6 @@ public class MemoryEvaluator {
         };
     }
 
-    /**
-     * 基于记忆类型计算 TTL（过期时间）
-     */
     private LocalDateTime calculateTtl(MemoryType type) {
         return switch (type.getLifecycle()) {
             case PERMANENT -> null;
@@ -85,23 +158,30 @@ public class MemoryEvaluator {
         };
     }
 
-    /**
-     * 评分后的记忆条目
-     */
     public record ScoredMemory(
             String content,
             MemoryType memoryType,
             int importance,
             int confidence,
             LocalDateTime ttl,
-            String sourceQuote
+            String sourceQuote,
+            MemoryPriority priority,
+            MemoryTier tier
     ) {
+        public ScoredMemory(String content, MemoryType memoryType, int importance, int confidence, boolean isHighValue) {
+            this(content, memoryType, importance, confidence, null, null, null, null);
+        }
+
         public boolean isLowValue() {
             return importance < 5;
         }
 
         public boolean isHighValue() {
             return importance >= 80;
+        }
+
+        public boolean isHotTier() {
+            return tier == MemoryTier.HOT;
         }
     }
 }

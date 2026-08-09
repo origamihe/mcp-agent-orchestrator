@@ -3,28 +3,40 @@ package com.mcp.core.service;
 import com.mcp.core.domain.memory.MemoryCategory;
 import com.mcp.core.domain.memory.MemoryScope;
 import com.mcp.core.domain.memory.MemoryType;
+import com.mcp.common.identity.MemoryIdentity;
+import com.mcp.common.identity.UserRole;
 import com.mcp.core.entity.MemoryPackageEntity;
 import com.mcp.core.repository.MemoryPackageRepository;
 
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * 长期记忆服务 - 三层记忆架构的核心编排
- * 原始记录 → 压缩记忆 → 工作上下文
+ * 长期记忆服务 - 分层上下文构建。
+ *
+ * 上下文分层（每层固定 Token 预算）：
+ *   Layer 1: Persona（不可变，永久注入）
+ *   Layer 2: Identity（PROFILE，Always Inject）
+ *   Layer 3: Preference（PREFERENCE, HABIT，Always Inject）
+ *   Layer 4: Relationship（RELATION，Always Inject）
+ *   Layer 5: Session Summary（压缩摘要）
+ *   Layer 6: Episode（语义搜索：FACT/PROJECT/GOAL/SKILL/SCHEDULE/EVENT/TEMPORARY）
  */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class LongTermMemoryService {
+
+    private static final Logger log = LoggerFactory.getLogger(LongTermMemoryService.class);
 
     private final MemoryPackageRepository memoryPackageRepository;
     private final MemoryBoundaryGuard memoryBoundaryGuard;
@@ -34,62 +46,195 @@ public class LongTermMemoryService {
     private static final int MAX_WORKING_CONTEXT_TOKENS = 8000;
     private static final int COMPRESSION_THRESHOLD = 20;
 
+    private static final int LAYER_IDENTITY_TOKEN_BUDGET = 1000;
+    private static final int LAYER_PREFERENCE_TOKEN_BUDGET = 1500;
+    private static final int LAYER_RELATION_TOKEN_BUDGET = 800;
+    private static final int LAYER_EPISODE_TOKEN_BUDGET = 2500;
+
     /**
-     * 构建分层工作上下文
-     * Layer 1: Persona 记忆（不可变，永久注入）
-     * Layer 2: User 记忆（按 userId 过滤，经 MemoryBoundaryGuard 校验）
-     * Layer 3: Group 记忆（按 groupId 过滤）
+     * 构建分层工作上下文（含用户角色权限检查）。
+     *
+     * @param identity 记忆身份标识
+     * @param userRole 用户角色（OWNER/ADMIN 可覆盖 Persona 边界规则）
      */
-    public Mono<String> buildWorkingContext(String sessionId) {
-        return buildWorkingContext(sessionId, null, null);
+    public Mono<String> buildWorkingContext(MemoryIdentity identity, UserRole userRole) {
+        return buildWorkingContext(identity, null, userRole);
     }
 
+    public Mono<String> buildWorkingContext(MemoryIdentity identity, String currentQuery, UserRole userRole) {
+        return buildWorkingContext(identity.sessionId(), identity.userId(), identity.groupId(), currentQuery, userRole);
+    }
+
+    /**
+     * 构建分层工作上下文（无身份信息，默认 MEMBER 权限）。
+     *
+     * @deprecated 请使用 {@link #buildWorkingContext(MemoryIdentity, UserRole)}
+     */
+    @Deprecated
+    public Mono<String> buildWorkingContext(MemoryIdentity identity) {
+        return buildWorkingContext(identity, null, null);
+    }
+
+    /**
+     * @deprecated 请使用 {@link #buildWorkingContext(MemoryIdentity, String, UserRole)}
+     */
+    @Deprecated
+    public Mono<String> buildWorkingContext(MemoryIdentity identity, String currentQuery) {
+        return buildWorkingContext(identity, currentQuery, null);
+    }
+
+    /**
+     * @deprecated 请使用 {@link #buildWorkingContext(MemoryIdentity, UserRole)}
+     */
+    @Deprecated
+    public Mono<String> buildWorkingContext(String sessionId) {
+        return buildWorkingContext(sessionId, null, null, null, null);
+    }
+
+    /**
+     * @deprecated 请使用 {@link #buildWorkingContext(MemoryIdentity, UserRole)}
+     */
+    @Deprecated
     public Mono<String> buildWorkingContext(String sessionId, String userId, String groupId) {
-        return buildWorkingContext(sessionId, userId, groupId, null);
+        return buildWorkingContext(sessionId, userId, groupId, null, null);
+    }
+
+    /**
+     * @deprecated 请使用 {@link #buildWorkingContext(MemoryIdentity, String, UserRole)}
+     */
+    @Deprecated
+    public Mono<String> buildWorkingContext(String sessionId, String userId, String groupId,
+                                            String currentQuery) {
+        return buildWorkingContext(sessionId, userId, groupId, currentQuery, null);
     }
 
     public Mono<String> buildWorkingContext(String sessionId, String userId, String groupId,
-                                            String currentQuery) {
+                                            String currentQuery, UserRole userRole) {
+        long startTime = System.currentTimeMillis();
+        log.info("[DIAG-Memory] buildWorkingContext START | sessionId={} | userId={} | groupId={} | hasQuery={}",
+                sessionId, userId, groupId, currentQuery != null && !currentQuery.isEmpty());
+
         return Mono.fromCallable(() -> {
                     StringBuilder sb = new StringBuilder();
 
                     String personaText = personaMemoryStore.getPersonaMemoryText();
                     if (!personaText.isEmpty()) {
-                        sb.append(personaText).append("\n");
+                        sb.append("## 角色设定 (Persona)\n");
+                        sb.append(personaText).append("\n\n");
+                        log.info("[DIAG-Memory] Persona loaded: {} chars", personaText.length());
                     }
 
-                    List<MemoryPackageEntity> retrieved = memoryRetriever.retrieve(
-                            currentQuery != null ? currentQuery : "", userId, groupId);
+                    long retrieveStart = System.currentTimeMillis();
+                    List<MemoryRetriever.MemoryRetrievalResult> retrieved = memoryRetriever
+                            .retrieveWithTiers(currentQuery != null ? currentQuery : "",
+                                    userId, groupId, 10);
+                    long retrieveEnd = System.currentTimeMillis();
+                    log.info("[DIAG-Memory] MemoryRetriever.retrieveWithTiers completed in {}ms | resultCount={}",
+                            retrieveEnd - retrieveStart, retrieved.size());
 
-                    List<MemoryPackageEntity> filtered = memoryBoundaryGuard.filterConflicting(retrieved);
+                    if (retrieved.isEmpty()) {
+                        long totalElapsed = System.currentTimeMillis() - startTime;
+                        log.info("[DIAG-Memory] buildWorkingContext END (empty) | totalElapsed={}ms", totalElapsed);
+                        return sb.toString();
+                    }
 
-                    if (!filtered.isEmpty()) {
-                        sb.append("【用户偏好与长期记忆 - 可动态调整】\n");
+                    List<MemoryPackageEntity> memoryEntities = retrieved.stream()
+                            .map(MemoryRetriever.MemoryRetrievalResult::memory)
+                            .toList();
+                    List<MemoryPackageEntity> filtered = memoryBoundaryGuard.filterConflicting(memoryEntities, userRole);
 
-                        int totalTokens = 0;
-                        int count = 0;
-                        for (MemoryPackageEntity pkg : filtered) {
-                            String entry = formatMemoryEntry(pkg);
-                            int entryTokens = estimateTokens(entry);
-                            if (totalTokens + entryTokens > MAX_WORKING_CONTEXT_TOKENS) {
-                                sb.append("\n*(记忆过多，已截断)*\n");
-                                break;
-                            }
-                            sb.append(entry);
-                            totalTokens += entryTokens;
-                            count++;
+                    log.info("[DIAG-Memory] BoundaryGuard filtered: {} → {} memories", memoryEntities.size(), filtered.size());
 
-                            memoryPackageRepository.incrementAccess(pkg.getId(), LocalDateTime.now());
-                        }
+                    if (filtered.isEmpty()) {
+                        long totalElapsed = System.currentTimeMillis() - startTime;
+                        log.info("[DIAG-Memory] buildWorkingContext END (all filtered) | totalElapsed={}ms", totalElapsed);
+                        return sb.toString();
+                    }
 
-                        if (count > 0) {
-                            sb.append("\n*(以上为长期记忆，仅供参考，不改变你的人格设定)*\n");
+                    var identityMemories = new ArrayList<MemoryPackageEntity>();
+                    var preferenceMemories = new ArrayList<MemoryPackageEntity>();
+                    var relationMemories = new ArrayList<MemoryPackageEntity>();
+                    var episodeMemories = new ArrayList<MemoryPackageEntity>();
+
+                    for (MemoryPackageEntity pkg : filtered) {
+                        MemoryType type = pkg.getMemoryType();
+                        if (type == MemoryType.PROFILE || type == MemoryType.IDENTITY) {
+                            identityMemories.add(pkg);
+                        } else if (type == MemoryType.PREFERENCE || type == MemoryType.HABIT) {
+                            preferenceMemories.add(pkg);
+                        } else if (type == MemoryType.RELATION) {
+                            relationMemories.add(pkg);
+                        } else {
+                            episodeMemories.add(pkg);
                         }
                     }
 
+                    if (!identityMemories.isEmpty()) {
+                        sb.append("## 用户身份 (Identity)\n");
+                        int tokens = appendLayer(sb, identityMemories, retrieved, LAYER_IDENTITY_TOKEN_BUDGET);
+                        log.info("[Memory] Identity 层: {}条, {} tokens", identityMemories.size(), tokens);
+                        sb.append("\n");
+                    }
+
+                    if (!preferenceMemories.isEmpty()) {
+                        sb.append("## 用户偏好 (Preference)\n");
+                        int tokens = appendLayer(sb, preferenceMemories, retrieved, LAYER_PREFERENCE_TOKEN_BUDGET);
+                        log.info("[Memory] Preference 层: {}条, {} tokens", preferenceMemories.size(), tokens);
+                        sb.append("\n");
+                    }
+
+                    if (!relationMemories.isEmpty()) {
+                        sb.append("## 人际关系 (Relationship)\n");
+                        int tokens = appendLayer(sb, relationMemories, retrieved, LAYER_RELATION_TOKEN_BUDGET);
+                        log.info("[Memory] Relationship 层: {}条, {} tokens", relationMemories.size(), tokens);
+                        sb.append("\n");
+                    }
+
+                    if (!episodeMemories.isEmpty()) {
+                        sb.append("## 相关记忆 (Episode)\n");
+                        int tokens = appendLayer(sb, episodeMemories, retrieved, LAYER_EPISODE_TOKEN_BUDGET);
+                        log.info("[Memory] Episode 层: {}条, {} tokens", episodeMemories.size(), tokens);
+                    }
+
+                    int totalSize = sb.length();
+                    long totalElapsed = System.currentTimeMillis() - startTime;
+                    log.info("[DIAG-Memory] 分层上下文构建完成: 总大小={} chars (~{} tokens) | totalElapsed={}ms | identity={} pref={} rel={} ep={}",
+                            totalSize, totalSize / 4, totalElapsed,
+                            identityMemories.size(), preferenceMemories.size(),
+                            relationMemories.size(), episodeMemories.size());
                     return sb.toString();
                 })
                 .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private int appendLayer(StringBuilder sb, List<MemoryPackageEntity> memories,
+                            List<MemoryRetriever.MemoryRetrievalResult> retrieved, int tokenBudget) {
+        int totalTokens = 0;
+        List<Long> accessedIds = new ArrayList<>();
+        for (MemoryPackageEntity pkg : memories) {
+            var tierResult = findTierResult(retrieved, pkg);
+            String entry = formatMemoryEntryWithTier(pkg, tierResult);
+            int entryTokens = estimateTokens(entry);
+            if (totalTokens + entryTokens > tokenBudget) {
+                sb.append("*(该层记忆过多，已截断)*\n");
+                break;
+            }
+            sb.append(entry);
+            totalTokens += entryTokens;
+            accessedIds.add(pkg.getId());
+        }
+        if (!accessedIds.isEmpty()) {
+            memoryPackageRepository.batchIncrementAccess(accessedIds, LocalDateTime.now());
+        }
+        return totalTokens;
+    }
+
+    private MemoryRetriever.MemoryRetrievalResult findTierResult(
+            List<MemoryRetriever.MemoryRetrievalResult> results, MemoryPackageEntity entity) {
+        return results.stream()
+                .filter(r -> r.memory().getId().equals(entity.getId()))
+                .findFirst()
+                .orElse(null);
     }
 
     /**
@@ -176,6 +321,25 @@ public class LongTermMemoryService {
                 pkg.getImportance(),
                 pkg.getWeight(),
                 pkg.getAccessCount());
+    }
+
+    private String formatMemoryEntryWithTier(MemoryPackageEntity pkg,
+                                              MemoryRetriever.MemoryRetrievalResult tierResult) {
+        String tierEmoji = "🔹";
+        if (tierResult != null) {
+            tierEmoji = switch (tierResult.tier()) {
+                case HOT -> "🔥";
+                case WARM -> "🟡";
+                case COLD -> "🔵";
+                case ARCHIVED -> "⬜";
+            };
+        }
+        return String.format("%s [%s|P%s] %s\n",
+                tierEmoji,
+                pkg.getMemoryType() != null ? pkg.getMemoryType().getDisplayName()
+                        : pkg.getCategory().getDisplayName(),
+                tierResult != null ? String.format("%.0f", tierResult.score()) : "?",
+                pkg.getContent());
     }
 
     private int estimateTokens(String text) {

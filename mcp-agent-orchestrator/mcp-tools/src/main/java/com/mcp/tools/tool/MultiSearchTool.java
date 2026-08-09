@@ -24,7 +24,6 @@ public class MultiSearchTool {
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
-    private final WebClient proxiedWebClient;
 
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(12);
     private static final int MAX_RESULTS_PER_SOURCE = 3;
@@ -35,28 +34,9 @@ public class MultiSearchTool {
     @Value("${websearch.bing.key:}")
     private String bingApiKey;
 
-    @Value("${websearch.proxy.host:}")
-    private String proxyHost;
-
-    @Value("${websearch.proxy.port:0}")
-    private int proxyPort;
-
-    public MultiSearchTool() {
+    public MultiSearchTool(WebClient webSearchWebClient) {
         this.objectMapper = new ObjectMapper();
-
-        WebClient.Builder builder = WebClient.builder()
-                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(2 * 1024 * 1024));
-        this.webClient = builder.build();
-        this.proxiedWebClient = builder.build();
-    }
-
-    private WebClient getClient() {
-        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
-            return WebClient.builder()
-                    .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
-                    .build();
-        }
-        return webClient;
+        this.webClient = webSearchWebClient;
     }
 
     @McpTool(

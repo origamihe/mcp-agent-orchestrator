@@ -1,18 +1,57 @@
-﻿﻿﻿﻿﻿server:
+﻿server:
   port: 8080
 
 spring:
   application:
     name: mcp-agent-orchestrator
 
-  # ==================== LLM 配置（切换为 Ollama + llama3.2:3b-instruct-q4_K_M）====================
+  # ==================== 自动配置排除 ====================
+  # Spring AI 会尝试创建所有 OpenAI 模型的 Bean（Chat/Embedding/Image/Audio/Moderation）
+  # 当前使用 Ollama，不需要任何 OpenAI Bean，全部排除
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiEmbeddingAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiImageAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioSpeechAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioTranscriptionAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiModerationAutoConfiguration
+
+  # ==================== LLM 配置 ====================
+  # Spring AI 自动配置会根据 properties 条件化创建 ChatModel Bean
+  # 未配置的 Provider 不会创建 Bean，不影响启动
+
   ai:
+    # -------------------- Ollama（本地运行）--------------------
     ollama:
       base-url: http://localhost:11434
       chat:
         options:
-          model: granite3.2:8b        # 或 qwen3.5:8b 等，确认 ollama list 中的名称gemma4 qwen2.5:7b granite3.2:8b  gemma3:12b
+          model: qwen2:7b
           temperature: 0.3
+
+    retry:
+      max-attempts: 3
+      on-http-codes:
+        - 429
+        - 502
+        - 503
+        - 504
+      backoff:
+        initial-interval: 2000
+        max-interval: 30000
+        multiplier: 2.0
+
+    # -------------------- Google AI Studio（OpenAI Compatible API）--------------------
+    # 设置环境变量: set GEMINI_API_KEY=你的key
+    # 未设置时使用占位符，启动不会失败，但 API 调用会报 401
+    # openai:
+    #   api-key: ""
+    #   base-url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+    #   chat:
+    #     options:
+    #       model: gemini-2.5-flash
+    #       temperature: 0.3
 
   # ==================== 数据库配置====================
   datasource:
@@ -27,7 +66,8 @@ spring:
     show-sql: true
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect   # 重要！
+        jdbc:
+          time_zone: UTC
 
   flyway:
     enabled: true
@@ -54,17 +94,43 @@ app:
     host: 127.0.0.1
     port: 7890
 
+# 搜索工具配置
+websearch:
+  serpapi:
+    key: ""
+  bing:
+    key: ""
+
 # QQ Bot 配置
-# application.yml - QqBot 配置部分改为通用渠道配置
 channel:
   qq:
     enabled: true
     onebot-url: http://127.0.0.1:3002
     access-token: "agent123"
     qq-number: ""
-    reply-mode: all          # all | at_only | keyword
+    reply-mode: all
     keywords: ""
-    system-prompt: ""
+    system-prompt: "你是「澪音」，一个安静、克制、可靠的虚拟二次元助手。
+
+你的性格：冷淡但不冷漠，话不多，情绪稳定，观察力强，内心温柔。
+你不热情，不卖萌，不过度共情，也不刻意装熟。你更像一个一直在、但不会打扰用户的人。
+
+你的回答原则：
+- 先理解用户真实需求，再直接回答
+- 语言自然、简洁、克制，少废话
+- 优先给实用建议，再补必要解释
+- 用户低落、焦虑、迷茫时，先帮他恢复秩序感，再给可执行的一小步
+- 鼓励要轻，不空喊口号，不说教，不强行正能量
+
+你的表达风格：
+- 可以偶尔用“嗯”“知道了”“我在”“交给我”，但要克制
+- 不要频繁感叹号、颜文字、油腻深情话
+- 不要机械客服口吻，不要说明书式表达
+- 不要过度热情，也不要冷得像机器
+
+你的目标：
+让用户感到你有稳定的人格，安静、可靠、自然，而不是在表演角色。
+"
   telegram:
     enabled: false
     bot-token: ""
@@ -72,47 +138,47 @@ channel:
   discord:
     enabled: false
     bot-token: ""
+
 # ==================== TTS 语音合成配置（CosyVoice 3）====================
 tts:
-  enabled: true                       # 是否启用语音功能
-  api-url: http://localhost:5001     # CosyVoice 3 Python 服务地址
-  output-dir: ./voice-output         # 语音文件输出目录
-  default-voice: default             # 默认音色ID（CosyVoice 3 预置音色或 clone 音色）
-  max-text-length: 500               # 语音合成最大文本长度（超过则截断）
+  enabled: true
+  api-url: http://localhost:5001
+  output-dir: ./voice-output
+  default-voice: default
+  max-text-length: 500
 
 # ==================== 聊天回顾配置 ====================
 recall:
-  max-history-tokens: 5000        # 回顾历史最大 token 预算（默认 5000，可按模型上下文调整）
+  max-history-tokens: 5000
 
 # ==================== 长记忆系统配置 ====================
 memory:
-  max-recent-messages: 20        # 滚动窗口：保留最近N轮原文
-  summary-threshold: 30          # 每累积N条消息触发一次压缩
-  decay-days: 7                  # 衰减天数：超过此天数未访问的记忆权重减半
-  max-context-tokens: 8000       # 工作上下文最大 token 数
+  max-recent-messages: 20
+  summary-threshold: 30
+  decay-days: 7
+  max-context-tokens: 8000
 
-  # ===== 记忆生命周期配置 =====
   lifecycle:
     judge:
-      enabled: true              # 是否启用 Memory Judge（LLM 判断）
-      window-size: 30            # 每次送入 Judge 的最近消息数
-      min-importance: 30         # 低于此分数的记忆直接丢弃
+      enabled: true
+      window-size: 30
+      min-importance: 30
     merge:
-      enabled: true              # 是否启用 Memory Merge（相似记忆合并）
-      similarity-threshold: 0.7  # 相似度阈值（0-1）
+      enabled: true
+      similarity-threshold: 0.7
     gc:
-      decay-cron: "0 0 3 * * ?"       # 衰减执行时间（默认每日凌晨3点）
-      collect-cron: "0 0 4 * * ?"      # 垃圾回收执行时间（默认每日凌晨4点）
-      hard-delete-cron: "0 0 5 * * 0"  # 硬删除执行时间（默认每周日凌晨5点）
-      stale-days: 30             # 超过此天数未访问的视为过期
-      low-importance: 30         # 重要性低于此值的可被回收
-      low-access-count: 3        # 访问次数低于此值的可被回收
-      low-weight: 20             # 权重低于此值的自动软删除
+      decay-cron: "0 0 3 * * ?"
+      collect-cron: "0 0 4 * * ?"
+      hard-delete-cron: "0 0 5 * * 0"
+      stale-days: 30
+      low-importance: 30
+      low-access-count: 3
+      low-weight: 20
     decay-rates:
-      permanent: 1.0             # 永久记忆不衰减
-      long: 0.995                # 长期记忆每日衰减 0.5%
-      medium: 0.98               # 中期记忆每日衰减 2%
-      short: 0.95                # 短期记忆每日衰减 5%
+      permanent: 1.0
+      long: 0.995
+      medium: 0.98
+      short: 0.95
 
   compression-prompt: >
     请把以下聊天记录压缩成长期可继承的记忆包。

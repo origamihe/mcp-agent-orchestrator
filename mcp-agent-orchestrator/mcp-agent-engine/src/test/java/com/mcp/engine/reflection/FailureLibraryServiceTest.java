@@ -54,7 +54,7 @@ class FailureLibraryServiceTest {
         existing.setOccurrenceCount(3);
 
         when(repository.findUnresolvedByTaskPattern("搜索文件")).thenReturn(List.of(existing));
-        when(repository.incrementOccurrence(1L)).thenReturn(1);
+        doNothing().when(repository).incrementOccurrence(1L);
 
         FailureEntity result = service.createOrUpdate("搜索文件", "FileNotFound",
                 "路径错误", "检查路径", "context");

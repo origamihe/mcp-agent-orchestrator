@@ -3,6 +3,7 @@ package com.mcp.gateway.channel.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.mcp.common.channel.ChannelMessage;
 import com.mcp.common.channel.ChannelReply;
+import com.mcp.common.channel.HostContext;
 import com.mcp.gateway.channel.ChannelAdapter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
@@ -58,7 +59,8 @@ public class OneBotChannelAdapter implements ChannelAdapter {
     }
 
     /**
-     * OneBot v11 消息 → 通用 ChannelMessage
+     * OneBot v11 消息 → 通用 ChannelMessage。
+     * 填充 HostContext 以支持 QQ Host 的身份感知和工作空间关联。
      */
     @Override
     public ChannelMessage normalize(Object rawPayload) {
@@ -67,10 +69,11 @@ public class OneBotChannelAdapter implements ChannelAdapter {
                 ? payload.get("message_type").asText() : "private";
         String senderId = payload.has("sender")
                 ? payload.get("sender").get("user_id").asText() : "unknown";
+        String senderName = payload.has("sender") && payload.get("sender").has("nickname")
+                ? payload.get("sender").get("nickname").asText() : null;
         String groupId = "group".equals(messageType) && payload.has("group_id")
                 ? payload.get("group_id").asText() : null;
 
-        // 提取纯文本（去除 CQ 码）
         String content = extractText(payload);
 
         ChannelMessage.ChatType chatType = "group".equals(messageType)
@@ -81,6 +84,8 @@ public class OneBotChannelAdapter implements ChannelAdapter {
                 ? "qq-group-" + groupId
                 : "qq-private-" + senderId;
 
+        HostContext hostContext = buildHostContext(payload, senderId, senderName, groupId, chatType);
+
         return ChannelMessage.builder()
                 .channelType("qq")
                 .senderId(senderId)
@@ -88,8 +93,29 @@ public class OneBotChannelAdapter implements ChannelAdapter {
                 .chatId(groupId != null ? groupId : senderId)
                 .chatType(chatType)
                 .platformSessionId(sessionId)
+                .hostContext(hostContext)
                 .raw(new HashMap<>() {{ put("payload", payload); }})
                 .build();
+    }
+
+    /**
+     * 构建 QQ Host 的 HostContext。
+     * QQ 作为聊天 Host，提供身份、群组上下文等感知能力。
+     */
+    private HostContext buildHostContext(JsonNode payload, String senderId, String senderName,
+                                          String groupId, ChannelMessage.ChatType chatType) {
+        HostContext hostContext = new HostContext();
+        hostContext.setHostType("qq");
+        hostContext.setUserId(senderId);
+        hostContext.setUserName(senderName);
+        hostContext.setChatId(groupId != null ? groupId : senderId);
+        hostContext.setChatType(chatType);
+
+        if (chatType == ChannelMessage.ChatType.GROUP && groupId != null) {
+            hostContext.setGroupMemberIds(new ArrayList<>());
+        }
+
+        return hostContext;
     }
 
     /**

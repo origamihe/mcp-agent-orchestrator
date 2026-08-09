@@ -2,11 +2,15 @@ package com.mcp.core.domain.prompt;
 
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Prompt 模板 - 领域模型
  */
 public class PromptTemplate {
+
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\{\\{(\\w+)}}");
 
     private final String name;              // 模板唯一标识
     private final PromptType type;
@@ -26,12 +30,16 @@ public class PromptTemplate {
     }
 
     public String render(Map<String, Object> variables) {
-        String result = templateText;
-        for (Map.Entry<String, Object> entry : variables.entrySet()) {
-            String placeholder = "{{" + entry.getKey() + "}}";
-            result = result.replace(placeholder, String.valueOf(entry.getValue()));
+        Matcher matcher = PLACEHOLDER.matcher(templateText);
+        StringBuilder sb = new StringBuilder();
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            Object value = variables.get(key);
+            String replacement = value != null ? String.valueOf(value) : matcher.group(0);
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
         }
-        return result;
+        matcher.appendTail(sb);
+        return sb.toString();
     }
 
     // Getters

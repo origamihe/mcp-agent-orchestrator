@@ -3,6 +3,7 @@ package com.mcp.engine.planner;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcp.llm.client.LlmClient;
+import com.mcp.tools.model.ToolCapability;
 import com.mcp.tools.model.ToolDefinition;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,18 +44,35 @@ public class DefaultPlanner implements Planner {
     }
 
     private String buildPlanningPrompt(String userRequest, PlanContext context) {
-        StringBuilder sb = new StringBuilder(2048);
+        StringBuilder sb = new StringBuilder(4096);
 
-        sb.append("你是一个任务规划器。根据用户请求和可用工具，生成结构化的执行计划。\n\n");
+        sb.append("你是一个任务规划器。根据用户请求和可用能力，生成结构化的执行计划。\n\n");
 
-        sb.append("## 可用工具\n");
+        if (context.getWorkspaceContext() != null && !context.getWorkspaceContext().isBlank()) {
+            sb.append("## 当前工作空间上下文\n");
+            sb.append(context.getWorkspaceContext()).append("\n");
+            sb.append("（请基于以上项目上下文进行规划，如果项目上下文为空则忽略）\n\n");
+        }
+
+        sb.append("## 可用能力（Capability）\n");
+        sb.append("你不需要指定具体工具名称，只需指定所需的能力。系统会自动选择最佳工具。\n\n");
+        if (context.getAvailableCapabilities() != null && !context.getAvailableCapabilities().isEmpty()) {
+            for (ToolCapability cap : context.getAvailableCapabilities()) {
+                sb.append("- **").append(cap.name()).append("**: ")
+                        .append(cap.getDescription()).append("\n");
+            }
+        } else {
+            sb.append("（无可用能力，仅能进行对话）\n");
+        }
+
+        sb.append("\n## 可用工具（参考）\n");
         if (context.getAvailableTools() != null && !context.getAvailableTools().isEmpty()) {
             for (ToolDefinition tool : context.getAvailableTools()) {
-                sb.append("- **").append(tool.getName()).append("**: ")
+                sb.append("- ").append(tool.getName()).append(": ")
                         .append(tool.getDescription()).append("\n");
             }
         } else {
-            sb.append("（无可用工具，仅能进行对话）\n");
+            sb.append("（无可用工具）\n");
         }
 
         sb.append("\n## 规划规则\n");
@@ -66,6 +84,7 @@ public class DefaultPlanner implements Planner {
         sb.append("6. 步骤数不超过 ").append(context.getMaxSteps()).append(" 个。\n");
         sb.append("7. 修改代码前必须先读取相关文件。\n");
         sb.append("8. 每个步骤标注 reason（为什么需要这一步）。\n");
+        sb.append("9. 每个步骤必须指定 capability（能力），系统会自动选择最佳工具。\n");
 
         sb.append("\n## 输出格式（严格 JSON）\n");
         sb.append("```json\n");
@@ -76,7 +95,7 @@ public class DefaultPlanner implements Planner {
         sb.append("  \"steps\": [\n");
         sb.append("    {\n");
         sb.append("      \"type\": \"READ|SEARCH|ANALYZE|MODIFY|VALIDATE|OBSERVE\",\n");
-        sb.append("      \"toolName\": \"工具名称\",\n");
+        sb.append("      \"capability\": \"READ_FILE|SEARCH_CODE|READ_PROJECT|EDIT_FILE|...\",\n");
         sb.append("      \"arguments\": {\"key\": \"value\"},\n");
         sb.append("      \"reason\": \"为什么需要这一步\",\n");
         sb.append("      \"dependsOn\": []\n");
@@ -144,13 +163,49 @@ public class DefaultPlanner implements Planner {
         Map<String, Object> args = (Map<String, Object>) raw.getOrDefault("arguments", Map.of());
         List<String> dependsOn = (List<String>) raw.getOrDefault("dependsOn", List.of());
 
+        String toolName = (String) raw.get("toolName");
+        ToolCapability capability = parseCapability(raw);
+
+        if (capability == null && toolName != null) {
+            capability = inferCapabilityFromToolName(toolName);
+            log.debug("[Planner] Inferred capability '{}' from toolName '{}'", capability, toolName);
+        }
+
         return PlanStep.builder()
                 .type(stepType)
-                .toolName((String) raw.get("toolName"))
+                .toolName(toolName)
+                .capability(capability)
                 .arguments(args)
                 .reason((String) raw.getOrDefault("reason", ""))
                 .dependsOn(dependsOn)
                 .build();
+    }
+
+    private ToolCapability parseCapability(Map<String, Object> raw) {
+        String capStr = (String) raw.get("capability");
+        if (capStr == null || capStr.isBlank()) {
+            return null;
+        }
+        try {
+            return ToolCapability.valueOf(capStr.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            log.debug("[Planner] Unknown capability '{}', will infer from toolName", capStr);
+            return null;
+        }
+    }
+
+    private ToolCapability inferCapabilityFromToolName(String toolName) {
+        if (toolName == null) return null;
+        String lower = toolName.toLowerCase();
+        if (lower.contains("read") || lower.contains("cat")) return ToolCapability.READ_FILE;
+        if (lower.contains("search") || lower.contains("grep") || lower.contains("find")) return ToolCapability.SEARCH_CODE;
+        if (lower.contains("tree") || lower.contains("list") || lower.contains("project")) return ToolCapability.READ_PROJECT;
+        if (lower.contains("edit") || lower.contains("write") || lower.contains("modify")) return ToolCapability.EDIT_FILE;
+        if (lower.contains("execute") || lower.contains("run") || lower.contains("terminal")) return ToolCapability.EXECUTE_COMMAND;
+        if (lower.contains("symbol") || lower.contains("goto") || lower.contains("definition")) return ToolCapability.SEARCH_SYMBOL;
+        if (lower.contains("web") || lower.contains("fetch") || lower.contains("url")) return ToolCapability.FETCH_WEB;
+        if (lower.contains("analyze") || lower.contains("lint") || lower.contains("diagnos")) return ToolCapability.ANALYZE_CODE;
+        return null;
     }
 
     private String extractJson(String response) {

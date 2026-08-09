@@ -35,10 +35,8 @@ public class WebSearchTool {
 
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
-    public WebSearchTool() {
-        this.webClient = WebClient.builder()
-                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
-                .build();
+    public WebSearchTool(WebClient webSearchWebClient) {
+        this.webClient = webSearchWebClient;
         this.objectMapper = new ObjectMapper();
     }
 

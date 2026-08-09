@@ -34,10 +34,8 @@ public class SearchAggregator {
     @Value("${websearch.bing.key:}")
     private String bingApiKey;
 
-    public SearchAggregator(SearchReranker reranker) {
-        this.webClient = WebClient.builder()
-                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
-                .build();
+    public SearchAggregator(WebClient webSearchWebClient, SearchReranker reranker) {
+        this.webClient = webSearchWebClient;
         this.objectMapper = new ObjectMapper();
         this.reranker = reranker;
     }

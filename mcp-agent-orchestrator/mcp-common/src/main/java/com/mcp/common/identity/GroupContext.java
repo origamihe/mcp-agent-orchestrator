@@ -20,6 +20,7 @@ public class GroupContext {
     private String groupName;
     @Builder.Default
     private List<String> topics = new ArrayList<>();
+    private List<GroupMember> members;
     private String description;
 
     public String toPromptText() {
@@ -29,6 +30,14 @@ public class GroupContext {
             sb.append("群主题：\n");
             for (String topic : topics) {
                 sb.append("- ").append(topic).append("\n");
+            }
+        }
+        if (members != null && !members.isEmpty()) {
+            sb.append("群成员：\n");
+            for (GroupMember member : members) {
+                sb.append("- ").append(member.getDisplayName())
+                        .append(" (").append(member.getRole()).append(")")
+                        .append("\n");
             }
         }
         if (description != null && !description.isEmpty()) {

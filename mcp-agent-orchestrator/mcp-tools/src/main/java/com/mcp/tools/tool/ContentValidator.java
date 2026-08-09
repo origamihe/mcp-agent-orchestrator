@@ -75,32 +75,26 @@ public class ContentValidator {
     }
 
     private void validateBlock(Block block, List<String> errors, List<String> warnings, String location) {
-        switch (block) {
-            case Block.Paragraph p -> {
-                if (p.text().length() > MAX_PARAGRAPH_LENGTH) {
-                    warnings.add(location + "：段落过长（" + p.text().length() + " 字符）");
+        if (block instanceof Block.Paragraph p) {
+            if (p.text().length() > MAX_PARAGRAPH_LENGTH) {
+                warnings.add(location + "：段落过长（" + p.text().length() + " 字符）");
+            }
+        } else if (block instanceof Block.BulletList bl) {
+            for (int j = 0; j < bl.items().size(); j++) {
+                if (bl.items().get(j).length() > MAX_BULLET_LENGTH) {
+                    warnings.add(location + "：第 " + (j + 1) + " 个要点过长（" + bl.items().get(j).length() + " 字符）");
                 }
             }
-            case Block.BulletList bl -> {
-                for (int j = 0; j < bl.items().size(); j++) {
-                    if (bl.items().get(j).length() > MAX_BULLET_LENGTH) {
-                        warnings.add(location + "：第 " + (j + 1) + " 个要点过长（" + bl.items().get(j).length() + " 字符）");
-                    }
+        } else if (block instanceof Block.OrderedList ol) {
+            for (int j = 0; j < ol.items().size(); j++) {
+                if (ol.items().get(j).length() > MAX_BULLET_LENGTH) {
+                    warnings.add(location + "：第 " + (j + 1) + " 个列表项过长（" + ol.items().get(j).length() + " 字符）");
                 }
             }
-            case Block.OrderedList ol -> {
-                for (int j = 0; j < ol.items().size(); j++) {
-                    if (ol.items().get(j).length() > MAX_BULLET_LENGTH) {
-                        warnings.add(location + "：第 " + (j + 1) + " 个列表项过长（" + ol.items().get(j).length() + " 字符）");
-                    }
-                }
+        } else if (block instanceof Block.Table t) {
+            if (t.rows().size() > MAX_TABLE_ROWS) {
+                warnings.add(location + "：表格行数过多（" + t.rows().size() + " 行）");
             }
-            case Block.Table t -> {
-                if (t.rows().size() > MAX_TABLE_ROWS) {
-                    warnings.add(location + "：表格行数过多（" + t.rows().size() + " 行）");
-                }
-            }
-            default -> {}
         }
     }
 }

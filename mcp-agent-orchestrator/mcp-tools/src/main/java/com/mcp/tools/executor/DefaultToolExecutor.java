@@ -1,7 +1,8 @@
 package com.mcp.tools.executor;
 
+import com.mcp.tools.model.ToolDefinition;
 import com.mcp.tools.model.ToolExecutionRequest;
-import com.mcp.tools.registry.DefaultToolRegistry;
+import com.mcp.tools.registry.ToolRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -17,28 +18,68 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class DefaultToolExecutor implements ToolExecutor {
 
-    private final DefaultToolRegistry toolRegistry;
+    private final ToolRegistry toolRegistry;
 
     @Override
     public Mono<Object> execute(ToolExecutionRequest request) {
-        return Mono.fromCallable(() -> {
-            Method method = toolRegistry.getToolMethod(request.getToolName());
-            Object target = toolRegistry.getToolTarget(request.getToolName());
-            if (method == null || target == null) {
-                throw new RuntimeException("Tool not found: " + request.getToolName());
-            }
-            Parameter[] params = method.getParameters();
-            Object[] args = new Object[params.length];
-            var inputArgs = request.getArguments();
-            for (int i = 0; i < params.length; i++) {
-                if (inputArgs != null && inputArgs.containsKey(params[i].getName())) {
-                    Object rawValue = inputArgs.get(params[i].getName());
-                    args[i] = coerceType(rawValue, params[i].getType());
-                }
-            }
-            log.info("Executing tool: {} with args: {}", request.getToolName(), request.getArguments());
-            return method.invoke(target, args);
-        }).subscribeOn(Schedulers.boundedElastic());
+        String toolName = request.getToolName();
+        long startTime = System.currentTimeMillis();
+
+        return toolRegistry.getTool(toolName)
+                .switchIfEmpty(Mono.error(new RuntimeException("Tool not found: " + toolName)))
+                .flatMap(definition -> {
+                    if (!definition.isEnabled()) {
+                        return Mono.error(new RuntimeException("Tool is disabled: " + toolName));
+                    }
+
+                    long timeoutMs = definition.getTimeoutMs();
+
+                    return Mono.fromCallable(() -> {
+                        Method method = getToolMethod(toolName);
+                        Object target = getToolTarget(toolName);
+                        if (method == null || target == null) {
+                            throw new RuntimeException("Tool not found: " + toolName);
+                        }
+                        Parameter[] params = method.getParameters();
+                        Object[] args = new Object[params.length];
+                        var inputArgs = request.getArguments();
+                        for (int i = 0; i < params.length; i++) {
+                            if (inputArgs != null && inputArgs.containsKey(params[i].getName())) {
+                                Object rawValue = inputArgs.get(params[i].getName());
+                                args[i] = coerceType(rawValue, params[i].getType());
+                            }
+                        }
+                        log.info("[ToolExecutor] Executing: {} with args: {}", toolName, request.getArguments());
+                        return method.invoke(target, args);
+                    })
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .timeout(java.time.Duration.ofMillis(timeoutMs))
+                    .doOnSuccess(result -> {
+                        long duration = System.currentTimeMillis() - startTime;
+                        toolRegistry.recordToolExecution(toolName, true, duration, null);
+                        log.info("[ToolExecutor] Success: {} ({}ms)", toolName, duration);
+                    })
+                    .doOnError(error -> {
+                        long duration = System.currentTimeMillis() - startTime;
+                        String errMsg = error.getMessage() != null ? error.getMessage() : "Unknown error";
+                        toolRegistry.recordToolExecution(toolName, false, duration, errMsg);
+                        log.warn("[ToolExecutor] Failed: {} ({}ms, error: {})", toolName, duration, errMsg);
+                    });
+                });
+    }
+
+    private Method getToolMethod(String toolName) {
+        if (toolRegistry instanceof com.mcp.tools.registry.DefaultToolRegistry dt) {
+            return dt.getToolMethod(toolName);
+        }
+        return null;
+    }
+
+    private Object getToolTarget(String toolName) {
+        if (toolRegistry instanceof com.mcp.tools.registry.DefaultToolRegistry dt) {
+            return dt.getToolTarget(toolName);
+        }
+        return null;
     }
 
     private Object coerceType(Object value, Class<?> targetType) {

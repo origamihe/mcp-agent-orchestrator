@@ -29,10 +29,13 @@ public class QueryExpander {
 
         EXPANSION_RULES.put(Pattern.compile(".*(对比|vs|区别|比较|哪个好|选择).*", Pattern.CASE_INSENSITIVE),
                 List.of(" vs ", " comparison", " pros and cons", " difference"));
+
+        EXPANSION_RULES.put(Pattern.compile(".*(新闻|动态|热点|事件|报道|政治|经济|军事|外交|地缘).*", Pattern.CASE_INSENSITIVE),
+                List.of(" 最新消息", " 新闻", " 最新动态", " 2025"));
     }
 
     private static final List<String> DEFAULT_SUFFIXES = List.of(
-            " documentation", " GitHub", " tutorial", " overview"
+            " 最新", " 2025", " overview", " information"
     );
 
     public List<String> expand(String query) {

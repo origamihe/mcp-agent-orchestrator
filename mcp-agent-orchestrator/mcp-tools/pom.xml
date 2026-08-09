@@ -52,19 +52,34 @@
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>5.3.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-logging</groupId>
+                    <artifactId>commons-logging</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>
             <version>3.0.3</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-logging</groupId>
+                    <artifactId>commons-logging</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <!-- PaddleOCR（可选，仅扫描件 PDF 无文本时作为 OCR 兜底） -->
+        <!-- 暂时注释：paddleocr:1.0.0 不在 Maven Central 中 -->
+        <!--
         <dependency>
             <groupId>com.github.paddleocr</groupId>
             <artifactId>paddleocr</artifactId>
             <version>1.0.0</version>
             <optional>true</optional>
         </dependency>
+        -->
 
         <!-- JavaParser 代码解析与符号索引 -->
         <dependency>

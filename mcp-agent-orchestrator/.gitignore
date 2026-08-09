@@ -31,3 +31,18 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Archive (legacy/external reference code, excluded from AI analysis) ###
+archive/
+
+### External (duplicate/copied source files, excluded from build) ###
+_external/
+**/_external/
+
+### Logs (generated at runtime, may contain sensitive data) ###
+log/
+log*.txt
+voice-output/
+
+### Docs (design documents, may contain architecture details) ###
+docs/

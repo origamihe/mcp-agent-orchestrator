@@ -1,5 +1,6 @@
 package com.mcp.gateway.config;
 
+import com.mcp.gateway.ws.HostWebSocketHandler;
 import com.mcp.gateway.ws.McpWebSocketHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,11 +13,13 @@ import java.util.Map;
 public class WebSocketConfig {
 
     @Bean
-    public SimpleUrlHandlerMapping webSocketMapping(McpWebSocketHandler handler) {
+    public SimpleUrlHandlerMapping webSocketMapping(McpWebSocketHandler mcpHandler,
+                                                     HostWebSocketHandler hostHandler) {
         SimpleUrlHandlerMapping mapping = new SimpleUrlHandlerMapping();
         mapping.setOrder(1);
         mapping.setUrlMap(Map.of(
-                "/ws/mcp", handler
+                "/ws/mcp", mcpHandler,
+                "/ws/host", hostHandler
         ));
         return mapping;
     }

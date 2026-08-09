@@ -49,8 +49,7 @@ public class LearningBudgetManager {
     private boolean isSimpleChat(String request) {
         if (request == null) return true;
         String lower = request.toLowerCase().trim();
-        return lower.length() < 10
-                || lower.matches("^(你好|hi|hello|谢谢|再见|好的|嗯|哦|哈哈).*")
-                || !lower.contains(" ") && lower.length() < 8;
+        return lower.length() < 4
+                || lower.matches("^(你好|hi|hello|谢谢|再见|好的|嗯|哦|哈哈).*");
     }
 }

@@ -1,5 +1,6 @@
 package com.mcp.core.service;
 
+import com.mcp.common.identity.MemoryIdentity;
 import com.mcp.core.domain.chat.CoreChatMessage;
 import com.mcp.core.domain.chat.ChatSession;
 import com.mcp.core.domain.chat.MessageRole;
@@ -55,16 +56,74 @@ public class ChatHistoryService {
     }
 
     /**
+     * 获取会话历史摘要（带字符预算，用于 FastPath）
+     *
+     * 滑动窗口策略：
+     * - 每条消息截断到 maxPerMessageChars（避免单条超长消息撑爆预算）
+     * - 总字符数不超过 maxTotalChars（优先保留最近的消息）
+     * - 消息按时间倒序加载，从最新开始累加，超出预算即停止
+     *
+     * @param sessionId          会话 ID
+     * @param maxMessages        最多加载的消息条数
+     * @param maxTotalChars      总字符预算上限
+     * @param maxPerMessageChars 单条消息截断长度
+     * @return 格式化的历史摘要字符串
+     */
+    public Mono<String> getHistorySummaryWithBudget(String sessionId, int maxMessages,
+                                                     int maxTotalChars, int maxPerMessageChars) {
+        return Mono.fromCallable(() -> {
+            List<ChatMessageEntity> messages = messageRepository
+                    .findTopNBySessionIdOrderByCreatedAtDesc(sessionId,
+                            PageRequest.of(0, maxMessages));
+
+            if (messages.isEmpty()) {
+                return "";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            int totalChars = 0;
+
+            for (ChatMessageEntity m : messages) {
+                String content = m.getContent();
+                if (content == null) {
+                    continue;
+                }
+
+                String truncated = content.length() > maxPerMessageChars
+                        ? content.substring(0, maxPerMessageChars) + "...[truncated]"
+                        : content;
+
+                String line = m.getRole().getCode() + ": " + truncated;
+
+                if (totalChars + line.length() > maxTotalChars) {
+                    break;
+                }
+
+                if (sb.length() > 0) {
+                    sb.insert(0, "\n");
+                }
+                sb.insert(0, line);
+                totalChars += line.length();
+            }
+
+            return sb.toString();
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
      * 保存用户消息 + Assistant 回复
      */
     @Transactional
-    public Mono<Void> saveUserAndAssistantMessage(String sessionId, String userMessage, String assistantResponse) {
+    public Mono<Void> saveUserAndAssistantMessage(MemoryIdentity identity, String userMessage, String assistantResponse) {
+        String sessionId = identity.sessionId();
         return Mono.fromRunnable(() -> {
             sessionRepository.findById(sessionId)
                     .orElseGet(() -> {
                         ChatSessionEntity newSession = new ChatSessionEntity();
                         newSession.setSessionId(sessionId);
-                        newSession.setUserId(sessionId);
+                        newSession.setUserId(identity.userId());
+                        newSession.setPlatform(identity.platform());
+                        newSession.setGroupId(identity.groupId());
                         return sessionRepository.save(newSession);
                     });
 

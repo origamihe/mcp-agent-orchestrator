@@ -20,18 +20,16 @@ public class ContentFetcher {
     private final WebClient webClient;
 
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(8);
-    private static final int MAX_CONTENT_LENGTH = 4000;
-    private static final int MAX_FETCH_COUNT = 3;
+    private static final int MAX_CONTENT_LENGTH = 8000;
+    private static final int MAX_FETCH_COUNT = 10;
 
     private static final Pattern TITLE_PATTERN = Pattern.compile(
             "<title[^>]*>(.*?)</title>",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL
     );
 
-    public ContentFetcher() {
-        this.webClient = WebClient.builder()
-                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
-                .build();
+    public ContentFetcher(WebClient webSearchWebClient) {
+        this.webClient = webSearchWebClient;
     }
 
     /**

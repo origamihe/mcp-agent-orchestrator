@@ -5,11 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcp.core.domain.memory.ReflectionLogEntity;
 import com.mcp.core.domain.memory.ReflectionLogEntity.ReflectionOutcome;
 import com.mcp.core.repository.ReflectionLogRepository;
+import com.mcp.engine.retry.RetryManager;
+import com.mcp.engine.retry.RetryTask;
 import com.mcp.llm.client.LlmClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
@@ -24,7 +27,10 @@ public class ReflectionAgent {
     private final SkillLibraryService skillLibraryService;
     private final FailureLibraryService failureLibraryService;
     private final ReflectionLogRepository reflectionLogRepository;
+    private final RetryManager retryManager;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private static final int REFLECTION_MAX_RETRIES = 3;
 
     private static final String REFLECTION_PROMPT = """
         你是一个反思智能体。你的任务是从已完成的任务执行中提炼可复用的经验。
@@ -80,7 +86,7 @@ public class ReflectionAgent {
     @Async
     public void reflect(TaskEvaluator.TaskEvaluation evaluation,
                         String userRequest, String agentExecution,
-                        String toolsUsed, String sessionId, String userId) {
+                        List<String> toolsUsed, String sessionId, String userId) {
         if (!evaluation.isWorthLearning()) {
             log.info("[ReflectionAgent] 不值得学习，跳过");
             saveReflectionLog(evaluation, userRequest, agentExecution, toolsUsed,
@@ -88,29 +94,55 @@ public class ReflectionAgent {
             return;
         }
 
+        reflectAsync(evaluation, userRequest, agentExecution, toolsUsed, sessionId, userId)
+                .doOnError(error -> {
+                    if (RetryManager.isRetryable(error)) {
+                        log.warn("[ReflectionAgent] LLM 调用失败，提交重试: session={}, error={}",
+                                sessionId, error.getMessage());
+                        retryManager.submit(RetryTask.builder()
+                                .sessionId(sessionId)
+                                .userId(userId)
+                                .taskType(RetryTask.TaskType.REFLECTION)
+                                .action(() -> reflectAsync(evaluation, userRequest, agentExecution,
+                                        toolsUsed, sessionId, userId))
+                                .maxRetries(REFLECTION_MAX_RETRIES)
+                                .build());
+                    } else {
+                        log.error("[ReflectionAgent] 不可重试的错误: session={}, error={}",
+                                sessionId, error.getMessage());
+                        saveReflectionLog(evaluation, userRequest, agentExecution, toolsUsed,
+                                sessionId, userId, null, ReflectionOutcome.DISCARDED, null, null);
+                    }
+                })
+                .subscribe();
+    }
+
+    Mono<Void> reflectAsync(TaskEvaluator.TaskEvaluation evaluation,
+                            String userRequest, String agentExecution,
+                            List<String> toolsUsed, String sessionId, String userId) {
+        String toolsUsedText = (toolsUsed != null && !toolsUsed.isEmpty())
+                ? String.join(", ", toolsUsed)
+                : "无";
         String prompt = REFLECTION_PROMPT.formatted(
                 truncate(userRequest, 2000),
                 truncate(agentExecution, 3000),
-                toolsUsed != null ? toolsUsed : "无",
+                toolsUsedText,
                 evaluation.isSuccess() ? "是" : "否",
                 evaluation.failureReason() != null ? evaluation.failureReason() : "无");
 
-        llmClient.generate(prompt)
+        return llmClient.generate(prompt)
                 .subscribeOn(Schedulers.boundedElastic())
-                .subscribe(response -> {
+                .flatMap(response -> {
                     processReflectionResult(response, evaluation, userRequest,
                             agentExecution, toolsUsed, sessionId, userId);
-                }, error -> {
-                    log.error("[ReflectionAgent] 反思失败: {}", error.getMessage());
-                    saveReflectionLog(evaluation, userRequest, agentExecution, toolsUsed,
-                            sessionId, userId, null, ReflectionOutcome.DISCARDED, null, null);
+                    return Mono.empty();
                 });
     }
 
     private void processReflectionResult(String response,
                                          TaskEvaluator.TaskEvaluation evaluation,
                                          String userRequest, String agentExecution,
-                                         String toolsUsed, String sessionId, String userId) {
+                                         List<String> toolsUsed, String sessionId, String userId) {
         try {
             String json = extractJson(response);
             Map<String, Object> result = objectMapper.readValue(
@@ -130,9 +162,11 @@ public class ReflectionAgent {
             switch (type) {
                 case "SKILL" -> {
                     Long skillId = processSkillResult(result);
+                    ReflectionOutcome outcome = (skillId != null)
+                            ? ReflectionOutcome.SKILL_GENERATED
+                            : ReflectionOutcome.DISCARDED;
                     saveReflectionLog(evaluation, userRequest, agentExecution, toolsUsed,
-                            sessionId, userId, response,
-                            ReflectionOutcome.SKILL_GENERATED, skillId, null);
+                            sessionId, userId, response, outcome, skillId, null);
                 }
                 case "FAILURE" -> {
                     Long failureId = processFailureResult(result);
@@ -163,6 +197,10 @@ public class ReflectionAgent {
 
         var skill = skillLibraryService.createOrUpdate(
                 name, description, triggers, steps, fallbackSteps);
+        if (skill == null) {
+            log.info("[ReflectionAgent] Skill 因与已有 Skill 高度相似而跳过: {}", name);
+            return null;
+        }
         log.info("[ReflectionAgent] Skill 已保存: {} (v{})", skill.getName(), skill.getVersion());
         return skill.getId();
     }
@@ -182,7 +220,7 @@ public class ReflectionAgent {
 
     private void saveReflectionLog(TaskEvaluator.TaskEvaluation evaluation,
                                    String userRequest, String agentExecution,
-                                   String toolsUsed, String sessionId, String userId,
+                                   List<String> toolsUsed, String sessionId, String userId,
                                    String reflectionText, ReflectionOutcome outcome,
                                    Long skillId, Long failureId) {
         try {

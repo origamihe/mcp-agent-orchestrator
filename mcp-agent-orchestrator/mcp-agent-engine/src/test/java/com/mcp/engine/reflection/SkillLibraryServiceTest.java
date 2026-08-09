@@ -49,7 +49,7 @@ class SkillLibraryServiceTest {
         existing.setSuccessRate(50.0);
 
         when(repository.findActiveByName("搜索文件")).thenReturn(List.of(existing));
-        when(repository.deactivate(existing.getId())).thenReturn(1);
+        doNothing().when(repository).deactivate(existing.getId());
 
         SkillEntity evolved = buildSkill("搜索文件 v2", "搜索", "新步骤");
         evolved.setId(2L);

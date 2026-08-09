@@ -2,29 +2,26 @@ package com.mcp.engine.agent;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mcp.engine.agent.card.AgentCard;
+import com.mcp.llm.client.ChatMessage;
 import com.mcp.llm.client.LlmClient;
+import com.mcp.llm.client.LlmToolResponse;
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.ToolDefinition;
 import com.mcp.tools.model.ToolExecutionRequest;
 import com.mcp.tools.model.ToolResult;
 import com.mcp.tools.registry.ToolRegistry;
-import jakarta.annotation.PostConstruct;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.HttpClient;
 
-import java.time.Duration;
 import java.util.*;
 
 @Slf4j
 @Component
-@SuppressWarnings("unchecked")
+@SuppressWarnings({"unchecked"})
 public class SimpleReActAgent implements Agent {
 
     @Setter
@@ -34,29 +31,10 @@ public class SimpleReActAgent implements Agent {
     @Setter
     private ToolExecutor toolExecutor;
 
-    @Value("${spring.ai.ollama.base-url}")
-    private String ollamaBaseUrl;
-
-    @Value("${spring.ai.ollama.chat.options.model}")
-    private String modelName;
-
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ThreadLocal<ExecutionTracker> currentTracker = new ThreadLocal<>();
 
-    private static final Duration OLLAMA_TIMEOUT = Duration.ofSeconds(120);
-
-    private WebClient ollamaWebClient;
-
-    @PostConstruct
-    public void initWebClient() {
-        HttpClient httpClient = HttpClient.create()
-                .responseTimeout(OLLAMA_TIMEOUT);
-        this.ollamaWebClient = WebClient.builder()
-                .baseUrl(ollamaBaseUrl)
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .build();
-        log.info("[SimpleReActAgent] WebClient initialized with baseUrl: {}", ollamaBaseUrl);
-    }
+    private static final int DEFAULT_MAX_TOOL_ROUNDS = 5;
 
     @Override
     public String getId() {
@@ -69,33 +47,57 @@ public class SimpleReActAgent implements Agent {
     }
 
     @Override
-    public Mono<String> execute(String task) {
-        return executeWithSystemPrompt(task, buildDefaultToolSystemPrompt());
+    public AgentCard getAgentCard() {
+        return AgentCard.builder()
+                .agentId(getId())
+                .agentName(getName())
+                .agentType(AgentCard.AgentType.EXECUTOR)
+                .description("通用 ReAct Agent — 支持工具调用、多轮推理、联网搜索、文件操作、文档处理")
+                .skills(List.of(
+                        "web-search", "information-retrieval", "data-aggregation", "fact-checking",
+                        "code-generation", "code-review", "code-analysis",
+                        "file-reading", "file-writing", "code-editing",
+                        "document-reading", "document-search",
+                        "chat", "qa", "roleplay", "translation", "summarization"
+                ))
+                .toolNames(List.of(
+                        "multi_search", "fetch_webpage", "web_search", "deep_research",
+                        "read_file", "write_file", "edit_file",
+                        "search_file", "search_content",
+                        "read_document_meta", "read_document_range",
+                        "read_conversation_history", "read_conversation_summary"
+                ))
+                .version("1.0.0")
+                .build();
     }
 
     @Override
-    public Mono<String> executeWithContext(String task, AgentContext context) {
-        ExecutionTracker tracker = context != null ? context.getExecutionTracker() : null;
+    public Mono<String> execute(LLMRequest request) {
+        ExecutionTracker tracker = request.getVariables() != null
+                ? (ExecutionTracker) request.getVariables().get("executionTracker")
+                : null;
         if (tracker == null) {
             tracker = new ExecutionTracker();
         }
         currentTracker.set(tracker);
 
-        String customPrompt = (context != null && context.getSystemPrompt() != null && !context.getSystemPrompt().isEmpty())
-                ? context.getSystemPrompt()
-                : null;
+        String systemPrompt = request.getSystemPrompt() != null && !request.getSystemPrompt().isEmpty()
+                ? request.getSystemPrompt()
+                : buildDefaultToolSystemPrompt();
         String toolInstructions = buildToolInstructions();
-        String sessionHint = (context != null && context.getSessionId() != null)
-                ? "\n\n【当前会话ID】" + context.getSessionId() + "\n调用 read_conversation_history 或 read_conversation_summary 时，请使用此 sessionId。"
+        String sessionHint = request.getSessionId() != null
+                ? "\n\n【当前会话ID】" + request.getSessionId()
+                  + "\n调用 read_conversation_history 或 read_conversation_summary 时，请使用此 sessionId。"
                 : "";
-        String systemPrompt = (customPrompt != null)
-                ? customPrompt + "\n\n" + toolInstructions + sessionHint
-                : "你是一个专业、友好的智能助手。\n\n" + toolInstructions + sessionHint;
-        return executeWithSystemPrompt(task, systemPrompt)
+        String fullSystemPrompt = systemPrompt + "\n\n" + toolInstructions + sessionHint;
+
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(ChatMessage.builder().role("system").content(fullSystemPrompt).build());
+        messages.add(ChatMessage.builder().role("user").content(request.getUserMessage()).build());
+
+        return reactLoop(messages, 0)
                 .doFinally(signal -> currentTracker.remove());
     }
-
-    private static final int DEFAULT_MAX_TOOL_ROUNDS = 5;
 
     private String buildDefaultToolSystemPrompt() {
         return "你是一个专业、友好的智能助手。\n\n" + buildToolInstructions();
@@ -138,48 +140,30 @@ public class SimpleReActAgent implements Agent {
                 """;
     }
 
-    private Mono<String> executeWithSystemPrompt(String task, String systemPrompt) {
-        List<Map<String, Object>> toolDefs = buildOllamaToolDefinitions();
-        List<Map<String, Object>> conversationHistory = new ArrayList<>();
-        Map<String, Object> sysMsg = new LinkedHashMap<>();
-        sysMsg.put("role", "system");
-        sysMsg.put("content", systemPrompt);
-        conversationHistory.add(sysMsg);
-        Map<String, Object> userMsg = new LinkedHashMap<>();
-        userMsg.put("role", "user");
-        userMsg.put("content", task);
-        conversationHistory.add(userMsg);
-
-        return reactLoop(conversationHistory, toolDefs, 0);
+    private Mono<String> reactLoop(List<ChatMessage> messages, int round) {
+        return reactLoop(messages, round, new LinkedHashSet<>());
     }
 
-    private Mono<String> reactLoop(List<Map<String, Object>> messages,
-                                    List<Map<String, Object>> toolDefs, int round) {
-        return reactLoop(messages, toolDefs, round, new LinkedHashSet<>());
-    }
-
-    private Mono<String> reactLoop(List<Map<String, Object>> messages,
-                                    List<Map<String, Object>> toolDefs, int round,
-                                    Set<String> recentCalls) {
+    private Mono<String> reactLoop(List<ChatMessage> messages, int round, Set<String> recentCalls) {
         int maxRounds = DEFAULT_MAX_TOOL_ROUNDS;
         if (round >= maxRounds) {
             log.info("[ReAct] Max rounds ({}) reached, forcing final answer", maxRounds);
-            return callOllamaWithTools(null, null, toolDefs, messages)
+            return llmClient.chatWithTools(messages, buildToolDefinitions())
                     .map(resp -> {
-                        String c = resp.content;
+                        String c = resp.getContent();
                         return (c != null && !c.isBlank()) ? c : "已达最大推理轮次，无法完成分析。";
                     });
         }
 
-        return callOllamaWithTools(null, null, toolDefs, messages)
+        return llmClient.chatWithTools(messages, buildToolDefinitions())
                 .flatMap(response -> {
-                    if (response.toolCalls != null && !response.toolCalls.isEmpty()) {
-                        List<OllamaToolCall> calls = response.toolCalls;
+                    if (response.hasToolCalls()) {
+                        List<LlmToolResponse.ToolCall> calls = response.getToolCalls();
                         log.info("[ReAct Round {}] model requested {} tool(s): {}",
                                 round, calls.size(),
-                                calls.stream().map(tc -> tc.name).toList());
+                                calls.stream().map(LlmToolResponse.ToolCall::getName).toList());
 
-                        List<Mono<AbstractMap.SimpleEntry<OllamaToolCall, String>>> tasks = calls.stream()
+                        List<Mono<AbstractMap.SimpleEntry<LlmToolResponse.ToolCall, String>>> tasks = calls.stream()
                                 .map(tc -> executeSingleTool(tc).map(result -> {
                                     String resultStr = toToolResultJson(tc, result);
                                     return new AbstractMap.SimpleEntry<>(tc, resultStr);
@@ -189,48 +173,52 @@ public class SimpleReActAgent implements Agent {
                         return Flux.merge(tasks)
                                 .collectList()
                                 .flatMap(results -> {
-                                    List<Map<String, Object>> updatedMessages = new ArrayList<>(messages);
+                                    List<ChatMessage> updatedMessages = new ArrayList<>(messages);
                                     List<Map<String, Object>> assistantToolCalls = new ArrayList<>();
+                                    List<ChatMessage> toolMessages = new ArrayList<>();
                                     for (var entry : results) {
-                                        OllamaToolCall tc = entry.getKey();
+                                        LlmToolResponse.ToolCall tc = entry.getKey();
                                         String resultStr = entry.getValue();
+                                        String callId = UUID.randomUUID().toString().substring(0, 8);
                                         assistantToolCalls.add(Map.of(
-                                                "id", UUID.randomUUID().toString().substring(0, 8),
+                                                "id", callId,
                                                 "type", "function",
                                                 "function", Map.of(
-                                                        "name", tc.name,
-                                                        "arguments", tc.arguments
+                                                        "name", tc.getName(),
+                                                        "arguments", tc.getArguments()
                                                 )
                                         ));
-                                        updatedMessages.add(Map.of(
-                                                "role", "tool",
-                                                "tool_call_id", assistantToolCalls.get(assistantToolCalls.size() - 1).get("id"),
-                                                "name", tc.name,
-                                                "content", resultStr
-                                        ));
-                                        log.info("[ReAct Round {}] tool {} result: {}", round, tc.name,
+                                        toolMessages.add(ChatMessage.builder()
+                                                .role("tool")
+                                                .toolCallId(callId)
+                                                .name(tc.getName())
+                                                .content(resultStr)
+                                                .build());
+                                        log.info("[ReAct Round {}] tool {} result: {}", round, tc.getName(),
                                                 resultStr.length() > 200 ? resultStr.substring(0, 200) + "..." : resultStr);
                                     }
-                                    updatedMessages.add(Map.of(
-                                            "role", "assistant", "content", "",
-                                            "tool_calls", assistantToolCalls
-                                    ));
+                                    updatedMessages.add(ChatMessage.builder()
+                                            .role("assistant")
+                                            .content("")
+                                            .toolCalls(assistantToolCalls)
+                                            .build());
+                                    updatedMessages.addAll(toolMessages);
 
                                     Set<String> updatedCalls = new LinkedHashSet<>(recentCalls);
                                     for (var entry : results) {
-                                        OllamaToolCall tc = entry.getKey();
-                                        String callKey = tc.name + ":" + canonicalArgs(tc.arguments);
+                                        LlmToolResponse.ToolCall tc = entry.getKey();
+                                        String callKey = tc.getName() + ":" + canonicalArgs(tc.getArguments());
                                         if (updatedCalls.contains(callKey)) {
                                             log.warn("[ReAct] Duplicate tool call detected: {}, breaking loop", callKey);
-                                            return Mono.just("检测到重复工具调用，已停止：" + tc.name + "(" + tc.arguments + ")");
+                                            return Mono.just("检测到重复工具调用，已停止：" + tc.getName() + "(" + tc.getArguments() + ")");
                                         }
                                         updatedCalls.add(callKey);
                                     }
 
-                                    return reactLoop(updatedMessages, toolDefs, round + 1, updatedCalls);
+                                    return reactLoop(updatedMessages, round + 1, updatedCalls);
                                 });
                     }
-                    String finalContent = response.content;
+                    String finalContent = response.getContent();
                     if (finalContent == null || finalContent.isBlank()) {
                         log.warn("[ReAct Round {}] LLM returned empty content, using fallback", round);
                         finalContent = buildSmartFallback(messages, round);
@@ -239,33 +227,33 @@ public class SimpleReActAgent implements Agent {
                 });
     }
 
-    private Mono<Object> executeSingleTool(OllamaToolCall toolCall) {
+    private Mono<Object> executeSingleTool(LlmToolResponse.ToolCall toolCall) {
         long startTime = System.currentTimeMillis();
         ToolExecutionRequest request = new ToolExecutionRequest();
-        request.setToolName(toolCall.name);
-        request.setArguments(new HashMap<>(toolCall.arguments));
+        request.setToolName(toolCall.getName());
+        request.setArguments(new HashMap<>(toolCall.getArguments()));
         return toolExecutor.execute(request).defaultIfEmpty("工具执行失败，未获取到结果。")
                 .doOnSuccess(result -> recordObservation(toolCall, result, startTime))
                 .doOnError(error -> recordObservationError(toolCall, error, startTime));
     }
 
-    private void recordObservation(OllamaToolCall toolCall, Object result, long startTime) {
+    private void recordObservation(LlmToolResponse.ToolCall toolCall, Object result, long startTime) {
         ExecutionTracker tracker = currentTracker.get();
         if (tracker == null) return;
         long duration = System.currentTimeMillis() - startTime;
         boolean success = !isToolFailure(result != null ? result.toString() : "");
         String summary = result != null ? truncateResult(result.toString()) : "";
         String error = success ? null : extractError(result);
-        String args = canonicalArgs(toolCall.arguments);
-        tracker.recordToolCall(toolCall.name, args, success, summary, error, duration);
+        String args = canonicalArgs(toolCall.getArguments());
+        tracker.recordToolCall(toolCall.getName(), args, success, summary, error, duration);
     }
 
-    private void recordObservationError(OllamaToolCall toolCall, Throwable error, long startTime) {
+    private void recordObservationError(LlmToolResponse.ToolCall toolCall, Throwable error, long startTime) {
         ExecutionTracker tracker = currentTracker.get();
         if (tracker == null) return;
         long duration = System.currentTimeMillis() - startTime;
-        String args = canonicalArgs(toolCall.arguments);
-        tracker.recordToolCall(toolCall.name, args, false, "",
+        String args = canonicalArgs(toolCall.getArguments());
+        tracker.recordToolCall(toolCall.getName(), args, false, "",
                 error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName(), duration);
     }
 
@@ -287,7 +275,7 @@ public class SimpleReActAgent implements Agent {
         return null;
     }
 
-    private String toToolResultJson(OllamaToolCall toolCall, Object toolResult) {
+    private String toToolResultJson(LlmToolResponse.ToolCall toolCall, Object toolResult) {
         if (toolResult instanceof ToolResult tr) {
             return tr.toJson();
         }
@@ -296,11 +284,11 @@ public class SimpleReActAgent implements Agent {
             boolean success = !isToolFailure(content);
             Map<String, Object> structured = new LinkedHashMap<>();
             structured.put("success", success);
-            structured.put("tool", toolCall.name);
+            structured.put("tool", toolCall.getName());
             structured.put("content", content);
             return objectMapper.writeValueAsString(structured);
         } catch (Exception e) {
-            return "{\"success\":false,\"tool\":\"" + toolCall.name + "\",\"error\":\"serialization failed\"}";
+            return "{\"success\":false,\"tool\":\"" + toolCall.getName() + "\",\"error\":\"serialization failed\"}";
         }
     }
 
@@ -320,14 +308,14 @@ public class SimpleReActAgent implements Agent {
         }
     }
 
-    private String buildSmartFallback(List<Map<String, Object>> messages, int round) {
+    private String buildSmartFallback(List<ChatMessage> messages, int round) {
         boolean hadToolFailure = false;
         boolean hadSearchFailure = false;
         String lastToolError = null;
 
-        for (Map<String, Object> msg : messages) {
-            if ("tool".equals(msg.get("role"))) {
-                String content = (String) msg.get("content");
+        for (ChatMessage msg : messages) {
+            if ("tool".equals(msg.getRole())) {
+                String content = msg.getContent();
                 if (content != null) {
                     if (content.contains("\"status\":\"FAILURE\"") || content.contains("\"status\":\"PARTIAL_SUCCESS\"")) {
                         hadSearchFailure = true;
@@ -359,9 +347,26 @@ public class SimpleReActAgent implements Agent {
         return "抱歉，我暂时无法回答这个问题，请稍后再试。";
     }
 
-    private List<Map<String, Object>> buildOllamaToolDefinitions() {
+    private List<Map<String, Object>> buildToolDefinitions() {
+        List<ToolDefinition> allTools = toolRegistry.getAllTools();
+        List<String> allowedToolNames = getAgentCard().getToolNames();
+
+        List<ToolDefinition> filteredTools = new ArrayList<>();
+        for (ToolDefinition td : allTools) {
+            if (allowedToolNames.contains(td.getName())) {
+                filteredTools.add(td);
+            }
+        }
+        log.info("[MultiTool] SimpleReActAgent: AgentCard.toolNames={}, registry={} tools, filtered={} tools",
+                allowedToolNames.size(), allTools.size(), filteredTools.size());
+
+        if (filteredTools.isEmpty()) {
+            log.warn("[MultiTool] SimpleReActAgent: No tools matched after filtering! Falling back to all tools.");
+            filteredTools = allTools;
+        }
+
         List<Map<String, Object>> tools = new ArrayList<>();
-        for (ToolDefinition td : toolRegistry.getAllTools()) {
+        for (ToolDefinition td : filteredTools) {
             Map<String, Object> function = new LinkedHashMap<>();
             function.put("name", td.getName());
             function.put("description", td.getDescription());
@@ -402,111 +407,4 @@ public class SimpleReActAgent implements Agent {
         }
         return tools;
     }
-
-    private Mono<OllamaChatResponse> callOllamaWithTools(
-            String systemPrompt, String userPrompt,
-            List<Map<String, Object>> tools,
-            List<Map<String, Object>> previousMessages) {
-
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", modelName);
-        requestBody.put("stream", false);
-        requestBody.put("options", Map.of("temperature", 0.1, "num_predict", 2048));
-
-        List<Map<String, Object>> messages = new ArrayList<>();
-        if (previousMessages != null) {
-            messages.addAll(previousMessages);
-        } else {
-            messages.add(Map.of("role", "system", "content", systemPrompt));
-            messages.add(Map.of("role", "user", "content", userPrompt));
-        }
-        requestBody.put("messages", messages);
-        requestBody.put("tools", tools);
-
-        return ollamaWebClient
-                .post()
-                .uri("/api/chat")
-                .bodyValue(requestBody)
-                .retrieve()
-                .bodyToMono(Map.class)
-                .timeout(OLLAMA_TIMEOUT)
-                .map(this::parseOllamaResponse);
-    }
-
-    @SuppressWarnings("unchecked")
-    private OllamaChatResponse parseOllamaResponse(Map<String, Object> raw) {
-        Map<String, Object> message = (Map<String, Object>) raw.get("message");
-        String content = (String) message.get("content");
-        List<Map<String, Object>> rawToolCalls = (List<Map<String, Object>>) message.get("tool_calls");
-
-        List<OllamaToolCall> toolCalls = new ArrayList<>();
-        if (rawToolCalls != null) {
-            for (Map<String, Object> tc : rawToolCalls) {
-                Map<String, Object> function = (Map<String, Object>) tc.get("function");
-                String name = (String) function.get("name");
-                Map<String, Object> arguments = parseArguments(function.get("arguments"));
-                toolCalls.add(new OllamaToolCall(name, arguments));
-            }
-        }
-        return new OllamaChatResponse(content, toolCalls);
-    }
-
-    private Map<String, Object> parseArguments(Object argsObj) {
-        if (argsObj instanceof Map<?, ?> map) {
-            return (Map<String, Object>) map;
-        }
-        if (argsObj instanceof String str && !str.isBlank()) {
-            try {
-                return objectMapper.readValue(str, new TypeReference<Map<String, Object>>() {});
-            } catch (Exception e) {
-                log.warn("Failed to parse arguments as JSON string: {}", str);
-            }
-        }
-        return Map.of();
-    }
-
-    private Mono<String> executeToolAndContinue(
-            String systemPrompt, String task,
-            OllamaToolCall toolCall, List<Map<String, Object>> toolDefs) {
-
-        ToolExecutionRequest request = new ToolExecutionRequest();
-        request.setToolName(toolCall.name);
-        request.setArguments(new HashMap<>(toolCall.arguments));
-
-        return toolExecutor.execute(request)
-                .flatMap(toolResult -> {
-                    String toolResultStr = toToolResultJson(toolCall, toolResult);
-                    log.info("[Ollama ToolCall] tool {} result: {}", toolCall.name,
-                            toolResultStr.length() > 200 ? toolResultStr.substring(0, 200) + "..." : toolResultStr);
-
-                    String callId = UUID.randomUUID().toString().substring(0, 8);
-                    List<Map<String, Object>> messages = new ArrayList<>();
-                    messages.add(Map.of("role", "system", "content", systemPrompt));
-                    messages.add(Map.of("role", "user", "content", task));
-                    messages.add(Map.of(
-                            "role", "assistant", "content", "",
-                            "tool_calls", List.of(Map.of(
-                                    "id", callId,
-                                    "type", "function",
-                                    "function", Map.of(
-                                            "name", toolCall.name,
-                                            "arguments", toolCall.arguments
-                                    )
-                            ))
-                    ));
-                    messages.add(Map.of(
-                            "role", "tool",
-                            "tool_call_id", callId,
-                            "name", toolCall.name,
-                            "content", toolResultStr
-                    ));
-
-                    return callOllamaWithTools(null, null, toolDefs, messages)
-                            .map(resp -> resp.content != null ? resp.content : "工具执行完成但未获取到最终回答");
-                })
-                .defaultIfEmpty("工具执行失败，未获取到结果。");
-    }
-
-    private record OllamaChatResponse(String content, List<OllamaToolCall> toolCalls) {}
-    private record OllamaToolCall(String name, Map<String, Object> arguments) {}
 }

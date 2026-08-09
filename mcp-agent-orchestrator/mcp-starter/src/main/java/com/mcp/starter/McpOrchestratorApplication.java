@@ -1,9 +1,11 @@
 package com.mcp.starter;
 
 import com.mcp.engine.agent.SimpleReActAgent;
+import com.mcp.engine.agent.impl.SearchAgent;
 import com.mcp.engine.orchestrator.AgentOrchestrator;
 import com.mcp.llm.client.LlmClient;
 import com.mcp.tools.executor.ToolExecutor;
+import com.mcp.tools.model.ToolCategory;
 import com.mcp.tools.registry.ToolRegistry;
 import com.mcp.tools.tool.*;
 import com.mcp.tools.tool.document.DocumentReadToolSet;
@@ -16,8 +18,11 @@ import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
+
+import java.util.stream.Collectors;
 
 @SpringBootApplication
 @ComponentScan(basePackages = "com.mcp")
@@ -25,6 +30,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EntityScan(basePackages = "com.mcp.core")
 @EnableAsync
 @EnableScheduling
+@EnableCaching
 public class McpOrchestratorApplication {
 
     public static void main(String[] args) {
@@ -52,6 +58,8 @@ public class McpOrchestratorApplication {
         toolRegistry.register(documentReadToolSet);
         DocumentSearchToolSet documentSearchToolSet = context.getBean(DocumentSearchToolSet.class);
         toolRegistry.register(documentSearchToolSet);
+        DocxGeneratorTool docxGeneratorTool = context.getBean(DocxGeneratorTool.class);
+        toolRegistry.register(docxGeneratorTool);
         orchestrator.registerDefaultTools();
 
         // 2. 配置并注册 Agent
@@ -60,14 +68,37 @@ public class McpOrchestratorApplication {
         agent.setToolRegistry(toolRegistry);
         agent.setToolExecutor(toolExecutor);
         orchestrator.registerAgent(agent);
+        System.out.println("已注册 Agent: " + agent.getName());
+
+        SearchAgent searchAgent = context.getBean(SearchAgent.class);
+        searchAgent.setLlmClient(llmClient);
+        searchAgent.setToolRegistry(toolRegistry);
+        searchAgent.setToolExecutor(toolExecutor);
+        orchestrator.registerAgent(searchAgent);
+        System.out.println("已注册 Agent: " + searchAgent.getName());
 
         System.out.println("============================================");
         System.out.println("MCP Agent Orchestrator 启动完成");
         System.out.println("MCP 接口地址: http://localhost:8080/mcp");
         System.out.println("已注册 Agent: " + agent.getName());
         System.out.println("已注册工具数: " + toolRegistry.getAllTools().size());
+        System.out.println("已启用工具数: " + toolRegistry.getEnabledTools().size());
+        System.out.println("--- 按分类统计 ---");
+        for (ToolCategory cat : ToolCategory.values()) {
+            int count = toolRegistry.getToolsByCategory(cat).size();
+            if (count > 0) {
+                System.out.println("  " + cat.getDisplayName() + " (" + cat.name() + "): " + count + " 个");
+            }
+        }
+        System.out.println("--- 工具列表 ---");
         toolRegistry.getAllTools().forEach(t ->
-                System.out.println("  - " + t.getName() + ": " + t.getDescription())
+                System.out.println("  - " + t.getName() + " [" + t.getCategory() + "] "
+                        + (t.isEnabled() ? "✓" : "✗") + " " + t.getDescription())
+        );
+        System.out.println("--- 健康检查 ---");
+        toolRegistry.healthCheckAll().forEach(hc ->
+                System.out.println("  " + (hc.healthy() ? "✓" : "✗") + " " + hc.toolName()
+                        + " (" + hc.responseTimeMs() + "ms) " + hc.message())
         );
         System.out.println("============================================");
     }

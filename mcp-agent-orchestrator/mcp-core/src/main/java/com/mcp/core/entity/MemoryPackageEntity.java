@@ -51,6 +51,9 @@ public class MemoryPackageEntity {
     @Column(length = 20, nullable = false)
     private MemoryType memoryType = MemoryType.FACT;
 
+    @Column(length = 200)
+    private String factKey;
+
     @Column(columnDefinition = "TEXT", nullable = false)
     private String content;
 

@@ -55,4 +55,26 @@ public class ChannelController {
         return channelOrchestrator.handleMessage("discord", payload)
                 .thenReturn(ResponseEntity.ok(Map.of("status", "ok")));
     }
+
+    /** Desktop Host Webhook 回调 */
+    @PostMapping("/desktop/webhook")
+    public Mono<ResponseEntity<Map<String, String>>> desktopWebhook(@RequestBody JsonNode payload) {
+        return channelOrchestrator.handleMessage("desktop", payload)
+                .thenReturn(ResponseEntity.ok(Map.of("status", "ok")))
+                .onErrorResume(e -> {
+                    log.error("[Desktop Webhook] Error: {}", e.getMessage(), e);
+                    return Mono.just(ResponseEntity.ok(Map.of("status", "error", "message", e.getMessage())));
+                });
+    }
+
+    /** IDE Host Webhook 回调 */
+    @PostMapping("/ide/webhook")
+    public Mono<ResponseEntity<Map<String, String>>> ideWebhook(@RequestBody JsonNode payload) {
+        return channelOrchestrator.handleMessage("ide", payload)
+                .thenReturn(ResponseEntity.ok(Map.of("status", "ok")))
+                .onErrorResume(e -> {
+                    log.error("[IDE Webhook] Error: {}", e.getMessage(), e);
+                    return Mono.just(ResponseEntity.ok(Map.of("status", "error", "message", e.getMessage())));
+                });
+    }
 }

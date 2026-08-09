@@ -12,17 +12,17 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * 记忆检索器 - 根据当前查询智能召回最相关的记忆。
+ * 记忆检索器 - 分层召回策略。
  *
  * 核心策略：
- *   1. 根据查询意图匹配记忆类型（不是全量返回）
- *   2. 按 importance × relevance 排序
- *   3. 返回 top-K（限制 token 预算）
+ *   Layer 1 (Always Inject): PREFERENCE, PROFILE, RELATION, HABIT — 不依赖 Query 匹配，全部注入
+ *   Layer 2 (Semantic Search): FACT, PROJECT, GOAL, SKILL, SCHEDULE, EVENT, TEMPORARY — 按语义相关性召回
+ *   Layer 3 (Summary): 压缩摘要记忆
  *
- * 与旧版 LongTermMemoryService 全量 weight 排序的区别：
- *   - 类型匹配：根据查询意图只召回相关类型的记忆
- *   - 关键词相关性：查询词与记忆内容的关键词匹配
- *   - 智能 top-K：在 token 预算内返回最相关的记忆
+ * 设计原则：
+ *   - PREFERENCE/IDENTITY/RELATION 永远重要，不需要 Embedding 匹配
+ *   - 每层有独立的 Token 预算
+ *   - 结果按层返回，便于 LongTermMemoryService 构建分层上下文
  */
 @Slf4j
 @Service
@@ -34,139 +34,186 @@ public class MemoryRetriever {
     private static final int DEFAULT_TOP_K = 10;
     private static final int MAX_RETRIEVAL_TOKENS = 6000;
 
-    /**
-     * 根据用户查询召回最相关的记忆。
-     *
-     * @param userQuery 用户当前的问题/输入
-     * @param userId    用户ID（可选）
-     * @param groupId   群ID（可选）
-     * @return 排序后的相关记忆列表
-     */
+    private static final int MAX_ALWAYS_INJECT_TOKENS = 3000;
+    private static final int MAX_ALWAYS_INJECT_ITEMS = 20;
+    private static final int MAX_EPISODE_TOKENS = 3000;
+
+    private static final List<MemoryType> ALWAYS_INJECT_TYPES = List.of(
+            MemoryType.PREFERENCE, MemoryType.PROFILE, MemoryType.RELATION, MemoryType.HABIT);
+
+    private static final List<MemoryType> EPISODE_TYPES = List.of(
+            MemoryType.FACT, MemoryType.PROJECT, MemoryType.GOAL,
+            MemoryType.SKILL, MemoryType.SCHEDULE, MemoryType.EVENT, MemoryType.TEMPORARY);
+
     public List<MemoryPackageEntity> retrieve(String userQuery, String userId, String groupId) {
         return retrieve(userQuery, userId, groupId, DEFAULT_TOP_K);
     }
 
     public List<MemoryPackageEntity> retrieve(String userQuery, String userId, String groupId, int topK) {
-        List<MemoryPackageEntity> allMemories = fetchMemories(userId, groupId);
-
-        if (allMemories.isEmpty()) {
-            return List.of();
-        }
-
-        List<MemoryType> relevantTypes = inferRelevantTypes(userQuery);
-
-        List<MemoryPackageEntity> filtered = allMemories.stream()
-                .filter(MemoryPackageEntity::isActive)
-                .filter(m -> m.getImportance() >= 5)
-                .toList();
-
-        List<ScoredMemoryEntity> scored = filtered.stream()
-                .map(m -> {
-                    double relevance = computeRelevance(m, userQuery, relevantTypes);
-                    double score = m.getImportance() * 0.7 + relevance * 30.0;
-                    return new ScoredMemoryEntity(m, score);
-                })
-                .sorted(Comparator.comparingDouble(ScoredMemoryEntity::score).reversed())
-                .toList();
-
-        List<MemoryPackageEntity> result = new ArrayList<>();
-        int totalTokens = 0;
-        for (ScoredMemoryEntity sm : scored) {
-            int tokens = estimateTokens(sm.entity.getContent());
-            if (totalTokens + tokens > MAX_RETRIEVAL_TOKENS) break;
-            result.add(sm.entity);
-            totalTokens += tokens;
-            if (result.size() >= topK) break;
-        }
-
-        log.info("[MemoryRetriever] 查询召回: 总记忆{}条, 匹配{}条, 返回{}条, token预算{}",
-                allMemories.size(), scored.size(), result.size(), totalTokens);
-        return result;
-    }
-
-    /**
-     * 获取所有用户/群记忆
-     */
-    private List<MemoryPackageEntity> fetchMemories(String userId, String groupId) {
-        List<MemoryPackageEntity> all = new ArrayList<>();
-        if (userId != null) {
-            all.addAll(repository.findByUserIdOrderByWeightDesc(userId));
-        }
-        if (groupId != null) {
-            all.addAll(repository.findByGroupIdOrderByWeightDesc(groupId));
-        }
-        if (userId == null && groupId == null) {
-            all.addAll(repository.findAll());
-        }
-        return all.stream()
-                .filter(m -> m.getScope() != MemoryScope.PERSONA)
+        return retrieveWithTiers(userQuery, userId, groupId, topK).stream()
+                .map(MemoryRetrievalResult::memory)
                 .collect(Collectors.toList());
     }
 
     /**
-     * 根据用户查询推断需要召回的记忆类型。
-     *
-     * 例如：
-     *   "帮我写代码" → PROJECT, SKILL, PREFERENCE
-     *   "我是谁" → PROFILE, RELATION
-     *   "上次那个项目" → PROJECT, FACT
+     * 分层召回：Always-Inject 层 + Episode 语义搜索层。
+     * 使用合并查询（1次 SQL 替代原 4 次），在 Java 层按类型分类。
      */
-    private List<MemoryType> inferRelevantTypes(String query) {
-        if (query == null || query.isBlank()) {
-            return List.of(MemoryType.values());
+    public List<MemoryRetrievalResult> retrieveWithTiers(String userQuery, String userId, String groupId, int topK) {
+        List<MemoryPackageEntity> allActive = repository.findAllActiveByUserIdOrGroupId(userId, groupId);
+
+        List<MemoryPackageEntity> alwaysInjectMemories = new ArrayList<>();
+        List<MemoryPackageEntity> episodeMemories = new ArrayList<>();
+        for (MemoryPackageEntity m : allActive) {
+            if (m.getImportance() < 5) continue;
+            if (ALWAYS_INJECT_TYPES.contains(m.getMemoryType())) {
+                alwaysInjectMemories.add(m);
+            } else if (EPISODE_TYPES.contains(m.getMemoryType())) {
+                episodeMemories.add(m);
+            }
         }
 
-        String lower = query.toLowerCase();
-        List<MemoryType> types = new ArrayList<>();
-
-        if (containsAny(lower, "我是", "叫我", "称呼", "名字", "昵称", "身份")) {
-            types.add(MemoryType.PROFILE);
-            types.add(MemoryType.RELATION);
-        }
-        if (containsAny(lower, "喜欢", "不喜欢", "偏好", "习惯", "经常", "总是", "爱好")) {
-            types.add(MemoryType.PREFERENCE);
-            types.add(MemoryType.HABIT);
-        }
-        if (containsAny(lower, "项目", "开发", "写", "代码", "编程", "任务", "工作")) {
-            types.add(MemoryType.PROJECT);
-            types.add(MemoryType.SKILL);
-            types.add(MemoryType.GOAL);
-        }
-        if (containsAny(lower, "目标", "计划", "打算", "想做", "完成")) {
-            types.add(MemoryType.GOAL);
-            types.add(MemoryType.PROJECT);
-        }
-        if (containsAny(lower, "事实", "知道", "了解", "是什么", "定义")) {
-            types.add(MemoryType.FACT);
-        }
-        if (containsAny(lower, "关系", "同事", "朋友", "家人", "谁")) {
-            types.add(MemoryType.RELATION);
-            types.add(MemoryType.PROFILE);
-        }
-        if (containsAny(lower, "日程", "安排", "时间", "日期", "会议", "出差")) {
-            types.add(MemoryType.SCHEDULE);
+        alwaysInjectMemories.sort(Comparator.comparingDouble(MemoryPackageEntity::getWeight).reversed());
+        if (alwaysInjectMemories.size() > MAX_ALWAYS_INJECT_ITEMS) {
+            alwaysInjectMemories = alwaysInjectMemories.subList(0, MAX_ALWAYS_INJECT_ITEMS);
         }
 
-        if (types.isEmpty()) {
-            return List.of(MemoryType.values());
+        List<MemoryRetrievalResult> result = new ArrayList<>();
+        int totalTokens = 0;
+
+        int alwaysTokens = 0;
+        for (MemoryPackageEntity m : alwaysInjectMemories) {
+            double score = m.getImportance() * 0.6 + m.getWeight() * 0.4;
+            int tokens = estimateTokens(m.getContent());
+            if (alwaysTokens + tokens > MAX_ALWAYS_INJECT_TOKENS) break;
+            result.add(new MemoryRetrievalResult(m, score, RetrievalTier.HOT, tokens));
+            alwaysTokens += tokens;
+        }
+        totalTokens += alwaysTokens;
+
+        if (alwaysInjectMemories.isEmpty()) {
+            log.info("[MemoryRetriever] Always-Inject 层: 无记忆 userId={} groupId={}", userId, groupId);
+        } else {
+            log.info("[MemoryRetriever] Always-Inject 层: 注入{}条, token={}, 类型: {}",
+                    result.size(), alwaysTokens,
+                    result.stream().map(r -> r.memory().getMemoryType().name())
+                            .distinct().collect(Collectors.joining(",")));
         }
 
-        Set<MemoryType> unique = new LinkedHashSet<>(types);
-        unique.add(MemoryType.PROFILE);
-        unique.add(MemoryType.PREFERENCE);
-        return new ArrayList<>(unique);
+        int remainingTokens = MAX_RETRIEVAL_TOKENS - totalTokens;
+        int remainingSlots = topK - result.size();
+        if (remainingSlots > 0 && remainingTokens > 0 && !episodeMemories.isEmpty()) {
+            List<MemoryRetrievalResult> episode = scoreAndRankEpisodes(episodeMemories, userQuery, remainingSlots, remainingTokens);
+            int episodeTokens = 0;
+            for (MemoryRetrievalResult r : episode) {
+                if (episodeTokens + r.tokenCount() > remainingTokens) break;
+                result.add(r);
+                episodeTokens += r.tokenCount();
+                if (result.size() >= topK) break;
+            }
+
+            if (!episode.isEmpty()) {
+                log.info("[MemoryRetriever] Episode 层: 注入{}条, token={}",
+                        episode.size(), episodeTokens);
+            }
+        }
+
+        log.info("[MemoryRetriever] 分层召回: Always-Inject={}条, Episode检索={}条, 总计={}条, token={}",
+                alwaysInjectMemories.size(), result.size() - alwaysInjectMemories.size(), result.size(), totalTokens);
+        return result;
     }
 
     /**
-     * 计算单条记忆与查询的相关性
+     * Always-Inject 层：PREFERENCE/PROFILE/RELATION/HABIT 全部注入（不依赖Query匹配）。
+     * 限制最多 MAX_ALWAYS_INJECT_ITEMS 条，按 weight 降序。
+     * @deprecated 已由 retrieveWithTiers 中的合并查询替代，仅保留供外部可能的直接调用
      */
-    private double computeRelevance(MemoryPackageEntity memory, String query,
-                                    List<MemoryType> relevantTypes) {
-        double score = 0;
-
-        if (relevantTypes.contains(memory.getMemoryType())) {
-            score += 5;
+    @Deprecated
+    private List<MemoryRetrievalResult> retrieveAlwaysInject(String userId, String groupId) {
+        List<MemoryPackageEntity> memories = new ArrayList<>();
+        if (userId != null) {
+            memories.addAll(repository.findByUserIdAndMemoryTypeIn(userId, ALWAYS_INJECT_TYPES));
         }
+        if (groupId != null) {
+            memories.addAll(repository.findByGroupIdAndMemoryTypeIn(groupId, ALWAYS_INJECT_TYPES));
+        }
+
+        return memories.stream()
+                .filter(MemoryPackageEntity::isActive)
+                .filter(m -> m.getImportance() >= 5)
+                .sorted(Comparator.comparingDouble(MemoryPackageEntity::getWeight).reversed())
+                .limit(MAX_ALWAYS_INJECT_ITEMS)
+                .map(m -> {
+                    double score = m.getImportance() * 0.6 + m.getWeight() * 0.4;
+                    int tokens = estimateTokens(m.getContent());
+                    return new MemoryRetrievalResult(m, score, RetrievalTier.HOT, tokens);
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 对预取的 Episode 记忆进行评分和排序（不执行数据库查询）。
+     * 原 retrieveEpisode + fetchEpisodeMemories 的合并优化版。
+     */
+    private List<MemoryRetrievalResult> scoreAndRankEpisodes(List<MemoryPackageEntity> episodeMemories,
+                                                              String userQuery, int topK, int maxTokens) {
+        List<ScoredMemoryEntity> scored = episodeMemories.stream()
+                .map(m -> {
+                    double relevance = computeRelevance(m, userQuery);
+                    double tierBonus = getTierBonus(m);
+                    double score = m.getImportance() * 0.4 + relevance * 25.0 + tierBonus * 20.0;
+                    return new ScoredMemoryEntity(m, score, deriveTier(score));
+                })
+                .sorted(Comparator.comparingDouble(ScoredMemoryEntity::score).reversed())
+                .toList();
+
+        List<MemoryRetrievalResult> result = new ArrayList<>();
+        int totalTokens = 0;
+        for (ScoredMemoryEntity sm : scored) {
+            if (sm.tier == RetrievalTier.ARCHIVED) continue;
+            int tokens = estimateTokens(sm.entity.getContent());
+            if (totalTokens + tokens > maxTokens) break;
+            result.add(new MemoryRetrievalResult(
+                    sm.entity, sm.score, sm.tier, tokens));
+            totalTokens += tokens;
+            if (result.size() >= topK) break;
+        }
+
+        return result;
+    }
+
+    private double getTierBonus(MemoryPackageEntity memory) {
+        if (memory.isPermanent()) return 5.0;
+        double weight = memory.getWeight();
+        if (weight >= 70) return 5.0;
+        if (weight >= 40) return 3.0;
+        if (weight >= 10) return 1.0;
+        return 0;
+    }
+
+    private RetrievalTier deriveTier(double score) {
+        if (score >= 70) return RetrievalTier.HOT;
+        if (score >= 40) return RetrievalTier.WARM;
+        if (score >= 10) return RetrievalTier.COLD;
+        return RetrievalTier.ARCHIVED;
+    }
+
+    public enum RetrievalTier {
+        HOT, WARM, COLD, ARCHIVED
+    }
+
+    public record MemoryRetrievalResult(
+            MemoryPackageEntity memory,
+            double score,
+            RetrievalTier tier,
+            int tokenCount
+    ) {}
+
+    /**
+     * 计算单条记忆与查询的关键词相关性（仅用于 Episode 层）。
+     */
+    private double computeRelevance(MemoryPackageEntity memory, String query) {
+        double score = 0;
 
         if (query != null && memory.getContent() != null) {
             String lowerContent = memory.getContent().toLowerCase();
@@ -191,16 +238,9 @@ public class MemoryRetriever {
         return score;
     }
 
-    private boolean containsAny(String text, String... keywords) {
-        for (String kw : keywords) {
-            if (text.contains(kw)) return true;
-        }
-        return false;
-    }
-
     private int estimateTokens(String text) {
         return text == null ? 0 : text.length() / 4;
     }
 
-    private record ScoredMemoryEntity(MemoryPackageEntity entity, double score) {}
+    private record ScoredMemoryEntity(MemoryPackageEntity entity, double score, RetrievalTier tier) {}
 }

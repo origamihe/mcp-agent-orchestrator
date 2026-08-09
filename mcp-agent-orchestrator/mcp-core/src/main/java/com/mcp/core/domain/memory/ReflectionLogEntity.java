@@ -6,6 +6,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Entity
 @Table(name = "reflection_logs", schema = "mcp_agent")
@@ -34,7 +35,7 @@ public class ReflectionLogEntity {
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
-    private String toolsUsed;               // 使用的工具列表
+    private List<String> toolsUsed;         // 使用的工具列表（JSON 数组）
 
     @Column(nullable = false)
     private boolean taskSuccess;            // 任务是否成功

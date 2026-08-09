@@ -11,6 +11,7 @@ package com.mcp.core.domain.memory;
  */
 public enum MemoryType {
     PROFILE("用户资料", "身份、职业、技能等基本属性", Lifecycle.PERMANENT),
+    IDENTITY("身份信息", "用户身份、称呼偏好、角色等", Lifecycle.PERMANENT),
     PREFERENCE("喜好", "喜欢/不喜欢的事物", Lifecycle.LONG),
     HABIT("习惯", "经常重复的行为模式", Lifecycle.LONG),
     GOAL("长期目标", "用户正在追求的目标", Lifecycle.LONG),

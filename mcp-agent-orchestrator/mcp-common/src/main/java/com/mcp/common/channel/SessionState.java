@@ -7,6 +7,9 @@ public class SessionState {
     private String language = "zh";
     private String pendingIntent;
     private Instant lastActiveAt = Instant.now();
+    private AgentMode mode = AgentMode.CHAT;
+    private RoleRuntime roleRuntime = null;
+    private WorldState worldState = new WorldState();
 
     public SessionState() {}
 
@@ -21,6 +24,17 @@ public class SessionState {
 
     public Instant getLastActiveAt() { return lastActiveAt; }
     public void setLastActiveAt(Instant lastActiveAt) { this.lastActiveAt = lastActiveAt; }
+
+    public AgentMode getMode() { return mode; }
+    public void setMode(AgentMode mode) { this.mode = mode; }
+
+    public boolean isGameMode() { return mode == AgentMode.GAME; }
+
+    public RoleRuntime getRoleRuntime() { return roleRuntime; }
+    public void setRoleRuntime(RoleRuntime roleRuntime) { this.roleRuntime = roleRuntime; }
+
+    public WorldState getWorldState() { return worldState; }
+    public void setWorldState(WorldState worldState) { this.worldState = worldState; }
 
     public void touch() { this.lastActiveAt = Instant.now(); }
 }

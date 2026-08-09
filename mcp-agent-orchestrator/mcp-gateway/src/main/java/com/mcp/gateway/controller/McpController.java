@@ -4,7 +4,10 @@ import com.mcp.core.mcp.model.McpMessage;
 import com.mcp.core.service.LlmConfigService;
 import com.mcp.engine.orchestrator.AgentOrchestrator;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -21,6 +24,8 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/mcp")
 public class McpController {
+
+    private static final Logger log = LoggerFactory.getLogger(McpController.class);
 
     private final AgentOrchestrator orchestrator;
     private final LlmConfigService llmConfigService;
@@ -83,11 +88,22 @@ public class McpController {
 
     private Mono<McpMessage> handleAgentProcess(McpMessage req) {
         String task = req.getParams() != null ? req.getParams().toString() : "";
-        return orchestrator.processRequest(task, req.getId())
+        return orchestrator.processRequestWithSystemPrompt(task, req.getId(), null, null)
                 .map(result -> McpMessage.builder()
                         .id(req.getId())
                         .result(result)
                         .build());
+    }
+
+    @GetMapping("/workspaces")
+    public Mono<ResponseEntity<List<Map<String, Object>>>> getWorkspaces() {
+        List<Map<String, Object>> workspaces = new ArrayList<>();
+        Map<String, Object> defaultWs = new LinkedHashMap<>();
+        defaultWs.put("workspaceId", "default");
+        defaultWs.put("name", "Default Workspace");
+        defaultWs.put("projectPath", System.getProperty("user.dir"));
+        workspaces.add(defaultWs);
+        return Mono.just(ResponseEntity.ok(workspaces));
     }
 
     @GetMapping("/configs")
@@ -118,11 +134,12 @@ public class McpController {
                                                     "provider", defaultCfg.getProvider().getCode(),
                                                     "modelName", defaultCfg.getModelName()
                                             )))
-                                            .block();
+                                            .defaultIfEmpty(result);
                                 }
-                                return result;
+                                return Mono.just(result);
                             });
-                });
+                })
+                .flatMap(Mono::just);
     }
 
     private Flux<Map<String, String>> discoverOllamaModels() {
@@ -151,7 +168,8 @@ public class McpController {
                             }
                             return result;
                         }
-                    } catch (Exception ignored) {
+                    } catch (Exception e) {
+                        log.warn("Failed to discover Ollama models from {}: {}", ollamaBaseUrl, e.getMessage());
                     }
                     return List.<Map<String, String>>of();
                 })

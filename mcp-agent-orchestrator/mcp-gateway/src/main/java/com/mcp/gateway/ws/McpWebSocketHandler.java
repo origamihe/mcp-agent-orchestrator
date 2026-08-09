@@ -168,7 +168,7 @@ public class McpWebSocketHandler implements WebSocketHandler {
                                     if (mid != null && !mid.isEmpty()) {
                                         return orchestrator.processRequestWithModel(userMessage, session.getId(), mid);
                                     }
-                                    return orchestrator.processRequest(userMessage, session.getId());
+                                    return orchestrator.processRequestWithSystemPrompt(userMessage, session.getId(), null, null);
                                 })
                                 .flatMap(response -> {
                                     System.out.println("prepare send to front: " + response);
@@ -183,7 +183,7 @@ public class McpWebSocketHandler implements WebSocketHandler {
                                             .doOnSuccess(v -> System.out.println(" success send msg"));
                                 });
                     } else {
-                        return orchestrator.processRequest(userMessage, session.getId())
+                        return orchestrator.processRequestWithSystemPrompt(userMessage, session.getId(), null, null)
                                 .flatMap(response -> {
                                     System.out.println("prepare send to front: " + response);
                                     return session.send(Mono.just(session.textMessage(response)))

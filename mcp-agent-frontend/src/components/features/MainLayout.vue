@@ -8,8 +8,46 @@
                 :models="availableModels"
             />
             <div class="feature-area">
+                <!-- Admin Console 面板 -->
+                <DashboardPanel
+                    v-if="activeFeature === 'dashboard'"
+                    :channels="channelStatuses"
+                    :workspaces="workspaceCount"
+                    :uptime="uptime"
+                    @navigate="handleNavigate"
+                />
+                <WorkspacePanel
+                    v-else-if="activeFeature === 'workspaces'"
+                    :workspaces="workspaceList"
+                />
+                <HostMonitorPanel
+                    v-else-if="activeFeature === 'hosts'"
+                    :channels="channelStatuses"
+                    @navigate="handleNavigate"
+                    @refresh="fetchChannelStatuses"
+                />
+                <SkillsPanel
+                    v-else-if="activeFeature === 'skills'"
+                    @navigate="handleNavigate"
+                />
+                <AgentPanel
+                    v-else-if="activeFeature === 'agents'"
+                    :agents="agentCards"
+                    @navigate="handleNavigate"
+                    @test-agent="handleTestAgent"
+                    @run-task="handleRunTask"
+                    @run-pipeline="handleRunPipeline"
+                    @run-parallel="handleRunParallel"
+                    @run-delegate="handleRunDelegate"
+                />
+                <SettingsPanel
+                    v-else-if="activeFeature === 'settings'"
+                    :models="availableModels"
+                />
+
+                <!-- 调试对话（保留） -->
                 <ChatPanel
-                    v-if="activeFeature === 'chat' || activeFeature === 'web-search' || activeFeature === 'expert-mode'"
+                    v-else-if="activeFeature === 'chat' || activeFeature === 'web-search'"
                     ref="chatPanelRef"
                     :isConnected="isConnected"
                     :selectedModelId="selectedModelId"
@@ -47,10 +85,16 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
-import type { AgentFeature } from '@/types/agent.ts'
+import type { AgentFeature, AgentCard, ChannelStatus, WorkspaceInfo } from '@/types/agent.ts'
 import type { LlmModelInfo } from '@/types/llm.ts'
 import Sidebar from '@/components/common/Sidebar.vue'
 import StatusBar from '@/components/common/StatusBar.vue'
+import DashboardPanel from '@/components/features/DashboardPanel.vue'
+import WorkspacePanel from '@/components/features/WorkspacePanel.vue'
+import HostMonitorPanel from '@/components/features/HostMonitorPanel.vue'
+import SkillsPanel from '@/components/features/SkillsPanel.vue'
+import AgentPanel from '@/components/features/AgentPanel.vue'
+import SettingsPanel from '@/components/features/SettingsPanel.vue'
 import ChatPanel from '@/components/features/ChatPanel.vue'
 import PptGenerator from '@/components/features/PptGenerator.vue'
 import DocxGenerator from '@/components/features/DocxGenerator.vue'
@@ -59,7 +103,7 @@ import PromptManager from '@/components/features/PromptManager.vue'
 import { useWebSocket } from '@/composables/useWebSocket.ts'
 import http from '@/utils/request.ts'
 
-const activeFeature = ref<AgentFeature>('chat')
+const activeFeature = ref<AgentFeature>('dashboard')
 const selectedModelId = ref('')
 const selectedRole = ref('')
 const availableModels = ref<LlmModelInfo[]>([])
@@ -69,6 +113,12 @@ const pptPanelRef = ref<any>(null)
 const docxPanelRef = ref<any>(null)
 const qqBotPanelRef = ref<any>(null)
 
+const channelStatuses = ref<ChannelStatus[]>([])
+const workspaceList = ref<WorkspaceInfo[]>([])
+const workspaceCount = ref(0)
+const agentCards = ref<AgentCard[]>([])
+const uptime = ref('--')
+
 const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/mcp`
 const { isConnected, connect, send, lastMessage } = useWebSocket(wsUrl)
 
@@ -77,7 +127,6 @@ watch(lastMessage, (msg) => {
     switch (activeFeature.value) {
         case 'chat':
         case 'web-search':
-        case 'expert-mode':
             chatPanelRef.value?.addMessage('assistant', msg)
             chatPanelRef.value?.markDone()
             break
@@ -88,6 +137,12 @@ watch(lastMessage, (msg) => {
             docxPanelRef.value?.addResult(msg)
             break
         case 'prompt-manager':
+        case 'dashboard':
+        case 'workspaces':
+        case 'hosts':
+        case 'skills':
+        case 'agents':
+        case 'settings':
             break
         case 'qq-bot':
             if (msg && msg.startsWith('/mcp/download/')) {
@@ -116,8 +171,59 @@ async function fetchModels() {
     }
 }
 
+async function fetchChannelStatuses() {
+    try {
+        const res = await http.get('/channel/status')
+        channelStatuses.value = (res as any) || []
+    } catch {
+        console.error('获取渠道状态失败')
+    }
+}
+
+async function fetchWorkspaces() {
+    try {
+        const res = await http.get('/mcp/workspaces')
+        workspaceList.value = (res as any) || []
+        workspaceCount.value = workspaceList.value.length
+    } catch {
+        workspaceCount.value = 0
+    }
+}
+
+async function fetchAgents() {
+    try {
+        const res = await http.get('/api/agents')
+        agentCards.value = (res as any) || []
+    } catch {
+        agentCards.value = []
+    }
+}
+
+function handleTestAgent(agentId: string) {
+    console.log('[MainLayout] Test agent:', agentId)
+}
+
+function handleRunTask(agentId: string) {
+    console.log('[MainLayout] Run task on agent:', agentId)
+}
+
+function handleRunPipeline() {
+    console.log('[MainLayout] Run pipeline workflow')
+}
+
+function handleRunParallel() {
+    console.log('[MainLayout] Run parallel workflow')
+}
+
+function handleRunDelegate() {
+    console.log('[MainLayout] Run delegate workflow')
+}
+
 onMounted(() => {
     fetchModels()
+    fetchChannelStatuses()
+    fetchWorkspaces()
+    fetchAgents()
     connect()
 })
 </script>

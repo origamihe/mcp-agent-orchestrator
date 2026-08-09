@@ -1,5 +1,7 @@
 package com.mcp.engine.orchestrator;
 
+import com.mcp.common.context.RequestContext;
+import com.mcp.common.identity.MemoryIdentity;
 import com.mcp.engine.agent.Agent;
 import com.mcp.common.channel.RecallMode;
 import reactor.core.publisher.Mono;
@@ -9,15 +11,29 @@ import reactor.core.publisher.Mono;
  */
 public interface AgentOrchestrator {
 
-    Mono<String> processRequest(String request, String sessionId);
-
     Mono<String> processRequestWithModel(String request, String sessionId, String modelConfigId);
 
     Mono<String> processRequestWithSystemPrompt(String request, String sessionId, String systemPrompt, String modelConfigId);
 
-    Mono<String> processRequestWithHistory(String request, String sessionId, String systemPrompt, RecallMode recallMode);
+    /**
+     * 带完整身份信息的请求处理（推荐使用）。
+     * 调用方已持有 senderId/groupId/platform 时，直接传入 MemoryIdentity，
+     * 避免 sessionId → MemoryIdentity 的二次解析。
+     */
+    Mono<String> processRequestWithIdentity(String request, MemoryIdentity identity, String systemPrompt, String modelConfigId);
 
-    Mono<String> executeTask(String task, String agentName);
+    /**
+     * 统一请求入口（推荐使用）。
+     * 
+     * 接受 RequestContext 统一上下文对象，包含身份、用户资料、群组上下文、
+     * 会话状态、工作空间等所有元数据。未来新增上下文字段无需修改此接口。
+     * 
+     * @param ctx 统一请求上下文
+     * @return LLM 响应
+     */
+    Mono<String> processRequest(RequestContext ctx);
+
+    Mono<String> processRequestWithHistory(String request, String sessionId, String systemPrompt, RecallMode recallMode);
 
     void registerAgent(Agent agent);
 

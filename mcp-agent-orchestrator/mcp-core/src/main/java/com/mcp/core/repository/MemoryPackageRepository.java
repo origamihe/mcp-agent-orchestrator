@@ -42,12 +42,20 @@ public interface MemoryPackageRepository extends JpaRepository<MemoryPackageEnti
     long countBySessionId(String sessionId);
 
     /**
-     * 增加访问计数
+     * 增加访问计数（单条）
      */
     @Modifying
     @Transactional
     @Query("UPDATE MemoryPackageEntity m SET m.accessCount = m.accessCount + 1, m.lastAccessedAt = :now WHERE m.id = :id")
     void incrementAccess(@Param("id") Long id, @Param("now") LocalDateTime now);
+
+    /**
+     * 批量增加访问计数（一次 SQL 完成多条，消除 N+1 问题）
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE MemoryPackageEntity m SET m.accessCount = m.accessCount + 1, m.lastAccessedAt = :now WHERE m.id IN :ids")
+    void batchIncrementAccess(@Param("ids") List<Long> ids, @Param("now") LocalDateTime now);
 
     /**
      * 删除会话所有记忆
@@ -73,9 +81,16 @@ public interface MemoryPackageRepository extends JpaRepository<MemoryPackageEnti
     List<MemoryPackageEntity> findByGroupIdOrderByWeightDesc(String groupId);
 
     /**
-     * 根据会话和用户查找记忆包
+     * 根据会话和用户查找活跃记忆包（按类型过滤）
      */
-    List<MemoryPackageEntity> findBySessionIdAndUserIdOrderByWeightDesc(String sessionId, String userId);
+    List<MemoryPackageEntity> findBySessionIdAndUserIdAndMemoryTypeAndIsActiveTrueOrderByWeightDesc(
+            String sessionId, String userId, MemoryType memoryType);
+
+    /**
+     * 根据会话查找活跃记忆包（按类型过滤，userId 未知时使用）
+     */
+    List<MemoryPackageEntity> findBySessionIdAndMemoryTypeAndIsActiveTrueOrderByWeightDesc(
+            String sessionId, MemoryType memoryType);
 
     /**
      * 根据会话和群查找记忆包
@@ -112,4 +127,40 @@ public interface MemoryPackageRepository extends JpaRepository<MemoryPackageEnti
     List<MemoryPackageEntity> findByUserIdAndMemoryType(
             @Param("userId") String userId,
             @Param("memoryType") MemoryType memoryType);
+
+    /**
+     * 根据用户ID和factKey查找活跃记忆（用于精确去重）
+     */
+    Optional<MemoryPackageEntity> findByUserIdAndFactKeyAndIsActiveTrue(String userId, String factKey);
+
+    /**
+     * 根据群ID和factKey查找活跃记忆（用于群聊精确去重）
+     */
+    Optional<MemoryPackageEntity> findByGroupIdAndFactKeyAndIsActiveTrue(String groupId, String factKey);
+
+    /**
+     * 查找用户所有Always-Inject类型的活跃记忆（PREFERENCE/IDENTITY/RELATION）
+     */
+    @Query("SELECT m FROM MemoryPackageEntity m WHERE m.userId = :userId AND m.memoryType IN :types AND m.isActive = true ORDER BY m.weight DESC")
+    List<MemoryPackageEntity> findByUserIdAndMemoryTypeIn(
+            @Param("userId") String userId,
+            @Param("types") List<MemoryType> types);
+
+    /**
+     * 查找群所有Always-Inject类型的活跃记忆
+     */
+    @Query("SELECT m FROM MemoryPackageEntity m WHERE m.groupId = :groupId AND m.memoryType IN :types AND m.isActive = true ORDER BY m.weight DESC")
+    List<MemoryPackageEntity> findByGroupIdAndMemoryTypeIn(
+            @Param("groupId") String groupId,
+            @Param("types") List<MemoryType> types);
+
+    /**
+     * 合并查询：一次 SQL 获取用户和群的所有活跃记忆（排除 PERSONA 作用域）。
+     * 替代原来的 4 次独立查询（userId+AlwaysInject, groupId+AlwaysInject, userId+Episode, groupId+Episode）。
+     */
+    @Query("SELECT m FROM MemoryPackageEntity m WHERE (m.userId = :userId OR m.groupId = :groupId) AND m.isActive = true AND m.scope <> 'PERSONA' ORDER BY m.weight DESC")
+    List<MemoryPackageEntity> findAllActiveByUserIdOrGroupId(
+            @Param("userId") String userId,
+            @Param("groupId") String groupId);
+
 }

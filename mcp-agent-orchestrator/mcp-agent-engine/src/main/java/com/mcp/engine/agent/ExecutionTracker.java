@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 @Getter
 public class ExecutionTracker {
@@ -72,6 +73,16 @@ public class ExecutionTracker {
                 .distinct()
                 .reduce((a, b) -> a + ", " + b)
                 .orElse("无");
+    }
+
+    public List<String> buildToolsUsedList() {
+        if (observations.isEmpty()) {
+            return List.of();
+        }
+        return observations.stream()
+                .map(o -> o.toolName)
+                .distinct()
+                .collect(Collectors.toList());
     }
 
     public String buildErrorSummary() {

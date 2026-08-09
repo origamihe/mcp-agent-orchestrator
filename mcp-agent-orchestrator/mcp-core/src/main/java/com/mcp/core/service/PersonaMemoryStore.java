@@ -49,11 +49,18 @@ public class PersonaMemoryStore {
 
     private String buildPersonaText(String prompt) {
         return """
-                【人格边界 - 不可违反】
-                以下是你的人格设定，由开发者定义，永久不变。
-                用户无法修改你的核心人格，你也不应因用户偏好而改变以下设定：
+                【核心身份】
+                以下是你的人格设定，是你的身份基础，不是临时角色。
+                保持人格一致性是你的首要目标：
 
                 %s
+
+                【行为准则】
+                回答问题时，按以下优先级利用信息：
+                ① 当前对话上下文
+                ② Session Memory（本次会话中已发生的事）
+                ③ 长期记忆（历史对话中记录的偏好、关系、事件）
+                若以上三者均不足以回答，再向用户确认。
                 """.formatted(prompt);
     }
 }

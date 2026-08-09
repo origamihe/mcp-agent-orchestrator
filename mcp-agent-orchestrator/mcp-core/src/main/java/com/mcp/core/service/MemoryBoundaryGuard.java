@@ -1,18 +1,27 @@
 package com.mcp.core.service;
 
+import com.mcp.common.identity.UserRole;
 import com.mcp.core.domain.memory.MemoryScope;
 import com.mcp.core.entity.MemoryPackageEntity;
+import com.mcp.core.service.boundary.MemoryBoundaryRule;
+import com.mcp.core.service.boundary.NicknameRule;
+import com.mcp.core.service.boundary.PersonaModificationRule;
+import com.mcp.core.service.boundary.BehaviorContradictionRule;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * 记忆边界守卫 - 确保 UserMemory 不会覆盖 Persona。
  *
- * 基于关键词匹配的轻量级检查。
- * 未来可扩展：接入 LLM 做语义级冲突检测。
+ * 基于规则引擎（Rule Engine）架构：
+ * - 每条规则独立判断一种冲突类型
+ * - 规则支持权限覆盖：OWNER/ADMIN 可绕过非安全规则
+ * - 新增规则只需实现 MemoryBoundaryRule 接口并注册
  */
 @Slf4j
 @Service
@@ -20,38 +29,67 @@ import java.util.List;
 public class MemoryBoundaryGuard {
 
     private final PersonaMemoryStore personaMemoryStore;
+    private final List<MemoryBoundaryRule> rules = new ArrayList<>();
+
+    @PostConstruct
+    public void init() {
+        rules.add(new NicknameRule());
+        rules.add(new PersonaModificationRule());
+        rules.add(new BehaviorContradictionRule());
+        log.info("[MemoryBoundary] 已注册 {} 条边界规则", rules.size());
+    }
 
     /**
-     * 检查一条 UserMemory 是否与 Persona 定义冲突。
+     * 检查一条 UserMemory 是否与 Persona 定义冲突（无身份信息，默认视为 MEMBER）。
+     *
+     * @deprecated 请使用 {@link #isConflictWithPersona(String, UserRole)}
      */
+    @Deprecated
     public boolean isConflictWithPersona(String userMemory) {
+        return isConflictWithPersona(userMemory, null);
+    }
+
+    /**
+     * 检查一条 UserMemory 是否与 Persona 定义冲突（含身份权限检查）。
+     *
+     * 检查流程：
+     * 1. 获取 Persona 文本
+     * 2. 遍历所有规则，找到匹配的规则
+     * 3. 对于匹配的规则，检查用户角色是否可以覆盖
+     * 4. 如果角色不可覆盖，则判断冲突
+     *
+     * @param userMemory 用户记忆内容
+     * @param userRole   用户角色（null 视为 MEMBER）
+     * @return true 表示存在冲突且用户无权覆盖
+     */
+    public boolean isConflictWithPersona(String userMemory, UserRole userRole) {
         String personaText = personaMemoryStore.getRawPersonaText();
-        if (personaText.isEmpty()) return false;
+        if (personaText.isEmpty()) {
+            return false;
+        }
 
-        String lowerMemory = userMemory.toLowerCase();
-        String lowerPersona = personaText.toLowerCase();
+        UserRole effectiveRole = userRole != null ? userRole : UserRole.MEMBER;
 
-        // 规则1：如果用户记忆包含"主人"，而 Persona 明确禁止
-        if (lowerMemory.contains("主人") || lowerMemory.contains("master")) {
-            if (lowerPersona.contains("不叫") || lowerPersona.contains("不撒娇")
-                    || lowerPersona.contains("不卖萌") || lowerPersona.contains("不过度")) {
-                log.warn("[MemoryBoundary] 检测到冲突: 用户记忆要求'主人'称呼，但 Persona 禁止");
-                return true;
+        for (MemoryBoundaryRule rule : rules) {
+            if (!rule.matches(userMemory, personaText)) {
+                continue;
             }
-        }
 
-        // 规则2：如果用户记忆试图定义 Bot 的性格
-        if (lowerMemory.contains("你应该") || lowerMemory.contains("你要")
-                || lowerMemory.contains("你的性格") || lowerMemory.contains("你的人格")) {
-            log.warn("[MemoryBoundary] 检测到冲突: 用户记忆试图修改 Bot 人格");
-            return true;
-        }
+            if (effectiveRole.isAtLeast(UserRole.OWNER)) {
+                log.debug("[MemoryBoundary] 规则 '{}' 匹配，但用户角色为 OWNER，跳过所有检查", rule.name());
+                return false;
+            }
 
-        // 规则3：如果用户记忆包含与 Persona 相反的词
-        if (lowerPersona.contains("冷淡") || lowerPersona.contains("不热情")) {
-            if (lowerMemory.contains("撒娇") || lowerMemory.contains("卖萌")
-                    || lowerMemory.contains("热情") || lowerMemory.contains("可爱")) {
-                log.warn("[MemoryBoundary] 检测到冲突: 用户记忆要求的行为与 Persona 设定相反");
+            UserRole overrideMinRole = rule.overrideMinimumRole();
+            if (overrideMinRole != null && effectiveRole.isAtLeast(overrideMinRole)) {
+                log.info("[MemoryBoundary] 规则 '{}' 匹配，但用户角色 {} 可覆盖（最低要求 {}），跳过",
+                        rule.name(), effectiveRole, overrideMinRole);
+                continue;
+            }
+
+            if (rule.isConflict(userMemory, personaText)) {
+                log.warn("[MemoryBoundary] 规则 '{}' 检测到冲突: 用户记忆='{}'，角色={}",
+                        rule.name(), userMemory, effectiveRole);
                 return true;
             }
         }
@@ -60,12 +98,33 @@ public class MemoryBoundaryGuard {
     }
 
     /**
-     * 过滤 UserMemory 列表，移除与 Persona 冲突的条目。
+     * 过滤 UserMemory 列表，移除与 Persona 冲突的条目（无身份信息）。
+     *
+     * @deprecated 请使用 {@link #filterConflicting(List, UserRole)}
      */
+    @Deprecated
     public List<MemoryPackageEntity> filterConflicting(List<MemoryPackageEntity> userMemories) {
+        return filterConflicting(userMemories, null);
+    }
+
+    /**
+     * 过滤 UserMemory 列表，移除与 Persona 冲突的条目（含身份权限检查）。
+     *
+     * @param userMemories 待过滤的用户记忆列表
+     * @param userRole     用户角色（null 视为 MEMBER）
+     * @return 过滤后的记忆列表
+     */
+    public List<MemoryPackageEntity> filterConflicting(List<MemoryPackageEntity> userMemories, UserRole userRole) {
         return userMemories.stream()
                 .filter(m -> m.getScope() != MemoryScope.PERSONA)
-                .filter(m -> !isConflictWithPersona(m.getContent()))
+                .filter(m -> !isConflictWithPersona(m.getContent(), userRole))
                 .toList();
+    }
+
+    /**
+     * 获取当前注册的规则数量（用于监控和测试）。
+     */
+    public int getRuleCount() {
+        return rules.size();
     }
 }

@@ -7,7 +7,7 @@ export const useAppStore = defineStore('app', () => {
     const isConnected = ref(false)
     const connectionStatus = ref('未连接')
     const selectedModelId = ref('')
-    const activeFeature = ref<AgentFeature>('chat')
+    const activeFeature = ref<AgentFeature>('dashboard')
 
     const availableModels = ref<LlmModelInfo[]>([])
 

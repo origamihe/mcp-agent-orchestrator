@@ -2,6 +2,7 @@
     <nav class="sidebar">
         <div class="sidebar-logo">
             <span class="logo-text">MCP Agent</span>
+            <span class="logo-subtitle">Admin Console</span>
         </div>
         <ul class="sidebar-nav">
             <li
@@ -12,10 +13,11 @@
             >
                 <component :is="iconComponent(item.icon)" class="nav-icon" />
                 <span class="nav-label">{{ item.label }}</span>
+                <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
             </li>
         </ul>
         <div class="sidebar-footer">
-            <span class="version">v1.0</span>
+            <span class="version">v2.0 · Workspace First</span>
         </div>
     </nav>
 </template>
@@ -24,22 +26,28 @@
 import { ref } from 'vue'
 import type { AgentFeature } from '@/types/agent'
 import {
+  HomeIcon,
+  FolderOpenIcon,
+  ComputerDesktopIcon,
   ChatBubbleLeftRightIcon,
   CpuChipIcon,
-  PresentationChartBarIcon,
-  DocumentTextIcon,
   UserGroupIcon,
+  Cog6ToothIcon,
   BoltIcon,
+  SquaresPlusIcon,
 } from '@heroicons/vue/24/outline'
 
-const activeTab = ref<AgentFeature>('chat')
+const activeTab = ref<AgentFeature>('dashboard')
 
 const navItems = [
-    { id: 'chat' as AgentFeature, label: '聊天', icon: 'chat-bubble' },
-    { id: 'ppt-generator' as AgentFeature, label: '制作PPT', icon: 'presentation-chart' },
-    { id: 'docx-generator' as AgentFeature, label: '制作Word', icon: 'document-text' },
-    { id: 'qq-bot' as AgentFeature, label: 'QQ机器人', icon: 'bolt' },
+    { id: 'dashboard' as AgentFeature, label: '仪表盘', icon: 'home' },
+    { id: 'workspaces' as AgentFeature, label: '工作空间', icon: 'folder-open' },
+    { id: 'hosts' as AgentFeature, label: '宿主管理', icon: 'computer-desktop' },
+    { id: 'agents' as AgentFeature, label: 'Agent 管理', icon: 'squares-plus' },
+    { id: 'chat' as AgentFeature, label: '调试对话', icon: 'chat-bubble' },
+    { id: 'skills' as AgentFeature, label: '技能管理', icon: 'cpu-chip' },
     { id: 'prompt-manager' as AgentFeature, label: '角色管理', icon: 'user-group' },
+    { id: 'settings' as AgentFeature, label: '系统配置', icon: 'cog' },
 ]
 
 const emit = defineEmits<{
@@ -47,12 +55,15 @@ const emit = defineEmits<{
 }>()
 
 const iconMap: Record<string, any> = {
+  'home': HomeIcon,
+  'folder-open': FolderOpenIcon,
+  'computer-desktop': ComputerDesktopIcon,
   'chat-bubble': ChatBubbleLeftRightIcon,
   'cpu-chip': CpuChipIcon,
-  'presentation-chart': PresentationChartBarIcon,
-  'document-text': DocumentTextIcon,
   'user-group': UserGroupIcon,
+  'cog': Cog6ToothIcon,
   'bolt': BoltIcon,
+  'squares-plus': SquaresPlusIcon,
 }
 
 function iconComponent(name: string) {
@@ -80,7 +91,7 @@ function handleNavClick(id: AgentFeature) {
 }
 
 .sidebar-logo {
-    padding: 24px 20px 20px;
+    padding: 24px 20px 16px;
     text-align: center;
     border-bottom: 1.5px solid rgba(255,255,255,0.5);
 }
@@ -92,6 +103,14 @@ function handleNavClick(id: AgentFeature) {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+}
+
+.logo-subtitle {
+    display: block;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    margin-top: 2px;
+    letter-spacing: 1px;
 }
 
 .sidebar-nav {
@@ -137,6 +156,16 @@ function handleNavClick(id: AgentFeature) {
 
 .nav-item:hover .nav-icon {
     transform: scale(1.1);
+}
+
+.nav-badge {
+    margin-left: auto;
+    background: rgba(255, 82, 82, 0.15);
+    color: #ff5252;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
 }
 
 .sidebar-footer {

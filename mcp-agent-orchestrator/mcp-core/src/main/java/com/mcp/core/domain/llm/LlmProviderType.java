@@ -6,7 +6,6 @@ package com.mcp.core.domain.llm;
 public enum LlmProviderType {
     GOOGLE_GENAI("google"),
     OPENAI("openai"),
-    CLAUDE("claude"),
     DEEPSEEK("deepseek"),
     LOCAL_OLLAMA("ollama");
 

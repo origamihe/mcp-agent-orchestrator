@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -96,6 +97,11 @@ public class PromptEnricher {
 
         public boolean isEmpty() {
             return promptText == null || promptText.isEmpty();
+        }
+
+        public Optional<SkillLibraryService.SkillStepGuidance> getStepGuidance(
+                SkillLibraryService skillLibrary, String toolName) {
+            return skillLibrary.buildStepGuidance(matchedSkills, toolName);
         }
     }
 }

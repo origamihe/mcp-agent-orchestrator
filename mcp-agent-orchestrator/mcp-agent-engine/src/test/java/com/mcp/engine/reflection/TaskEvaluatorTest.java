@@ -78,7 +78,7 @@ class TaskEvaluatorTest {
                     assertThat(e.isWorthLearning()).isTrue();
                     assertThat(e.learningType()).isEqualTo("SKILL");
                     assertThat(e.shouldGenerateSkill()).isTrue();
-                    assertThat(e.shouldGenerateFailure()).isFalse();
+                    assertThat(e.shouldRecordFailure()).isFalse();
                 })
                 .verifyComplete();
     }
@@ -111,7 +111,7 @@ class TaskEvaluatorTest {
                     assertThat(e.isSuccess()).isFalse();
                     assertThat(e.isWorthLearning()).isTrue();
                     assertThat(e.learningType()).isEqualTo("FAILURE");
-                    assertThat(e.shouldGenerateFailure()).isTrue();
+                    assertThat(e.shouldRecordFailure()).isTrue();
                     assertThat(e.shouldGenerateSkill()).isFalse();
                 })
                 .verifyComplete();
@@ -143,7 +143,7 @@ class TaskEvaluatorTest {
                 .assertNext(e -> {
                     assertThat(e.learningType()).isEqualTo("BOTH");
                     assertThat(e.shouldGenerateSkill()).isTrue();
-                    assertThat(e.shouldGenerateFailure()).isTrue();
+                    assertThat(e.shouldRecordFailure()).isTrue();
                 })
                 .verifyComplete();
     }

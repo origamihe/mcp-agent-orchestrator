@@ -163,6 +163,8 @@ class PromptEnricherTest {
     void shouldSupportSyncEnrich() {
         when(skillLibraryService.retrieveRelevantSkills("搜索文件"))
                 .thenReturn(List.of());
+        when(skillLibraryService.buildSkillPrompt(anyList()))
+                .thenReturn("");
         when(skillGraphService.getRelatedSkills(anyList(), anyInt()))
                 .thenReturn(List.of());
         when(skillGraphService.buildRelatedSkillPrompt(anyList()))

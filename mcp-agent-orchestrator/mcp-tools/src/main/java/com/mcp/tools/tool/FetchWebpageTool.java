@@ -28,10 +28,8 @@ public class FetchWebpageTool {
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL
     );
 
-    public FetchWebpageTool() {
-        this.webClient = WebClient.builder()
-                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
-                .build();
+    public FetchWebpageTool(WebClient webSearchWebClient) {
+        this.webClient = webSearchWebClient;
     }
 
     @McpTool(

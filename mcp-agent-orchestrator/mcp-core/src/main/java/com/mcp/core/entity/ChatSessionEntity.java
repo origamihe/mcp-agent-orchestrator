@@ -28,6 +28,12 @@ public class ChatSessionEntity {
     @Column(length = 100)
     private String userId;
 
+    @Column(length = 20)
+    private String platform;
+
+    @Column(length = 64)
+    private String groupId;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

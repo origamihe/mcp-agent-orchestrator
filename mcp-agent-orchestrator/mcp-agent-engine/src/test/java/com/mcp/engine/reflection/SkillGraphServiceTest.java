@@ -52,7 +52,7 @@ class SkillGraphServiceTest {
         existing.setConfidence(0.7);
 
         when(dependencyRepository.findDependencyBetween(1L, 2L)).thenReturn(List.of(existing));
-        when(dependencyRepository.incrementCoOccurrence(100L)).thenReturn(1);
+        doNothing().when(dependencyRepository).incrementCoOccurrence(100L);
 
         service.recordCoOccurrence(1L, 2L);
 

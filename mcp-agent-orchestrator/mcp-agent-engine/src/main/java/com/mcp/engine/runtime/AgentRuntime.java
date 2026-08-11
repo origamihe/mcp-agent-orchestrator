@@ -13,6 +13,7 @@ import com.mcp.llm.client.LlmClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
@@ -82,7 +83,7 @@ public class AgentRuntime {
                 promptPreview);
 
         TraceRecord trace = TraceRecord.builder()
-                .sessionId(ctx.state() != null ? ctx.state().getLanguage() : null)
+                .sessionId(null)
                 .userId(ctx.userProfile() != null ? ctx.userProfile().getUserId() : null)
                 .startTime(startTime)
                 .elapsedMs(elapsedMs)
@@ -118,6 +119,29 @@ public class AgentRuntime {
      */
     public Mono<String> runWithConfig(String modelConfigId, String systemPrompt, String userPrompt) {
         return llmClient.generateWithConfigAndSystem(modelConfigId, systemPrompt, userPrompt);
+    }
+
+    /**
+     * 流式执行 LLM 调用（默认模型），逐 token 返回。
+     *
+     * @param systemPrompt 组装好的 System Prompt
+     * @param userPrompt   用户消息
+     * @return 流式 token 序列
+     */
+    public Flux<String> runStream(String systemPrompt, String userPrompt) {
+        return llmClient.generateStreamWithSystemPrompt(systemPrompt, userPrompt);
+    }
+
+    /**
+     * 流式执行 LLM 调用（指定模型配置），逐 token 返回。
+     *
+     * @param modelConfigId 模型配置 ID
+     * @param systemPrompt  组装好的 System Prompt
+     * @param userPrompt    用户消息
+     * @return 流式 token 序列
+     */
+    public Flux<String> runStreamWithConfig(String modelConfigId, String systemPrompt, String userPrompt) {
+        return llmClient.generateStreamWithConfigAndSystem(modelConfigId, systemPrompt, userPrompt);
     }
 
     /**

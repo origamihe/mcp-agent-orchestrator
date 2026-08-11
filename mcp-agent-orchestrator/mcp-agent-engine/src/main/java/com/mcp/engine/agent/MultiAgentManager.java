@@ -1,7 +1,10 @@
 package com.mcp.engine.agent;
 
+import com.mcp.common.agent.ConsensusResult;
 import com.mcp.common.agent.MultiAgentContext;
 import com.mcp.engine.agent.card.AgentCard;
+import com.mcp.engine.agent.consensus.AgentConsensus;
+import com.mcp.engine.agent.consensus.AgentDebate;
 import com.mcp.engine.agent.registry.AgentRegistry;
 import com.mcp.engine.orchestrator.MultiAgentOrchestrator;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +20,7 @@ import java.util.stream.Collectors;
  *
  * 职责：
  * 1. 多 Agent 上下文生成（供 Prompt 注入）
- * 2. Agent 委派 / 流水线 / 并行执行
+ * 2. Agent 委派 / 流水线 / 并行 / 共识 / 辩论
  * 3. Agent 注册与发现
  * 4. Agent 统计
  */
@@ -28,6 +31,8 @@ public class MultiAgentManager {
 
     private final MultiAgentOrchestrator orchestrator;
     private final AgentRegistry agentRegistry;
+    private final AgentConsensus agentConsensus;
+    private final AgentDebate agentDebate;
 
     /**
      * 生成多 Agent 上下文 — 供 Prompt 注入。
@@ -131,5 +136,40 @@ public class MultiAgentManager {
         public long otherAgents() {
             return totalAgents - chatAgents - codeAgents - searchAgents - plannerAgents;
         }
+    }
+
+    /**
+     * 多数投票共识 — 多 Agent 并行回答，按多数派选出最佳答案。
+     */
+    public Mono<ConsensusResult> majorityVote(String question, List<String> agentIds) {
+        return agentConsensus.majorityVote(question, agentIds);
+    }
+
+    /**
+     * 裁判评估共识 — LLM Judge 评分各 Agent 答案，选最高分。
+     */
+    public Mono<ConsensusResult> judgeEvaluation(String question, List<String> agentIds) {
+        return agentConsensus.judgeEvaluation(question, agentIds);
+    }
+
+    /**
+     * 加权投票共识 — 按 Agent 匹配度加权计分。
+     */
+    public Mono<ConsensusResult> weightedVote(String question, List<String> agentIds) {
+        return agentConsensus.weightedVote(question, agentIds);
+    }
+
+    /**
+     * 多 Agent 辩论 — 多轮辩论后达成共识。
+     */
+    public Mono<ConsensusResult> debate(String question, List<String> agentIds, int maxRounds) {
+        return agentDebate.debate(question, agentIds, maxRounds);
+    }
+
+    /**
+     * 多 Agent 辩论（默认 2 轮）。
+     */
+    public Mono<ConsensusResult> debate(String question, List<String> agentIds) {
+        return agentDebate.debate(question, agentIds);
     }
 }

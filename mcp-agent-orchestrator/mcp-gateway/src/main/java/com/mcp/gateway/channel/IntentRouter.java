@@ -36,6 +36,16 @@ public class IntentRouter {
             Pattern.CASE_INSENSITIVE
     );
 
+    /**
+     * DOCX 意图快速预检关键词。
+     * 在完整的 DOCX_KEYWORDS 正则匹配之前先做轻量级检查，
+     * 过滤掉绝大多数不相关的消息，避免每次请求都运行 60+ 分支的正则。
+     */
+    private static final Pattern DOCX_QUICK_CHECK = Pattern.compile(
+            "文档|word|docx|文件|生成|创建|制作|写|整理|汇总|总结|输出|导出|保存|发送",
+            Pattern.CASE_INSENSITIVE
+    );
+
     private static final Pattern DOCX_KEYWORDS = Pattern.compile(
             "创建文档|生成文档|生成docx|生成word|写个文档|写一个文档|制作文档|" +
                     "生成Word|word文档|做文档|创建word|生成一份文档|写文档|创建docx|" +
@@ -99,6 +109,16 @@ public class IntentRouter {
             Pattern.CASE_INSENSITIVE
     );
 
+    private static final Pattern SEARCH_KEYWORDS = Pattern.compile(
+            "搜索|搜索一下|搜一下|帮我搜|帮我搜索|帮我查|查一下|查查|"
+                    + "查找|检索|查询|搜寻|搜集|调研|"
+                    + "最新.*新闻|最新.*消息|最新.*动态|最新.*资讯|"
+                    + "今天.*新闻|今天.*热点|实时|"
+                    + "网上查|网上搜|联网搜|联网查|"
+                    + "帮我找|找一下|找找",
+            Pattern.CASE_INSENSITIVE
+    );
+
     public SessionState getOrCreateSession(String sessionId) {
         return sessions.computeIfAbsent(sessionId, k -> new SessionState());
     }
@@ -136,8 +156,8 @@ public class IntentRouter {
             return new IntentResult(IntentType.SWITCH_GAME_MODE_OFF, null, state, null);
         }
 
-        // 2. 文件生成检测（三层：粗分类 → 歧义处理 → 任务补全）
-        boolean isDocx = DOCX_KEYWORDS.matcher(userMessage).find();
+        // 2. 文件生成检测（两层：快速预检 → 完整正则匹配）
+        boolean isDocx = isDocxCandidate(userMessage) && DOCX_KEYWORDS.matcher(userMessage).find();
         boolean isPpt = PPT_KEYWORDS.matcher(userMessage).find();
 
         if (isDocx && isPpt) {
@@ -185,23 +205,41 @@ public class IntentRouter {
             return new IntentResult(IntentType.RECALL_HISTORY, null, state, RecallMode.CONVERSATION);
         }
 
-        // 4. 默认：普通聊天
+        // 4. 搜索意图检测（纯搜索请求，不含文档/PPT生成意图）
+        // 仅当不匹配 DOCX/PPT 时才视为纯搜索，避免与生成任务冲突
+        if (SEARCH_KEYWORDS.matcher(userMessage).find()) {
+            log.info("[IntentRouter] Session {} → SEARCH: {}", sessionId, userMessage);
+            state.touch();
+            return new IntentResult(IntentType.SEARCH, null, state, null);
+        }
+
+        // 5. 默认：普通聊天
         state.touch();
         return new IntentResult(IntentType.CHAT, null, state, null);
+    }
+
+    /**
+     * DOCX 候选快速预检：仅匹配核心关键词，避免对不相关消息运行完整正则。
+     */
+    private boolean isDocxCandidate(String message) {
+        return DOCX_QUICK_CHECK.matcher(message).find();
     }
 
     String extractTopic(String userMessage) {
         if (userMessage == null || userMessage.isBlank()) return "未指定主题";
 
-        // P1-2 改进：使用更保守的清洗策略，保留更多原始语义
-        // 清理策略：仅移除明确的意图短语和文件格式词，保留核心查询内容
+        // P2 改进：保留结构化指令词（如"整理成报告"），仅移除纯格式词和冗余前缀
+        // 策略：分两步清洗
+        // Step 1: 移除冗余前缀（帮我/请帮我/给我等）和纯文件格式词（docx/word/ppt/演示文稿等）
+        // Step 2: 保留"整理成"、"汇总"、"总结"等结构化意图词，它们传达了用户对输出格式的期望
         String cleaned = userMessage
-                // 移除明确的"生成文件"类意图短语
+                // 移除纯请求前缀（不携带语义信息）
                 .replaceAll("(?i)请帮我|帮我生成|帮我|给我|创建一个|生成一个|制作一个|写一个|做一个|弄一个|请", "")
-                // 移除连接词和收尾短语
-                .replaceAll("(?i)然后|并且|并|再|接着|之后|最后|然后|整理成|发我|发给我", "，")
-                // 移除文件格式关键词（仅移除格式词，保留内容）
-                .replaceAll("(?i)文档|word|docx|PPT|ppt|演示文稿|幻灯片|输出为|导出为|保存为|发送|输出|导出|保存|整理|汇总|总结", "")
+                // 移除纯文件格式标识（不影响内容语义）
+                .replaceAll("(?i)文档|word|docx|PPT|ppt|演示文稿|幻灯片|" +
+                        "输出为|导出为|保存为|发送|输出|导出|保存", "")
+                // 移除连接词（保留"然后"以维持顺序语义）
+                .replaceAll("(?i)并且|并|再|接着|之后|最后|发我|发给我", "，")
                 // 归一化标点
                 .replaceAll("[,，。；;\\s]+", "，")
                 .replaceAll("，+", "，")

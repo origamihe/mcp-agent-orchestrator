@@ -9,6 +9,7 @@ import com.mcp.llm.client.LlmClient;
 import com.mcp.llm.client.LlmToolResponse;
 import com.mcp.llm.context.ProviderContext;
 import com.mcp.llm.factory.ProviderRegistry;
+import com.mcp.llm.metrics.LlmMetricsCollector;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -20,12 +21,14 @@ import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.time.Duration;
 import java.util.stream.Collectors;
 
 /**
@@ -40,6 +43,7 @@ public class SpringAiLlmClient implements LlmClient {
     private final LlmConfigService llmConfigService;
     private final PromptService promptService;
     private final ProviderRegistry providerRegistry;
+    private final LlmMetricsCollector metricsCollector;
 
     @Override
     public Mono<String> generate(String prompt) {
@@ -54,7 +58,8 @@ public class SpringAiLlmClient implements LlmClient {
                                             .options(context.chatOptions())
                                             .call()
                                             .content())
-                                            .subscribeOn(Schedulers.boundedElastic());
+                                            .subscribeOn(Schedulers.boundedElastic())
+                                            .timeout(Duration.ofSeconds(120));
                                 })
                 )
                 .defaultIfEmpty("No response generated.");
@@ -85,17 +90,27 @@ public class SpringAiLlmClient implements LlmClient {
                         log.info("[DIAG-LLM] LLM call completed in {}ms", callEnd - callStart);
                         logTokenUsage(response);
                         return response.getResult().getOutput().getText();
-                    }).subscribeOn(Schedulers.boundedElastic());
+                    }).subscribeOn(Schedulers.boundedElastic())
+                    .timeout(Duration.ofSeconds(120));
                 })
                 .doOnSuccess(result -> {
                     long totalElapsed = System.currentTimeMillis() - startTime;
+                    metricsCollector.recordCallDuration(totalElapsed);
+                    metricsCollector.recordSuccess();
                     log.info("[DIAG-LLM] generateWithSystemPrompt SUCCESS | totalElapsed={}ms | responseLen={}",
                             totalElapsed, result != null ? result.length() : 0);
                 })
                 .doOnError(error -> {
                     long totalElapsed = System.currentTimeMillis() - startTime;
+                    metricsCollector.recordCallDuration(totalElapsed);
+                    metricsCollector.recordFailure();
                     log.error("[DIAG-LLM] generateWithSystemPrompt FAILED | totalElapsed={}ms | error={}",
                             totalElapsed, error.getMessage());
+                })
+                .onErrorResume(java.util.concurrent.TimeoutException.class, e -> {
+                    long totalElapsed = System.currentTimeMillis() - startTime;
+                    log.warn("[DIAG-LLM] generateWithSystemPrompt TIMED OUT after {}ms", totalElapsed);
+                    return Mono.just("AI 模型响应超时（120秒），可能是当前模型推理速度较慢。请稍后重试，或缩短问题长度。");
                 })
                 .defaultIfEmpty("No response from AI model.");
     }
@@ -116,7 +131,8 @@ public class SpringAiLlmClient implements LlmClient {
                             .options(context.chatOptions())
                             .call()
                             .content())
-                            .subscribeOn(Schedulers.boundedElastic());
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .timeout(Duration.ofSeconds(120));
                 })
                 .defaultIfEmpty("No response from AI model.");
     }
@@ -132,7 +148,8 @@ public class SpringAiLlmClient implements LlmClient {
                             .options(context.chatOptions())
                             .call()
                             .content())
-                            .subscribeOn(Schedulers.boundedElastic());
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .timeout(Duration.ofSeconds(120));
                 })
                 .defaultIfEmpty("No response from AI model.");
     }
@@ -147,7 +164,8 @@ public class SpringAiLlmClient implements LlmClient {
                             .options(context.chatOptions())
                             .call()
                             .content())
-                            .subscribeOn(Schedulers.boundedElastic());
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .timeout(Duration.ofSeconds(120));
                 })
                 .defaultIfEmpty("No response generated.");
     }
@@ -166,7 +184,8 @@ public class SpringAiLlmClient implements LlmClient {
                                 .chatResponse();
                         logTokenUsage(response);
                         return response.getResult().getOutput().getText();
-                    }).subscribeOn(Schedulers.boundedElastic());
+                    }).subscribeOn(Schedulers.boundedElastic())
+                    .timeout(Duration.ofSeconds(120));
                 })
                 .defaultIfEmpty("No response from AI model.");
     }
@@ -241,8 +260,123 @@ public class SpringAiLlmClient implements LlmClient {
                         ChatResponse response = promptSpec.call().chatResponse();
 
                         return toLlmToolResponse(response, toolDefinitions);
-                    }).subscribeOn(Schedulers.boundedElastic());
+                    }).subscribeOn(Schedulers.boundedElastic())
+                    .timeout(Duration.ofSeconds(120));
                 });
+    }
+
+    // ====================== 流式方法 ======================
+
+    @Override
+    public Flux<String> generateStream(String prompt) {
+        return promptService.getCoreSystemPrompt()
+                .flatMapMany(systemPrompt ->
+                        llmConfigService.getDefaultConfig()
+                                .flatMapMany(config -> {
+                                    ProviderContext context = providerRegistry.getContext(config);
+                                    return createChatClient(context).prompt()
+                                            .system(systemPrompt)
+                                            .user(prompt)
+                                            .options(context.chatOptions())
+                                            .stream()
+                                            .chatResponse()
+                                            .mapNotNull(r -> extractTextFromStreamChunk(r))
+                                            .publishOn(Schedulers.boundedElastic());
+                                })
+                )
+                .switchIfEmpty(Flux.just("No response generated."));
+    }
+
+    @Override
+    public Flux<String> generateStreamWithSystemPrompt(String systemPrompt, String userPrompt) {
+        long startTime = System.currentTimeMillis();
+        int sysLen = systemPrompt != null ? systemPrompt.length() : 0;
+        int usrLen = userPrompt != null ? userPrompt.length() : 0;
+        log.info("[DIAG-LLM] generateStreamWithSystemPrompt START | sysPromptLen={} | usrPromptLen={}",
+                sysLen, usrLen);
+
+        return llmConfigService.getDefaultConfig()
+                .flatMapMany(config -> {
+                    log.info("[DIAG-LLM] Streaming with model: {}, provider: {}",
+                            config.getModelName(), config.getProvider());
+                    ProviderContext context = providerRegistry.getContext(config);
+                    return createChatClient(context).prompt()
+                            .system(systemPrompt)
+                            .user(userPrompt)
+                            .options(context.chatOptions())
+                            .stream()
+                            .chatResponse()
+                            .doOnComplete(() -> {
+                                long totalElapsed = System.currentTimeMillis() - startTime;
+                                metricsCollector.recordCallDuration(totalElapsed);
+                                metricsCollector.recordSuccess();
+                                metricsCollector.recordStreamCall();
+                                log.info("[DIAG-LLM] generateStreamWithSystemPrompt COMPLETE | totalElapsed={}ms",
+                                        totalElapsed);
+                            })
+                            .doOnError(error -> {
+                                long totalElapsed = System.currentTimeMillis() - startTime;
+                                metricsCollector.recordCallDuration(totalElapsed);
+                                metricsCollector.recordFailure();
+                                log.error("[DIAG-LLM] generateStreamWithSystemPrompt FAILED | totalElapsed={}ms | error={}",
+                                        totalElapsed, error.getMessage());
+                            })
+                            .mapNotNull(r -> {
+                                logTokenUsage(r);
+                                return extractTextFromStreamChunk(r);
+                            })
+                            .publishOn(Schedulers.boundedElastic());
+                })
+                .switchIfEmpty(Flux.just("No response from AI model."));
+    }
+
+    @Override
+    public Flux<String> generateStreamWithConfigAndSystem(String configId, String systemPrompt, String userPrompt) {
+        long startTime = System.currentTimeMillis();
+        log.info("[DIAG-LLM] generateStreamWithConfigAndSystem START | configId={} | sysPromptLen={} | usrPromptLen={}",
+                configId, systemPrompt != null ? systemPrompt.length() : 0,
+                userPrompt != null ? userPrompt.length() : 0);
+
+        return llmConfigService.getConfigById(configId)
+                .flatMapMany(config -> {
+                    log.info("[DIAG-LLM] Streaming with config: {}, model: {}, provider: {}",
+                            configId, config.getModelName(), config.getProvider());
+                    ProviderContext context = providerRegistry.getContext(config);
+                    return createChatClient(context).prompt()
+                            .system(systemPrompt)
+                            .user(userPrompt)
+                            .options(context.chatOptions())
+                            .stream()
+                            .chatResponse()
+                            .doOnComplete(() -> {
+                                long totalElapsed = System.currentTimeMillis() - startTime;
+                                metricsCollector.recordCallDuration(totalElapsed);
+                                metricsCollector.recordSuccess();
+                                metricsCollector.recordStreamCall();
+                                log.info("[DIAG-LLM] generateStreamWithConfigAndSystem COMPLETE | totalElapsed={}ms",
+                                        totalElapsed);
+                            })
+                            .doOnError(error -> {
+                                long totalElapsed = System.currentTimeMillis() - startTime;
+                                metricsCollector.recordCallDuration(totalElapsed);
+                                metricsCollector.recordFailure();
+                                log.error("[DIAG-LLM] generateStreamWithConfigAndSystem FAILED | totalElapsed={}ms | error={}",
+                                        totalElapsed, error.getMessage());
+                            })
+                            .mapNotNull(r -> {
+                                logTokenUsage(r);
+                                return extractTextFromStreamChunk(r);
+                            })
+                            .publishOn(Schedulers.boundedElastic());
+                })
+                .switchIfEmpty(Flux.just("No response from AI model."));
+    }
+
+    private String extractTextFromStreamChunk(ChatResponse response) {
+        if (response == null || response.getResults() == null || response.getResults().isEmpty()) {
+            return null;
+        }
+        return response.getResults().get(0).getOutput().getText();
     }
 
     // ====================== 辅助方法 ======================
@@ -488,9 +622,10 @@ public class SpringAiLlmClient implements LlmClient {
      * 这是 Ollama 模型常见问题的解决方案：模型用文本输出"看起来像"工具调用的 JSON，
      * 但从不通过 tool_calls 字段返回。此方法在 hasToolCalls=false 时作为兜底。
      * <p>
-     * 支持两种 JSON 格式：
+     * 支持三种 JSON 格式：
      * 1. 直接参数格式：{"query": "xxx", "depth": "2"} — 通过 findBestToolMatch 匹配
      * 2. 嵌套调用格式：{"name": "tool_name", "arguments": {...}} — 通过 name 精确匹配 + arguments 提取
+     * 3. 工具名映射格式：{"tool_name": {params}} — 单 key 匹配工具名 + value 作为参数
      */
     public static List<LlmToolResponse.ToolCall> tryParseTextToolCalls(
             String content, List<Map<String, Object>> toolDefinitions) {
@@ -567,6 +702,22 @@ public class SpringAiLlmClient implements LlmClient {
                         parsed.add(new LlmToolResponse.ToolCall(explicitName, argsMap));
                         log.info("[LLM-DIAG] Node4-TextFallback: parsed via explicit name: tool={}, params={}",
                                 explicitName, argsMap.keySet());
+                    }
+                    return;
+                }
+            }
+
+            // 策略3：{tool_name: {params}} 格式（Ollama 常见输出格式）
+            if (explicitName == null && jsonMap.size() == 1) {
+                String singleKey = jsonMap.keySet().iterator().next();
+                Object singleValue = jsonMap.get(singleKey);
+                if (singleValue instanceof Map && toolNameExists(singleKey, toolDefinitions)) {
+                    Map<String, Object> argsMap = (Map<String, Object>) singleValue;
+                    String key = singleKey + ":" + argsMap.keySet().toString();
+                    if (seenKeys.add(key)) {
+                        parsed.add(new LlmToolResponse.ToolCall(singleKey, argsMap));
+                        log.info("[LLM-DIAG] Node4-TextFallback: parsed via tool-name mapping: tool={}, params={}",
+                                singleKey, argsMap.keySet());
                     }
                     return;
                 }

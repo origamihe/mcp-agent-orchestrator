@@ -42,7 +42,37 @@ _external/
 ### Logs (generated at runtime, may contain sensitive data) ###
 log/
 log*.txt
-voice-output/
 
 ### Docs (design documents, may contain architecture details) ###
 docs/
+
+### Agent Generated (AI-generated output files, docx/ppt/voice) ###
+generated/
+voice-output/
+
+### Sensitive Config (exclude real configs, keep .sample templates) ###
+application.yml
+application.properties
+!application.yml.sample
+!application.properties.sample
+
+### Environment & Secrets ###
+.env
+.env.*
+*.p12
+*.jks
+*.keystore
+*.pem
+*.key
+*.crt
+*.cer
+credentials*
+*secret*
+*Secret*
+
+### Local Database ###
+*.db
+*.sqlite
+*.mdf
+*.ldf
+*.mdb

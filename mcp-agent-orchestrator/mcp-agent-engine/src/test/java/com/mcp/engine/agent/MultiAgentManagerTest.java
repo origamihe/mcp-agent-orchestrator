@@ -2,6 +2,8 @@ package com.mcp.engine.agent;
 
 import com.mcp.common.agent.MultiAgentContext;
 import com.mcp.engine.agent.card.AgentCard;
+import com.mcp.engine.agent.consensus.AgentConsensus;
+import com.mcp.engine.agent.consensus.AgentDebate;
 import com.mcp.engine.agent.registry.AgentRegistry;
 import com.mcp.engine.orchestrator.MultiAgentOrchestrator;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,12 +34,16 @@ class MultiAgentManagerTest {
     private MultiAgentOrchestrator orchestrator;
     @Mock
     private AgentRegistry agentRegistry;
+    @Mock
+    private AgentConsensus agentConsensus;
+    @Mock
+    private AgentDebate agentDebate;
 
     private MultiAgentManager multiAgentManager;
 
     @BeforeEach
     void setUp() {
-        multiAgentManager = new MultiAgentManager(orchestrator, agentRegistry);
+        multiAgentManager = new MultiAgentManager(orchestrator, agentRegistry, agentConsensus, agentDebate);
     }
 
     // ==================== MultiAgentContext 模型 ====================

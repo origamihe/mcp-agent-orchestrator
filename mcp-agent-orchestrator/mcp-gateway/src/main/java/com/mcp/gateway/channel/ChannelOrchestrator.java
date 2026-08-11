@@ -20,6 +20,7 @@ import com.mcp.engine.world.WorldStateService;
 import com.mcp.gateway.ws.WebSocketSessionManager;
 import com.mcp.tools.tool.DocxGeneratorTool;
 import com.mcp.tools.tool.PptGeneratorTool;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -30,6 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class ChannelOrchestrator {
 
     private final ChannelAdapterRegistry adapterRegistry;
@@ -51,32 +53,6 @@ public class ChannelOrchestrator {
 
     @Value("${ppt.output.dir:./generated/ppt}")
     private String pptOutputDir;
-
-    public ChannelOrchestrator(ChannelAdapterRegistry adapterRegistry,
-                                DocxGeneratorTool docxGeneratorTool,
-                                PptGeneratorTool pptGeneratorTool,
-                                WebSocketSessionManager wsSessionManager,
-                                IntentRouter intentRouter,
-                                PromptComposer promptComposer,
-                                AgentFacade agentFacade,
-                                ResponsePipeline responsePipeline,
-                                UserProfileService userProfileService,
-                                ReflectionJudge reflectionJudge,
-                                WorldStateService worldStateService,
-                                WorkspaceService workspaceService) {
-        this.adapterRegistry = adapterRegistry;
-        this.docxGeneratorTool = docxGeneratorTool;
-        this.pptGeneratorTool = pptGeneratorTool;
-        this.wsSessionManager = wsSessionManager;
-        this.intentRouter = intentRouter;
-        this.promptComposer = promptComposer;
-        this.agentFacade = agentFacade;
-        this.responsePipeline = responsePipeline;
-        this.userProfileService = userProfileService;
-        this.reflectionJudge = reflectionJudge;
-        this.worldStateService = worldStateService;
-        this.workspaceService = workspaceService;
-    }
 
     /**
      * 统一的渠道消息处理入口
@@ -112,6 +88,7 @@ public class ChannelOrchestrator {
             case GENERATE_PPT   -> handlePptGeneration(msg, adapter, intentResult.task(), state);
             case AMBIGUOUS      -> handleAmbiguous(msg, adapter, state);
             case RECALL_HISTORY -> handleRecallHistory(msg, adapter, userMessage, sessionId, state, intentResult.recallMode());
+            case SEARCH          -> handleSearch(msg, adapter, userMessage, sessionId, state);
             default             -> handleChat(msg, adapter, userMessage, sessionId, state);
         };
     }
@@ -397,6 +374,61 @@ public class ChannelOrchestrator {
                 .sendAsVoice(false)
                 .build();
         return adapter.sendReply(reply).then();
+    }
+
+    /**
+     * 搜索链路 — 使用 SearchAgent 进行联网搜索，调用搜索工具获取最新信息。
+     */
+    private Mono<Void> handleSearch(ChannelMessage msg, ChannelAdapter adapter,
+                                     String userMessage, String sessionId, SessionState state) {
+        String systemPrompt = adapter.getSystemPrompt();
+
+        UserProfile userProfile = userProfileService.getUserProfile(msg.getSenderId());
+
+        GroupContext groupContext = null;
+        if (msg.getChatType() == ChannelMessage.ChatType.GROUP && msg.getChatId() != null) {
+            groupContext = userProfileService.getGroupContext(msg.getChatId());
+        }
+
+        Workspace workspace = loadWorkspaceIfNeeded(sessionId, msg);
+
+        MemoryIdentity identity = new MemoryIdentity(
+                adapter.getChannelType(),
+                sessionId,
+                msg.getSenderId(),
+                msg.getChatType() == ChannelMessage.ChatType.GROUP ? msg.getChatId() : null,
+                null
+        );
+
+        WorkingContext workingCtx = workingContexts.computeIfAbsent(sessionId, k -> new WorkingContext());
+        workingCtx.setActiveContextSource(ActiveContextSource.SEARCH_RESULT);
+        workingCtx.setCurrentTask("SEARCH: " + userMessage);
+
+        log.info("[Channel:{}] SEARCH: query='{}' | User: {} ({}) | Session: {}",
+                adapter.getChannelType(), userMessage,
+                userProfile.getDisplayName(), msg.getSenderId(), sessionId);
+
+        RequestContext ctx = RequestContext.builder()
+                .identity(identity)
+                .userProfile(userProfile)
+                .groupContext(groupContext)
+                .sessionState(state)
+                .workingContext(workingCtx)
+                .workspace(workspace)
+                .userMessage(userMessage)
+                .systemPrompt(systemPrompt)
+                .build();
+
+        return agentFacade.call(ctx)
+                .flatMap(agentResponse -> responsePipeline.process(
+                        adapter.getChannelType(), msg, agentResponse, state))
+                .flatMap(adapter::sendReply)
+                .doOnSuccess(v -> {
+                    log.info("[Channel:{}] SEARCH reply sent", adapter.getChannelType());
+                    saveWorkspaceIfNeeded(sessionId, workspace, msg);
+                })
+                .doOnError(e -> log.error("[Channel:{}] SEARCH error: {}", adapter.getChannelType(), e.getMessage(), e))
+                .then();
     }
 
     /**

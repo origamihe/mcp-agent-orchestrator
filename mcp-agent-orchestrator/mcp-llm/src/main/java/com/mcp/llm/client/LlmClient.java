@@ -1,6 +1,7 @@
 package com.mcp.llm.client;
 
 import com.mcp.core.domain.chat.CoreChatMessage;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -46,4 +47,12 @@ public interface LlmClient {
      * @return 响应（可能包含文本或工具调用）
      */
     Mono<LlmToolResponse> chatWithTools(List<ChatMessage> messages, List<Map<String, Object>> toolDefinitions);
+
+    // ====================== 流式方法 ======================
+
+    Flux<String> generateStream(String prompt);
+
+    Flux<String> generateStreamWithSystemPrompt(String systemPrompt, String userPrompt);
+
+    Flux<String> generateStreamWithConfigAndSystem(String configId, String systemPrompt, String userPrompt);
 }

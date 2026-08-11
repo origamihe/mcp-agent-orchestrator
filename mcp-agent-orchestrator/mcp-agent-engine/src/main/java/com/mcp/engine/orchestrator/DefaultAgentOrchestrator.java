@@ -43,6 +43,7 @@ import com.mcp.engine.reflection.ReflectionAgent;
 import com.mcp.engine.reflection.SkillGraphService;
 import com.mcp.engine.reflection.SkillLibraryService;
 import com.mcp.engine.reflection.TaskEvaluator;
+import com.mcp.engine.evolution.StrategyEvolutionManager;
 import com.mcp.engine.sanitizer.ResponseSanitizer;
 import com.mcp.engine.workspace.WorkspaceService;
 import com.mcp.common.channel.IntentType;
@@ -62,13 +63,19 @@ import com.mcp.tools.model.ToolCapability;
 import com.mcp.tools.model.ToolExecutionRequest;
 import com.mcp.tools.model.ToolQuery;
 import com.mcp.tools.model.ToolScore;
+import com.mcp.tools.model.ToolDefinition;
 import com.mcp.tools.registry.CapabilityResolver;
 import com.mcp.tools.registry.ToolRegistry;
+import com.mcp.tools.pipeline.PipelineRegistry;
+import com.mcp.tools.pipeline.ToolPipeline;
+import com.mcp.tools.pipeline.ToolPipelineExecutor;
+import com.mcp.tools.pipeline.ToolPipelineResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -117,9 +124,15 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
     private final PersonaMemoryStore personaMemoryStore;
 
+    private final StrategyEvolutionManager evolutionManager;
+
     private final AgentRegistry agentRegistry;
 
     private final AgentRuntime agentRuntime;
+
+    private final PipelineRegistry pipelineRegistry;
+
+    private final ToolPipelineExecutor pipelineExecutor;
 
     private final Map<String, Agent> agents = new ConcurrentHashMap<>();
 
@@ -272,8 +285,25 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 state.isGameMode(), workingCtx.getActiveContextSource(), decisionTime);
 
         String currentTask = workingCtx.getCurrentTask();
-        if (currentTask != null && currentTask.startsWith("DOCX_GENERATION:")) {
-            log.info("[Orchestrator] Detected DOCX_GENERATION task, routing to SearchAgent: session={}", sessionId);
+        if (currentTask != null && currentTask.startsWith("SEARCH:")) {
+            log.info("[Orchestrator] Detected SEARCH task, routing to SearchAgent: session={}", sessionId);
+            return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
+        }
+
+        if (currentTask != null && (currentTask.startsWith("DOCX_GENERATION:") || currentTask.startsWith("PPT_GENERATION:"))) {
+            log.info("[Orchestrator] Detected {} task, session={}",
+                    currentTask.startsWith("DOCX_GENERATION:") ? "DOCX_GENERATION" : "PPT_GENERATION", sessionId);
+
+            // E2: 尝试 Tool Pipeline 快速路径，减少 LLM 轮次
+            boolean isDocx = currentTask.startsWith("DOCX_GENERATION:");
+            String pipelineId = isDocx ? "search-and-generate-docx" : "search-and-generate-ppt";
+            ToolPipeline pipeline = pipelineRegistry.get(pipelineId);
+            if (pipeline != null) {
+                log.info("[Orchestrator] Pipeline route: {} → {} | session={}", currentTask, pipelineId, sessionId);
+                return processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline);
+            }
+
+            log.info("[Orchestrator] Routing to SearchAgent: session={}", sessionId);
             return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
         }
 
@@ -753,9 +783,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                             messages.stream().anyMatch(m -> m.getRole() == com.mcp.core.domain.chat.MessageRole.USER),
                                             messages.stream().anyMatch(m -> m.getRole() == com.mcp.core.domain.chat.MessageRole.ASSISTANT));
 
-                                    String userPrompt = buildRecallHistoryPrompt(request, historyContext, recallMode);
-
-                                    return agentRuntime.run(resolvedPrompt, userPrompt);
+                                    return buildRecallHistoryPrompt(request, historyContext, recallMode)
+                                        .flatMap(userPrompt -> agentRuntime.run(resolvedPrompt, userPrompt));
                                 })
                 )
                 .map(responseSanitizer::sanitize)
@@ -840,7 +869,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     /**
      * 构建 RECALL_HISTORY 专用的用户 Prompt
      */
-    private String buildRecallHistoryPrompt(String userRequest, String historyContext, RecallMode recallMode) {
+    private Mono<String> buildRecallHistoryPrompt(String userRequest, String historyContext, RecallMode recallMode) {
         String templateName = switch (recallMode) {
             case USER_ONLY -> "orchestrator_recall_history_user_only";
             case CONVERSATION -> "orchestrator_recall_history_conversation";
@@ -870,12 +899,45 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     }
 
     @Override
+    public Flux<String> processRequestStream(String request, String sessionId,
+                                              String systemPrompt, String modelConfigId) {
+        log.info("[Orchestrator] Stream request: {} | Session: {} | Model: {}",
+                request, sessionId, modelConfigId != null ? modelConfigId : "default");
+
+        MemoryIdentity identity = identityResolver.resolve(sessionId);
+        UserProfile userProfile = userProfileService.getUserProfile(identity.userId());
+        GroupContext groupContext = identity.groupId() != null
+                ? userProfileService.getGroupContext(identity.groupId()) : null;
+
+        Mono<String> promptMono = (systemPrompt != null && !systemPrompt.isBlank())
+                ? Mono.just(systemPrompt)
+                : promptService.getCoreSystemPrompt();
+
+        return promptMono.flatMapMany(resolvedPrompt -> {
+            BuildContext buildCtx = BuildContext.builder()
+                    .baseSystemPrompt(resolvedPrompt)
+                    .userMessage(request)
+                    .userProfile(userProfile)
+                    .groupContext(groupContext)
+                    .build();
+
+            PromptAssemblyResult assembly = agentRuntime.assemble(buildCtx, PromptPolicy.CHAT);
+            String fullPrompt = assembly.toFullPrompt("", "", "", PromptEnricher.EnrichmentResult.empty());
+
+            if (modelConfigId != null && !modelConfigId.isEmpty()) {
+                return agentRuntime.runStreamWithConfig(modelConfigId, fullPrompt, request);
+            }
+            return agentRuntime.runStream(fullPrompt, request);
+        });
+    }
+
+    @Override
     public void registerAgent(Agent agent) {
         agents.put(agent.getName(), agent);
         log.info("[Orchestrator] Agent registered: {}", agent.getName());
     }
 
-    private Agent resolveBestAgentFromPlan(EditPlan plan) {
+    private Mono<Agent> resolveBestAgentFromPlan(EditPlan plan) {
         if (plan == null) {
             return resolveBestAgentKeyword("");
         }
@@ -890,25 +952,28 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 if (matched != null) {
                     log.info("[Orchestrator] Intent-based routing: planType={} → agentType={} → agent={} (skills={})",
                             plan.getPlanType(), agentType, matched.getName(), skills);
-                    return matched;
+                    return Mono.just(matched);
                 }
             }
         }
 
         if (!skills.isEmpty()) {
-            var match = agentRegistry.findBestAgent("", skills).block();
-            if (match != null && match.agentId() != null) {
-                Agent matched = agentRegistry.getAgent(match.agentId()).orElse(null);
-                if (matched != null) {
-                    log.info("[Orchestrator] Skill-based routing: planType={} → skills={} → agent={} (score={})",
-                            plan.getPlanType(), skills, matched.getName(), match.score());
-                    return matched;
-                }
-            }
+            return agentRegistry.findBestAgent("", skills)
+                    .flatMap(match -> {
+                        if (match != null && match.agentId() != null) {
+                            Agent matched = agentRegistry.getAgent(match.agentId()).orElse(null);
+                            if (matched != null) {
+                                log.info("[Orchestrator] Skill-based routing: planType={} → skills={} → agent={} (score={})",
+                                        plan.getPlanType(), skills, matched.getName(), match.score());
+                                return Mono.just(matched);
+                            }
+                        }
+                        return Mono.empty();
+                    });
         }
 
         log.info("[Orchestrator] No agent matched for planType={}, using default", plan.getPlanType());
-        return agents.isEmpty() ? null : agents.values().iterator().next();
+        return Mono.justOrEmpty(agents.isEmpty() ? null : agents.values().iterator().next());
     }
 
     private static final Map<EditPlan.PlanType, AgentCard.AgentType> PLAN_TO_AGENT_TYPE = Map.of(
@@ -933,20 +998,24 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         };
     }
 
-    private Agent resolveBestAgentKeyword(String request) {
+    private Mono<Agent> resolveBestAgentKeyword(String request) {
         if (agentRegistry.agentCount() > 1) {
             List<String> skills = classifyRequiredSkills(request);
-            var match = agentRegistry.findBestAgent(request, skills).block();
-            if (match != null && match.agentId() != null) {
-                Agent matched = agentRegistry.getAgent(match.agentId()).orElse(null);
-                if (matched != null) {
-                    log.info("[Orchestrator] Smart routed to agent: {} (score={}, skills={})",
-                            matched.getName(), match.score(), match.matchedSkills());
-                    return matched;
-                }
-            }
+            return agentRegistry.findBestAgent(request, skills)
+                    .flatMap(match -> {
+                        if (match != null && match.agentId() != null) {
+                            Agent matched = agentRegistry.getAgent(match.agentId()).orElse(null);
+                            if (matched != null) {
+                                log.info("[Orchestrator] Smart routed to agent: {} (score={}, skills={})",
+                                        matched.getName(), match.score(), match.matchedSkills());
+                                return Mono.just(matched);
+                            }
+                        }
+                        return Mono.empty();
+                    })
+                    .switchIfEmpty(Mono.justOrEmpty(agents.isEmpty() ? null : agents.values().iterator().next()));
         }
-        return agents.isEmpty() ? null : agents.values().iterator().next();
+        return Mono.justOrEmpty(agents.isEmpty() ? null : agents.values().iterator().next());
     }
 
     private List<String> classifyRequiredSkills(String request) {
@@ -963,16 +1032,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         }
 
         // P1-1 改进：扩展搜索关键词，覆盖更多搜索意图表达
-        if (lower.contains("搜索") || lower.contains("search") || lower.contains("查找")
-                || lower.contains("查询") || lower.contains("最新") || lower.contains("新闻")
-                || lower.contains("资料") || lower.contains("信息") || lower.contains("搜")
-                || lower.contains("查一下") || lower.contains("搜一下") || lower.contains("找一下")
-                || lower.contains("帮我搜") || lower.contains("帮我查") || lower.contains("帮我找")
-                || lower.contains("再搜") || lower.contains("重新搜") || lower.contains("搜一次")
-                || lower.contains("检索") || lower.contains("搜寻") || lower.contains("搜集")
-                || lower.contains("收集") || lower.contains("了解") || lower.contains("调研")
-                || lower.contains("研究") || lower.contains("热点") || lower.contains("事件")
-                || lower.contains("动态") || lower.contains("报道") || lower.contains("资讯")) {
+        if (isSearchRelated(lower)) {
             skills.add("web-search");
             skills.add("information-retrieval");
         }
@@ -1008,26 +1068,54 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             return false;
         }
         String lower = request.toLowerCase();
-        // 文件操作相关
         boolean fileRelated = lower.contains("文件") || lower.contains("路径") || lower.contains("目录")
                 || lower.contains("file") || lower.contains("path") || lower.contains("folder")
                 || lower.contains("读取") || lower.contains("写入") || lower.contains("编辑")
                 || lower.contains("read") || lower.contains("write") || lower.contains("edit");
-        // 搜索相关（与 classifyRequiredSkills 保持一致）
-        boolean searchRelated = lower.contains("搜索") || lower.contains("查找") || lower.contains("查询")
-                || lower.contains("search") || lower.contains("find") || lower.contains("lookup")
-                || lower.contains("最新") || lower.contains("新闻") || lower.contains("资料")
-                || lower.contains("信息") || lower.contains("搜") || lower.contains("检索")
+        return fileRelated || isSearchRelated(lower);
+    }
+
+    /**
+     * 搜索相关意图检测（classifyRequiredSkills 与 likelyNeedsToolsKeyword 共用）。
+     */
+    private boolean isSearchRelated(String lower) {
+        return lower.contains("搜索") || lower.contains("search") || lower.contains("查找")
+                || lower.contains("查询") || lower.contains("最新") || lower.contains("新闻")
+                || lower.contains("资料") || lower.contains("信息") || lower.contains("搜")
+                || lower.contains("查一下") || lower.contains("搜一下") || lower.contains("找一下")
+                || lower.contains("帮我搜") || lower.contains("帮我查") || lower.contains("帮我找")
+                || lower.contains("再搜") || lower.contains("重新搜") || lower.contains("搜一次")
+                || lower.contains("检索") || lower.contains("搜寻") || lower.contains("搜集")
                 || lower.contains("收集") || lower.contains("了解") || lower.contains("调研")
                 || lower.contains("研究") || lower.contains("热点") || lower.contains("事件")
-                || lower.contains("动态") || lower.contains("报道") || lower.contains("资讯");
-        return fileRelated || searchRelated;
+                || lower.contains("动态") || lower.contains("报道") || lower.contains("资讯")
+                || lower.contains("find") || lower.contains("lookup");
     }
 
     @Override
     public void registerDefaultTools() {
-        // TODO: 后续实现工具自动注册
-        log.info("[Orchestrator] Default tools registration placeholder.");
+        List<ToolDefinition> registeredTools = toolRegistry.getAllTools();
+        log.info("[Orchestrator] Default tools registration: {} tools registered in ToolRegistry",
+                registeredTools.size());
+        for (ToolDefinition td : registeredTools) {
+            log.debug("[Orchestrator]   Tool: {} (category={}, enabled={})",
+                    td.getName(), td.getCategory(), td.isEnabled());
+        }
+
+        List<ToolPipeline> pipelines = pipelineRegistry.listAll();
+        log.info("[Orchestrator] Default pipelines: {} pipelines registered in PipelineRegistry",
+                pipelines.size());
+        for (ToolPipeline p : pipelines) {
+            log.debug("[Orchestrator]   Pipeline: {} ({}) - {} steps",
+                    p.getPipelineId(), p.getName(), p.getSteps() != null ? p.getSteps().size() : 0);
+        }
+
+        if (registeredTools.isEmpty()) {
+            log.warn("[Orchestrator] No tools registered in ToolRegistry — tool-based agents will fall back to text-only mode");
+        }
+        if (pipelines.isEmpty()) {
+            log.warn("[Orchestrator] No pipelines registered in PipelineRegistry — pipeline optimization disabled");
+        }
     }
 
     private void triggerReflection(String sessionId, String userId, String userRequest,
@@ -1061,7 +1149,23 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                         log.info("[Orchestrator] Reflection triggered: session={}, score={}, type={}",
                                 sessionId, evaluation.totalScore(), evaluation.learningType());
                     }
+                    recordEvolutionMetrics(sessionId, evaluation, hadToolCalls, tracker);
                 });
+    }
+
+    private void recordEvolutionMetrics(String sessionId, TaskEvaluator.TaskEvaluation evaluation,
+                                         boolean hadToolCalls, ExecutionTracker tracker) {
+        boolean success = evaluation.isSuccess();
+        double score = evaluation.totalScore();
+        double latencyMs = tracker.getTotalElapsedMs();
+        boolean toolCallSuccess = hadToolCalls && !tracker.hasFailures();
+        boolean skillMatched = !tracker.getObservations().isEmpty()
+                && tracker.getObservations().stream().anyMatch(o -> o.success());
+        boolean failureAvoided = !tracker.hasParseFailures()
+                || (tracker.getObservations().stream().anyMatch(o -> o.success()));
+
+        evolutionManager.recordExecution(sessionId, success, score, latencyMs,
+                toolCallSuccess, skillMatched, failureAvoided);
     }
 
     private void recordSkillExecutions(PromptEnricher.EnrichmentResult enrichment,
@@ -1521,27 +1625,28 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 .append(" | 成功：").append(successCount)
                 .append(" | 失败：").append(failCount).append("\n\n");
 
-        String finalAnswerPrompt = orchestratorPromptService.render(
+        return orchestratorPromptService.render(
                 "orchestrator_final_answer",
                 Map.of(
                         "observations_context", obsContext.toString(),
                         "user_request", request
-                ));
-
-        String finalPrompt = systemPrompt + "\n\n" + finalAnswerPrompt;
-        String finalUserPrompt = orchestratorPromptService.render(
-                "orchestrator_user_prompt_prefix",
-                Map.of("user_message", request));
-
-        int finalPromptTokens = TokenBudget.estimateTokens(finalPrompt);
-        int finalUserTokens = TokenBudget.estimateTokens(finalUserPrompt);
-        log.info("[Orchestrator] Generating final answer: {} observations ({} success, {} fail), "
-                        + "prompt tokens={} (system={} + answer={}), user tokens={}",
-                observations.size(), successCount, failCount,
-                finalPromptTokens + finalUserTokens,
-                finalPromptTokens, finalUserTokens);
-
-        return agentRuntime.run(finalPrompt, finalUserPrompt);
+                ))
+                .flatMap(finalAnswerPrompt -> {
+                    String finalPrompt = systemPrompt + "\n\n" + finalAnswerPrompt;
+                    return orchestratorPromptService.render(
+                            "orchestrator_user_prompt_prefix",
+                            Map.of("user_message", request))
+                            .flatMap(finalUserPrompt -> {
+                                int finalPromptTokens = TokenBudget.estimateTokens(finalPrompt);
+                                int finalUserTokens = TokenBudget.estimateTokens(finalUserPrompt);
+                                log.info("[Orchestrator] Generating final answer: {} observations ({} success, {} fail), "
+                                                + "prompt tokens={} (system={} + answer={}), user tokens={}",
+                                        observations.size(), successCount, failCount,
+                                        finalPromptTokens + finalUserTokens,
+                                        finalPromptTokens, finalUserTokens);
+                                return agentRuntime.run(finalPrompt, finalUserPrompt);
+                            });
+                });
     }
 
     private String toJson(Map<String, Object> map) {
@@ -1563,6 +1668,15 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
      * 状态驱动的上下文需求判断。
      * 核心原则：90% 依赖 SessionState + WorkingContext，10% 依赖消息内容。
      * 不负责决定是否走 FULL Pipeline（FULL 由 Intent/Planner 决定）。
+     * <p>
+     * 级别递减优先级（GAME > DOCUMENT > WORKSPACE > CONVERSATION > NONE）：
+     * <ul>
+     *   <li>GAME 模式 → DOCUMENT：游戏场景需要完整故事/角色上下文</li>
+     *   <li>WorkingContext.needsDocumentContext() → DOCUMENT：有活跃文档/artifact 需要召回</li>
+     *   <li>containsFileOperation() → WORKSPACE：需要加载项目文件（如代码、配置）</li>
+     *   <li>消息长度 > 20 且非简单问候 → CONVERSATION：普通聊天，需要历史上下文</li>
+     *   <li>简单问候 → NONE：最轻量级，无需任何额外上下文</li>
+     * </ul>
      */
     private ContextRequirement determineContextRequirement(
             String request, SessionState state, WorkingContext workingCtx) {
@@ -1591,6 +1705,12 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             log.info("[DIAG-ContextRequirement] → NONE | reason=shortGreeting | length={} | message='{}'",
                     trimmed.length(), trimmed);
             return ContextRequirement.NONE;
+        }
+
+        if (isSearchRelated(lower) && !containsFileOperation(lower)) {
+            log.info("[DIAG-ContextRequirement] → SEARCH | reason=isSearchRelated | message='{}'",
+                    request.length() > 50 ? request.substring(0, 50) + "..." : request);
+            return ContextRequirement.SEARCH;
         }
 
         log.info("[DIAG-ContextRequirement] → CONVERSATION | reason=default fallthrough | isGame={} | hasActiveDoc={} | hasActiveArtifact={} | message='{}'",
@@ -1662,6 +1782,14 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     /**
      * Context-Aware FastPath — 根据 ContextRequirement 分级加载。
      * 不是"跳过所有"，而是"按需加载"。
+     * <p>
+     * PromptPolicy 设计意图：
+     * <ul>
+     *   <li>NONE → CHAT_LIGHT：轻量级 system prompt，不含任务/文档/文件上下文，适合简单问候</li>
+     *   <li>CONVERSATION → CHAT_LIGHT + 聊天历史：有历史但无任务上下文，单条消息 ≤600 chars</li>
+     *   <li>DOCUMENT → CHAT（非GAME）/ GAME：有文档/artifact 上下文，需要完整 system prompt</li>
+     *   <li>WORKSPACE → CHAT：有 workspace 文件上下文，需要完整 system prompt + 文件预加载</li>
+     * </ul>
      */
     private Mono<String> processContextAwareFastPath(
             RequestContext ctx, String resolvedSystemPrompt,
@@ -1683,7 +1811,68 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             case CONVERSATION -> processFastPathConversation(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
             case DOCUMENT -> processFastPathDocument(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
             case WORKSPACE -> processFastPathWorkspace(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
+            case SEARCH -> processFastPathSearch(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
         };
+
+    }
+
+    /**
+     * E2: Tool Pipeline 快速路径 — 使用预定义管道执行工具链，减少 LLM 轮次。
+     * <p>
+     * 与 SearchAgent ReAct 循环的区别：
+     * <ul>
+     *   <li>Pipeline: 确定性执行 multi_search → generate_docx/ppt，0 次 LLM 工具决策</li>
+     *   <li>SearchAgent: LLM 决策每一步工具调用，通常需要 2-3 轮 LLM 交互</li>
+     * </ul>
+     * 适用场景：搜索+生成文档/PPT 的标准工作流，内容格式可预测。
+     */
+    private Mono<String> processWithPipeline(
+            RequestContext ctx, String resolvedSystemPrompt,
+            long startTime, WorkingContext workingCtx, ToolPipeline pipeline) {
+        String request = ctx.getUserMessage();
+        MemoryIdentity identity = ctx.getIdentity();
+        String sessionId = identity.sessionId();
+
+        log.info("[Orchestrator] Pipeline[{}] executing: {} steps | session={}",
+                pipeline.getPipelineId(), pipeline.getSteps().size(), sessionId);
+
+        ToolPipeline finalPipeline = ToolPipeline.builder()
+                .pipelineId(pipeline.getPipelineId())
+                .name(pipeline.getName())
+                .steps(pipeline.getSteps())
+                .timeoutSeconds(pipeline.getTimeoutSeconds())
+                .build();
+
+        return pipelineExecutor.execute(finalPipeline)
+                .doOnSuccess(result -> {
+                    long duration = System.currentTimeMillis() - startTime;
+                    String outcome = result.isSuccess() ? "SUCCESS" : "FAILED";
+                    log.info("[Orchestrator] Pipeline[{}] {}: duration={}ms | session={} | steps={}",
+                            pipeline.getPipelineId(), outcome, duration, sessionId,
+                            result.getStepResults() != null ? result.getStepResults().size() : 0);
+                })
+                .doOnError(error -> {
+                    long duration = System.currentTimeMillis() - startTime;
+                    log.error("[Orchestrator] Pipeline[{}] ERROR: duration={}ms | session={} | error={}",
+                            pipeline.getPipelineId(), duration, sessionId, error.getMessage());
+                })
+                .flatMap(result -> {
+                    if (result.isSuccess()) {
+                        String response = result.getFinalOutput() != null
+                                ? result.getFinalOutput().toString()
+                                : "Pipeline completed successfully.";
+                        return chatHistoryService.saveUserAndAssistantMessage(identity, request, response)
+                                .thenReturn(response);
+                    }
+                    log.warn("[Orchestrator] Pipeline[{}] failed, falling back to SearchAgent: session={}",
+                            pipeline.getPipelineId(), sessionId);
+                    return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
+                })
+                .onErrorResume(ex -> {
+                    log.warn("[Orchestrator] Pipeline[{}] exception, falling back to SearchAgent: session={} | error={}",
+                            pipeline.getPipelineId(), sessionId, ex.getMessage());
+                    return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
+                });
     }
 
     private Mono<String> processDocxGenerationWithSearchAgent(
@@ -1693,42 +1882,42 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         MemoryIdentity identity = ctx.getIdentity();
         String sessionId = identity.sessionId();
 
-        Agent searchAgent = resolveBestAgentKeyword(request);
-        if (searchAgent == null) {
-            // P1-1 改进：关键词匹配失败时，尝试直接从 registry 获取 SearchAgent
-            searchAgent = agentRegistry.getAgent("search-agent").orElse(null);
-            if (searchAgent != null) {
-                log.info("[Orchestrator] Keyword routing failed, but found SearchAgent directly from registry: session={}",
-                        sessionId);
-            }
-        }
-        if (searchAgent == null) {
-            log.warn("[Orchestrator] No SearchAgent found for DOCX_GENERATION, falling back to FastPath: session={}", sessionId);
-            return processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime,
-                    ctx.getUserProfile() != null ? ctx.getUserProfile().getRole() : null,
-                    ContextRequirement.DOCUMENT, workingCtx);
-        }
+        return Mono.justOrEmpty(agentRegistry.getAgent("search-agent"))
+                .switchIfEmpty(resolveBestAgentKeyword(request)
+                        .doOnNext(agent -> log.info(
+                                "[Orchestrator] SearchAgent not in registry, fallback keyword routing to: {} | session={}",
+                                agent.getName(), sessionId)))
+                .flatMap(searchAgent -> {
+                    log.info("[Orchestrator] Routing DOCX_GENERATION to agent: {} | session={}",
+                            searchAgent.getName(), sessionId);
 
-        log.info("[Orchestrator] Routing DOCX_GENERATION to agent: {} | session={}", searchAgent.getName(), sessionId);
+                    LLMRequest llmRequest = LLMRequest.builder()
+                            .sessionId(sessionId)
+                            .userId(identity.userId())
+                            .groupId(identity.groupId())
+                            .systemPrompt(resolvedSystemPrompt)
+                            .userMessage(request)
+                            .modelConfigId(ctx.getModelConfigId())
+                            .build();
 
-        LLMRequest llmRequest = LLMRequest.builder()
-                .sessionId(sessionId)
-                .userId(identity.userId())
-                .groupId(identity.groupId())
-                .systemPrompt(resolvedSystemPrompt)
-                .userMessage(request)
-                .modelConfigId(ctx.getModelConfigId())
-                .build();
-
-        return searchAgent.execute(llmRequest)
-                .doOnSuccess(response -> {
-                    long duration = System.currentTimeMillis() - startTime;
-                    log.info("[Orchestrator] DOCX_GENERATION via SearchAgent success! Duration: {}ms | Session: {} | responseLen={}",
-                            duration, sessionId, response != null ? response.length() : 0);
-                    triggerMemoryLifecycle(identity, request, response);
+                    return searchAgent.execute(llmRequest)
+                            .doOnSuccess(response -> {
+                                long duration = System.currentTimeMillis() - startTime;
+                                log.info("[Orchestrator] DOCX_GENERATION via SearchAgent success! Duration: {}ms | Session: {} | responseLen={}",
+                                        duration, sessionId, response != null ? response.length() : 0);
+                                triggerMemoryLifecycle(identity, request, response);
+                            })
+                            .doOnError(error -> log.error(
+                                    "[Orchestrator] DOCX_GENERATION via SearchAgent failed: session={} error={}",
+                                    sessionId, error.getMessage(), error));
                 })
-                .doOnError(error -> log.error("[Orchestrator] DOCX_GENERATION via SearchAgent failed: session={} error={}",
-                        sessionId, error.getMessage(), error));
+                .switchIfEmpty(Mono.defer(() -> {
+                    log.warn("[Orchestrator] No SearchAgent found for DOCX_GENERATION, falling back to FastPath: session={}",
+                            sessionId);
+                    return processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime,
+                            ctx.getUserProfile() != null ? ctx.getUserProfile().getRole() : null,
+                            ContextRequirement.DOCUMENT, workingCtx);
+                }));
     }
 
     private Mono<String> processFastPathNone(RequestContext ctx, String resolvedSystemPrompt,
@@ -1786,6 +1975,72 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             duration, error.getMessage(), error);
                 })
                 .onErrorResume(error -> handleFastPathError(error));
+    }
+
+    private Mono<String> processFastPathSearch(RequestContext ctx, String resolvedSystemPrompt,
+                                                long startTime, UserRole userRole,
+                                                WorkingContext workingCtx) {
+        String request = ctx.getUserMessage();
+        MemoryIdentity identity = ctx.getIdentity();
+        String modelConfigId = ctx.getModelConfigId();
+        String sessionId = identity.sessionId();
+
+        log.info("[Orchestrator] FastPath[SEARCH]: routing to SearchAgent for '{}'", request);
+
+        java.util.concurrent.atomic.AtomicLong llmDuration = new java.util.concurrent.atomic.AtomicLong();
+
+        return Mono.zip(
+                memoryService.buildWorkingContext(identity, userRole),
+                chatHistoryService.getHistorySummaryWithBudget(sessionId, 20, maxHistoryChars, maxPerMessageChars)
+        ).flatMap(tuple -> {
+            String memoryContext = tuple.getT1();
+            String historyContext = tuple.getT2();
+
+            log.info("[DIAG-Perf] FastPath[SEARCH] memory+history loading: {}ms | memCtxLen={} | histCtxLen={}",
+                    System.currentTimeMillis() - startTime,
+                    memoryContext != null ? memoryContext.length() : 0,
+                    historyContext != null ? historyContext.length() : 0);
+
+            return Mono.justOrEmpty(agentRegistry.getAgent("search-agent"))
+                    .switchIfEmpty(resolveBestAgentKeyword(request)
+                            .doOnNext(agent -> log.info(
+                                    "[Orchestrator] SearchAgent not in registry, fallback keyword routing to: {} | session={}",
+                                    agent.getName(), sessionId)))
+                    .flatMap(searchAgent -> {
+                        log.info("[Orchestrator] Routing SEARCH to agent: {} | session={}",
+                                searchAgent.getName(), sessionId);
+
+                        LLMRequest llmRequest = LLMRequest.builder()
+                                .sessionId(sessionId)
+                                .userId(identity.userId())
+                                .groupId(identity.groupId())
+                                .systemPrompt(resolvedSystemPrompt)
+                                .userMessage(request)
+                                .modelConfigId(modelConfigId)
+                                .build();
+
+                        long t0 = System.currentTimeMillis();
+                        return searchAgent.execute(llmRequest)
+                                .doOnSuccess(r -> llmDuration.set(System.currentTimeMillis() - t0));
+                    })
+                    .switchIfEmpty(Mono.defer(() -> {
+                        log.warn("[Orchestrator] No SearchAgent found for SEARCH, falling back to CONVERSATION: session={}",
+                                sessionId);
+                        return processFastPathConversation(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
+                    }));
+        })
+        .map(responseSanitizer::sanitize)
+        .flatMap(response ->
+                chatHistoryService.saveUserAndAssistantMessage(identity, request, response)
+                        .thenReturn(response)
+        )
+        .doOnSuccess(response -> {
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("[Orchestrator] FastPath[SEARCH] success! total={}ms | llm={}ms | Session: {}",
+                    duration, llmDuration.get(), sessionId);
+            triggerMemoryLifecycle(identity, request, response);
+        })
+        .onErrorResume(error -> handleFastPathError(error));
     }
 
     private Mono<String> processFastPathConversation(RequestContext ctx, String resolvedSystemPrompt,

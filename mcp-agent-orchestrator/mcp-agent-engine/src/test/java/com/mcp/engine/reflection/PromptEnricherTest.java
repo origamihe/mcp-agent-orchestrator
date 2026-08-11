@@ -159,8 +159,8 @@ class PromptEnricherTest {
     }
 
     @Test
-    @DisplayName("enrichSync 同步方法可用")
-    void shouldSupportSyncEnrich() {
+    @DisplayName("enrich 响应式方法可用")
+    void shouldSupportReactiveEnrich() {
         when(skillLibraryService.retrieveRelevantSkills("搜索文件"))
                 .thenReturn(List.of());
         when(skillLibraryService.buildSkillPrompt(anyList()))
@@ -174,7 +174,7 @@ class PromptEnricherTest {
                 .thenReturn(reactor.core.publisher.Mono.just(
                         FailureLibraryService.FailureMatchResult.noMatch()));
 
-        PromptEnricher.EnrichmentResult result = enricher.enrichSync("搜索文件");
+        PromptEnricher.EnrichmentResult result = enricher.enrich("搜索文件").block();
         assertThat(result.isEmpty()).isTrue();
     }
 }

@@ -175,7 +175,8 @@ public class DefaultContextManager implements ContextManager {
         if (request.getSessionId() == null) {
             return Mono.just("");
         }
-        return memoryService.buildWorkingContext(request.getSessionId())
+        return memoryService.buildWorkingContext(request.getSessionId(),
+                        request.getUserId(), null, null, null)
                 .map(memory -> truncateByTokens(memory, maxTokens))
                 .defaultIfEmpty("")
                 .doOnNext(m -> log.debug("[ContextManager] Memory context: {} chars", m.length()));

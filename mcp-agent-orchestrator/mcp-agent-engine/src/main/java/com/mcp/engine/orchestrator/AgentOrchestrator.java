@@ -4,6 +4,7 @@ import com.mcp.common.context.RequestContext;
 import com.mcp.common.identity.MemoryIdentity;
 import com.mcp.engine.agent.Agent;
 import com.mcp.common.channel.RecallMode;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -38,4 +39,15 @@ public interface AgentOrchestrator {
     void registerAgent(Agent agent);
 
     void registerDefaultTools();
+
+    /**
+     * 流式处理请求 — 逐 token 返回 LLM 响应。
+     *
+     * @param request       用户消息
+     * @param sessionId     会话 ID
+     * @param systemPrompt  系统提示（可选）
+     * @param modelConfigId 模型配置 ID（可选）
+     * @return 流式 token 序列
+     */
+    Flux<String> processRequestStream(String request, String sessionId, String systemPrompt, String modelConfigId);
 }

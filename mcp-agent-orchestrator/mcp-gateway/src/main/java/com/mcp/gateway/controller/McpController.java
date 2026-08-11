@@ -3,6 +3,10 @@ package com.mcp.gateway.controller;
 import com.mcp.core.mcp.model.McpMessage;
 import com.mcp.core.service.LlmConfigService;
 import com.mcp.engine.orchestrator.AgentOrchestrator;
+import com.mcp.tools.executor.ToolExecutor;
+import com.mcp.tools.model.ToolDefinition;
+import com.mcp.tools.model.ToolExecutionRequest;
+import com.mcp.tools.registry.ToolRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +33,8 @@ public class McpController {
 
     private final AgentOrchestrator orchestrator;
     private final LlmConfigService llmConfigService;
+    private final ToolRegistry toolRegistry;
+    private final ToolExecutor toolExecutor;
     private final String ollamaBaseUrl;
     private static final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
@@ -36,9 +42,13 @@ public class McpController {
 
     public McpController(AgentOrchestrator orchestrator,
                           LlmConfigService llmConfigService,
+                          ToolRegistry toolRegistry,
+                          ToolExecutor toolExecutor,
                           @Value("${spring.ai.ollama.base-url:http://localhost:11434}") String ollamaBaseUrl) {
         this.orchestrator = orchestrator;
         this.llmConfigService = llmConfigService;
+        this.toolRegistry = toolRegistry;
+        this.toolExecutor = toolExecutor;
         this.ollamaBaseUrl = ollamaBaseUrl;
     }
 
@@ -71,19 +81,73 @@ public class McpController {
     }
 
     private Mono<McpMessage> handleListTools(McpMessage req) {
-        // TODO: 从 ToolRegistry 获取工具列表
+        List<ToolDefinition> tools = toolRegistry.getAllTools();
+        List<Map<String, Object>> toolList = tools.stream()
+                .map(tool -> {
+                    Map<String, Object> toolMap = new LinkedHashMap<>();
+                    toolMap.put("name", tool.getName());
+                    toolMap.put("description", tool.getDescription());
+                    toolMap.put("inputSchema", tool.getInputSchema() != null ? tool.getInputSchema() : Map.of());
+                    return toolMap;
+                })
+                .collect(Collectors.toList());
         return Mono.just(McpMessage.builder()
                 .id(req.getId())
-                .result("tools will be listed here")
+                .result(Map.of("tools", toolList))
                 .build());
     }
 
     private Mono<McpMessage> handleToolCall(McpMessage req) {
-        // TODO: 调用 ToolExecutor
-        return Mono.just(McpMessage.builder()
-                .id(req.getId())
-                .result("Tool call result")
-                .build());
+        Object params = req.getParams();
+        if (params == null) {
+            return Mono.just(McpMessage.builder()
+                    .id(req.getId())
+                    .error(new com.mcp.core.mcp.model.McpError(-32602, "Missing params", null))
+                    .build());
+        }
+
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> paramsMap = (params instanceof Map)
+                    ? (Map<String, Object>) params
+                    : new ObjectMapper().convertValue(params, Map.class);
+
+            String toolName = (String) paramsMap.get("name");
+            if (toolName == null || toolName.isEmpty()) {
+                return Mono.just(McpMessage.builder()
+                        .id(req.getId())
+                        .error(new com.mcp.core.mcp.model.McpError(-32602, "Missing tool name", null))
+                        .build());
+            }
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> arguments = (Map<String, Object>) paramsMap.getOrDefault("arguments", Map.of());
+
+            ToolExecutionRequest toolRequest = new ToolExecutionRequest();
+            toolRequest.setToolName(toolName);
+            toolRequest.setArguments(new HashMap<>(arguments));
+            toolRequest.setRequestId(req.getId());
+
+            return toolExecutor.execute(toolRequest)
+                    .map(result -> {
+                        Map<String, Object> content = new LinkedHashMap<>();
+                        content.put("type", "text");
+                        content.put("text", result != null ? result.toString() : "");
+                        return McpMessage.builder()
+                                .id(req.getId())
+                                .result(Map.of("content", List.of(content)))
+                                .build();
+                    })
+                    .onErrorResume(error -> Mono.just(McpMessage.builder()
+                            .id(req.getId())
+                            .error(new com.mcp.core.mcp.model.McpError(-32000, "Tool execution failed: " + error.getMessage(), null))
+                            .build()));
+        } catch (Exception e) {
+            return Mono.just(McpMessage.builder()
+                    .id(req.getId())
+                    .error(new com.mcp.core.mcp.model.McpError(-32603, "Invalid params: " + e.getMessage(), null))
+                    .build());
+        }
     }
 
     private Mono<McpMessage> handleAgentProcess(McpMessage req) {

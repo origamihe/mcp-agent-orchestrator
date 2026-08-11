@@ -21,5 +21,8 @@ public enum ContextRequirement {
     DOCUMENT,
 
     /** 需要工作区上下文 */
-    WORKSPACE
+    WORKSPACE,
+
+    /** 需要搜索上下文 — 工具调用、ReAct 循环 */
+    SEARCH
 }

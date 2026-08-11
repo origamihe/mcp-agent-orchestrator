@@ -66,14 +66,12 @@ public class McpOrchestratorApplication {
         SimpleReActAgent agent = context.getBean(SimpleReActAgent.class);
         agent.setLlmClient(llmClient);
         agent.setToolRegistry(toolRegistry);
-        agent.setToolExecutor(toolExecutor);
         orchestrator.registerAgent(agent);
         System.out.println("已注册 Agent: " + agent.getName());
 
         SearchAgent searchAgent = context.getBean(SearchAgent.class);
         searchAgent.setLlmClient(llmClient);
         searchAgent.setToolRegistry(toolRegistry);
-        searchAgent.setToolExecutor(toolExecutor);
         orchestrator.registerAgent(searchAgent);
         System.out.println("已注册 Agent: " + searchAgent.getName());
 

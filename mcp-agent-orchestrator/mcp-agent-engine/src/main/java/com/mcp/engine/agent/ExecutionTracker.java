@@ -102,6 +102,17 @@ public class ExecutionTracker {
         return observations.stream().anyMatch(o -> !o.success);
     }
 
+    public long getTotalElapsedMs() {
+        return Duration.between(startTime, Instant.now()).toMillis();
+    }
+
+    public boolean hasParseFailures() {
+        return observations.stream().anyMatch(o -> !o.success
+                && o.errorMessage != null
+                && (o.errorMessage.contains("解析") || o.errorMessage.contains("parse")
+                    || o.errorMessage.contains("extract") || o.errorMessage.contains("unwrap")));
+    }
+
     private String truncate(String text, int maxLen) {
         if (text == null) return "";
         return text.length() <= maxLen ? text : text.substring(0, maxLen - 3) + "...";

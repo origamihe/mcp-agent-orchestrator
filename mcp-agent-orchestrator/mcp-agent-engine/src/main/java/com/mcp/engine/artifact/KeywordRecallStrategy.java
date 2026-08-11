@@ -2,6 +2,7 @@ package com.mcp.engine.artifact;
 
 import com.mcp.common.artifact.Artifact;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
@@ -14,10 +15,11 @@ import java.util.List;
  * 1. 文档 ≤ 3000 chars → 全文返回
  * 2. 文档 > 3000 chars → Summary + 关键词匹配段落
  *
- * 可替换为 EmbeddingRecallStrategy 等更高级的实现。
+ * 通过 @Qualifier("keyword") 可与 EmbeddingRecallStrategy 切换。
  */
 @Slf4j
-@Component
+@Component("keywordRecallStrategy")
+@Qualifier("keyword")
 public class KeywordRecallStrategy implements ArtifactRecallStrategy {
 
     private static final int SMALL_DOC_THRESHOLD = 3000;

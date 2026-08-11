@@ -11,8 +11,11 @@ import com.mcp.tools.tool.PptGeneratorTool;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketSession;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+
+import java.util.Map;
 
 @Component
 public class McpWebSocketHandler implements WebSocketHandler {
@@ -160,6 +163,18 @@ public class McpWebSocketHandler implements WebSocketHandler {
 
                     if (systemPromptName != null && !systemPromptName.isEmpty()) {
                         final String mid = modelConfigId;
+                        if (pm.streaming) {
+                            return promptService.getPrompt(systemPromptName)
+                                    .flatMapMany(prompt -> orchestrator.processRequestStream(
+                                            userMessage, session.getId(), prompt.getTemplateText(), mid))
+                                    .onErrorResume(err -> {
+                                        System.err.println("Prompt '" + systemPromptName + "' not found, using default: " + err.getMessage());
+                                        return orchestrator.processRequestStream(
+                                                userMessage, session.getId(), null, mid);
+                                    })
+                                    .flatMap(token -> sendToken(session, token))
+                                    .then(sendDone(session));
+                        }
                         return promptService.getPrompt(systemPromptName)
                                 .flatMap(prompt -> orchestrator.processRequestWithSystemPrompt(
                                         userMessage, session.getId(), prompt.getTemplateText(), mid))
@@ -176,6 +191,12 @@ public class McpWebSocketHandler implements WebSocketHandler {
                                             .doOnSuccess(v -> System.out.println(" success send msg"));
                                 });
                     } else if (modelConfigId != null && !modelConfigId.isEmpty()) {
+                        if (pm.streaming) {
+                            return orchestrator.processRequestStream(
+                                            userMessage, session.getId(), null, modelConfigId)
+                                    .flatMap(token -> sendToken(session, token))
+                                    .then(sendDone(session));
+                        }
                         return orchestrator.processRequestWithModel(userMessage, session.getId(), modelConfigId)
                                 .flatMap(response -> {
                                     System.out.println("prepare send to front: " + response);
@@ -183,6 +204,12 @@ public class McpWebSocketHandler implements WebSocketHandler {
                                             .doOnSuccess(v -> System.out.println(" success send msg"));
                                 });
                     } else {
+                        if (pm.streaming) {
+                            return orchestrator.processRequestStream(
+                                            userMessage, session.getId(), null, null)
+                                    .flatMap(token -> sendToken(session, token))
+                                    .then(sendDone(session));
+                        }
                         return orchestrator.processRequestWithSystemPrompt(userMessage, session.getId(), null, null)
                                 .flatMap(response -> {
                                     System.out.println("prepare send to front: " + response);
@@ -198,7 +225,30 @@ public class McpWebSocketHandler implements WebSocketHandler {
                 .then();
     }
 
-    private record ParsedMessage(String userMessage, String modelConfigId, String systemPromptName, String featureId, JsonNode parameters) {}
+    private Mono<Void> sendToken(WebSocketSession session, String token) {
+        try {
+            String json = objectMapper.writeValueAsString(
+                    Map.of("type", "token", "content", token));
+            return session.send(Mono.just(session.textMessage(json)));
+        } catch (Exception e) {
+            System.err.println("Failed to serialize token: " + e.getMessage());
+            return Mono.empty();
+        }
+    }
+
+    private Mono<Void> sendDone(WebSocketSession session) {
+        try {
+            String json = objectMapper.writeValueAsString(
+                    Map.of("type", "done"));
+            return session.send(Mono.just(session.textMessage(json)));
+        } catch (Exception e) {
+            System.err.println("Failed to serialize done: " + e.getMessage());
+            return Mono.empty();
+        }
+    }
+
+    private record ParsedMessage(String userMessage, String modelConfigId, String systemPromptName,
+                                      String featureId, JsonNode parameters, boolean streaming) {}
 
     private ParsedMessage parseMessage(String rawMessage) {
         try {
@@ -211,9 +261,10 @@ public class McpWebSocketHandler implements WebSocketHandler {
             String featureId = (json.has("featureId") && !json.get("featureId").isNull())
                     ? json.get("featureId").asText() : null;
             JsonNode params = json.has("parameters") ? json.get("parameters") : null;
-            return new ParsedMessage(msg, cfgId, promptName, featureId, params);
+            boolean streaming = json.has("streaming") && json.get("streaming").asBoolean();
+            return new ParsedMessage(msg, cfgId, promptName, featureId, params, streaming);
         } catch (Exception e) {
-            return new ParsedMessage(rawMessage, null, null, null, null);
+            return new ParsedMessage(rawMessage, null, null, null, null, false);
         }
     }
 }

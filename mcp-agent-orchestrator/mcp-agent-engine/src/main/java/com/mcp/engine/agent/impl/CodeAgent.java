@@ -6,7 +6,6 @@ import com.mcp.engine.agent.card.AgentCard;
 import com.mcp.engine.runtime.AgentRuntime;
 import com.mcp.llm.client.LlmClient;
 import com.mcp.tools.registry.ToolRegistry;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
@@ -21,12 +20,17 @@ import java.util.List;
 @Component
 public class CodeAgent implements Agent {
 
-    @Setter
-    private LlmClient llmClient;
-    @Setter
-    private ToolRegistry toolRegistry;
-    @Setter
-    private AgentRuntime agentRuntime;
+    private final LlmClient llmClient;
+    private final ToolRegistry toolRegistry;
+    private final AgentRuntime agentRuntime;
+
+    public CodeAgent(LlmClient llmClient,
+                     ToolRegistry toolRegistry,
+                     AgentRuntime agentRuntime) {
+        this.llmClient = llmClient;
+        this.toolRegistry = toolRegistry;
+        this.agentRuntime = agentRuntime;
+    }
 
     @Override
     public String getId() {
@@ -49,6 +53,16 @@ public class CodeAgent implements Agent {
                 .toolNames(List.of("read_file", "write_file", "edit_file", "search_code"))
                 .version("1.0.0")
                 .build();
+    }
+
+    @Override
+    public void setLlmClient(LlmClient llmClient) {
+        // 构造器注入，此方法为兼容 Agent 接口保留
+    }
+
+    @Override
+    public void setToolRegistry(ToolRegistry toolRegistry) {
+        // 构造器注入，此方法为兼容 Agent 接口保留
     }
 
     @Override

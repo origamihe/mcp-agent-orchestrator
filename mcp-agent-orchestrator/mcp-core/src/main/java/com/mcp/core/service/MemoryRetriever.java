@@ -124,34 +124,6 @@ public class MemoryRetriever {
     }
 
     /**
-     * Always-Inject 层：PREFERENCE/PROFILE/RELATION/HABIT 全部注入（不依赖Query匹配）。
-     * 限制最多 MAX_ALWAYS_INJECT_ITEMS 条，按 weight 降序。
-     * @deprecated 已由 retrieveWithTiers 中的合并查询替代，仅保留供外部可能的直接调用
-     */
-    @Deprecated
-    private List<MemoryRetrievalResult> retrieveAlwaysInject(String userId, String groupId) {
-        List<MemoryPackageEntity> memories = new ArrayList<>();
-        if (userId != null) {
-            memories.addAll(repository.findByUserIdAndMemoryTypeIn(userId, ALWAYS_INJECT_TYPES));
-        }
-        if (groupId != null) {
-            memories.addAll(repository.findByGroupIdAndMemoryTypeIn(groupId, ALWAYS_INJECT_TYPES));
-        }
-
-        return memories.stream()
-                .filter(MemoryPackageEntity::isActive)
-                .filter(m -> m.getImportance() >= 5)
-                .sorted(Comparator.comparingDouble(MemoryPackageEntity::getWeight).reversed())
-                .limit(MAX_ALWAYS_INJECT_ITEMS)
-                .map(m -> {
-                    double score = m.getImportance() * 0.6 + m.getWeight() * 0.4;
-                    int tokens = estimateTokens(m.getContent());
-                    return new MemoryRetrievalResult(m, score, RetrievalTier.HOT, tokens);
-                })
-                .collect(Collectors.toList());
-    }
-
-    /**
      * 对预取的 Episode 记忆进行评分和排序（不执行数据库查询）。
      * 原 retrieveEpisode + fetchEpisodeMemories 的合并优化版。
      */

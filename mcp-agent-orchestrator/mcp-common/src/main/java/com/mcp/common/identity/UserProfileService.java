@@ -1,43 +1,69 @@
 package com.mcp.common.identity;
 
 import jakarta.annotation.PostConstruct;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 用户身份服务 - 配置驱动的用户身份映射
- * 可以通过配置文件或数据库动态加载
+ * 用户身份服务 - 配置驱动的用户身份映射。
+ * 支持通过 application.yml 的 mcp.identity.users 配置用户列表。
+ *
+ * 配置示例：
+ * <pre>
+ * mcp:
+ *   identity:
+ *     users:
+ *       - userId: "2495444762"
+ *         nickname: "Master"
+ *         role: OWNER
+ *         relation: OWNER
+ *         affinity: 100
+ *         preferredName: "Master"
+ * </pre>
  */
 @Slf4j
 @Service
+@ConfigurationProperties(prefix = "mcp.identity")
 public class UserProfileService {
 
     private final Map<String, UserProfile> userProfiles = new ConcurrentHashMap<>();
     private final Map<String, GroupContext> groupContexts = new ConcurrentHashMap<>();
 
+    @Setter
+    private List<UserProfileConfig> users = new ArrayList<>();
+
     @PostConstruct
     public void init() {
-        // TODO: 从配置文件或数据库加载
-        // 示例：开发者账号
-        userProfiles.put("2495444762", UserProfile.builder()
-                .userId("2495444762")
-                .nickname("Master")
-                .role(UserRole.OWNER)
-                .relation(UserRelation.OWNER)
-                .affinity(100)
-                .preferredName("Master")
-                .build());
+        if (users != null) {
+            for (UserProfileConfig cfg : users) {
+                if (cfg.getUserId() == null || cfg.getUserId().isBlank()) {
+                    log.warn("[UserProfile] Skipping user config with empty userId");
+                    continue;
+                }
+                UserProfile profile = UserProfile.builder()
+                        .userId(cfg.getUserId())
+                        .nickname(cfg.getNickname() != null ? cfg.getNickname() : cfg.getUserId())
+                        .role(cfg.getRole() != null ? cfg.getRole() : UserRole.MEMBER)
+                        .relation(cfg.getRelation() != null ? cfg.getRelation() : UserRelation.STRANGER)
+                        .affinity(cfg.getAffinity() != null ? cfg.getAffinity() : 50)
+                        .preferredName(cfg.getPreferredName())
+                        .build();
+                userProfiles.put(cfg.getUserId(), profile);
+                log.info("[UserProfile] Loaded from config: {} -> role={}, relation={}, affinity={}",
+                        cfg.getUserId(), profile.getRole(), profile.getRelation(), profile.getAffinity());
+            }
+        }
 
-        userProfiles.put("987654321", UserProfile.builder()
-                .userId("987654321")
-                .nickname("Alice")
-                .role(UserRole.ADMIN)
-                .relation(UserRelation.FRIEND)
-                .affinity(70)
-                .build());
+        if (userProfiles.isEmpty()) {
+            log.warn("[UserProfile] No user profiles configured via mcp.identity.users — all users will be treated as MEMBER/STRANGER");
+        }
 
         log.info("[UserProfile] Initialized {} user profiles, {} group contexts",
                 userProfiles.size(), groupContexts.size());

@@ -51,10 +51,13 @@ public class PromptController {
 
             PromptTemplate template = new PromptTemplate(
                     name.trim(),
+                    "default",
                     type,
                     templateText.trim(),
                     description.trim(),
                     nextVersion,
+                    1.0,
+                    true,
                     LocalDateTime.now()
             );
             promptService.savePrompt(template);

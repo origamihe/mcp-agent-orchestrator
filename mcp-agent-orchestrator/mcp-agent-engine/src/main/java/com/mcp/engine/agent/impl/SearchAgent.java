@@ -9,7 +9,6 @@ import com.mcp.engine.runtime.AgentRuntime;
 import com.mcp.llm.client.ChatMessage;
 import com.mcp.llm.client.LlmClient;
 import com.mcp.llm.client.LlmToolResponse;
-import com.mcp.llm.provider.SpringAiLlmClient;
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.SearchDocument;
 import com.mcp.tools.model.SearchResult;
@@ -17,7 +16,6 @@ import com.mcp.tools.model.ToolDefinition;
 import com.mcp.tools.model.ToolExecutionRequest;
 import com.mcp.tools.model.ToolResult;
 import com.mcp.tools.registry.ToolRegistry;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -31,22 +29,30 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.time.Duration;
 
 @Slf4j
 @Component
 @SuppressWarnings({"unchecked"})
 public class SearchAgent implements Agent {
 
-    @Setter
-    private LlmClient llmClient;
-    @Setter
-    private ToolRegistry toolRegistry;
-    @Setter
-    private AgentRuntime agentRuntime;
-    @Setter
-    private ToolExecutor toolExecutor;
-    @Setter
-    private ResearchSynthesizer researchSynthesizer;
+    private final LlmClient llmClient;
+    private final ToolRegistry toolRegistry;
+    private final AgentRuntime agentRuntime;
+    private final ToolExecutor toolExecutor;
+    private final ResearchSynthesizer researchSynthesizer;
+
+    public SearchAgent(LlmClient llmClient,
+                       ToolRegistry toolRegistry,
+                       AgentRuntime agentRuntime,
+                       ToolExecutor toolExecutor,
+                       ResearchSynthesizer researchSynthesizer) {
+        this.llmClient = llmClient;
+        this.toolRegistry = toolRegistry;
+        this.agentRuntime = agentRuntime;
+        this.toolExecutor = toolExecutor;
+        this.researchSynthesizer = researchSynthesizer;
+    }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -74,6 +80,16 @@ public class SearchAgent implements Agent {
                 .toolNames(List.of("deep_research", "multi_search", "fetch_webpage", "web_search"))
                 .version("2.1.0")
                 .build();
+    }
+
+    @Override
+    public void setLlmClient(LlmClient llmClient) {
+        // 构造器注入，此方法为兼容 Agent 接口保留
+    }
+
+    @Override
+    public void setToolRegistry(ToolRegistry toolRegistry) {
+        // 构造器注入，此方法为兼容 Agent 接口保留
     }
 
     @Override
@@ -117,6 +133,7 @@ public class SearchAgent implements Agent {
         messages.add(ChatMessage.builder().role("user").content(request.getUserMessage()).build());
 
         return reactLoop(messages, 0, new ArrayList<>(), request.getUserMessage())
+                .timeout(Duration.ofSeconds(300))
                 .flatMap(result -> {
                     if (researchSynthesizer != null
                             && (!result.searchResults().isEmpty() || !result.documents().isEmpty())) {
@@ -129,6 +146,14 @@ public class SearchAgent implements Agent {
                         log.warn("[SearchAgent] ResearchSynthesizer not configured, returning raw results");
                     }
                     return Mono.just(result.finalAnswer());
+                })
+                .onErrorResume(java.util.concurrent.TimeoutException.class, e -> {
+                    log.warn("[SearchAgent] Search timed out after 300s, returning degraded response");
+                    return Mono.just("搜索任务超时（300秒），可能是当前模型推理速度较慢或搜索服务响应缓慢。请尝试使用更精确的搜索词，或稍后重试。");
+                })
+                .onErrorResume(e -> {
+                    log.error("[SearchAgent] Search failed with error: {}", e.getMessage(), e);
+                    return Mono.just("搜索任务执行失败：" + (e.getMessage() != null ? e.getMessage() : "未知错误") + "。请稍后重试。");
                 });
     }
 
@@ -293,16 +318,16 @@ public class SearchAgent implements Agent {
 
                     List<LlmToolResponse.ToolCall> effectiveCalls = response.getToolCalls();
 
-                    // ===== 文本回退：Ollama 模型不支持原生 tool calling，从文本输出中解析工具调用 =====
-                    if (effectiveCalls.isEmpty() && response.getContent() != null) {
-                        List<LlmToolResponse.ToolCall> textParsedCalls = SpringAiLlmClient.tryParseTextToolCalls(
-                                response.getContent(), buildToolDefinitions());
-                        if (!textParsedCalls.isEmpty()) {
-                            log.info("[SearchAgent Round {}] TextFallback: extracted {} tool call(s) from text output → {}",
-                                    round, textParsedCalls.size(),
-                                    textParsedCalls.stream().map(LlmToolResponse.ToolCall::getName).toList());
-                            effectiveCalls = textParsedCalls;
-                        }
+                    // 文本回退已在 SpringAiLlmClient.toLlmToolResponse() 中统一处理，
+                    // 此处仅做防御性日志：如果仍然为空，说明 LLM 完全未尝试调用工具
+                    if (effectiveCalls.isEmpty()) {
+                        log.warn("[SearchAgent Round {}] No tool calls detected (SpringAiLlmClient text fallback also failed). "
+                                + "contentLen={}, contentPreview={}",
+                                round,
+                                response.getContent() != null ? response.getContent().length() : 0,
+                                response.getContent() != null
+                                        ? response.getContent().substring(0, Math.min(200, response.getContent().length()))
+                                        : "(null)");
                     }
 
                     if (!effectiveCalls.isEmpty()) {

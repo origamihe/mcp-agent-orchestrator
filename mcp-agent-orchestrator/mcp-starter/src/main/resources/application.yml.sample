@@ -1,0 +1,179 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+# ==================== Actuator 可观测性配置 ====================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: mcp-agent-orchestrator
+  health:
+    db:
+      enabled: true
+    diskspace:
+      enabled: true
+
+spring:
+  application:
+    name: mcp-agent-orchestrator
+
+  # ==================== 自动配置排除 ====================
+  # Spring AI 会尝试创建所有 OpenAI 模型的 Bean（Chat/Embedding/Image/Audio/Moderation）
+  # 当前使用 Ollama，不需要任何 OpenAI Bean，全部排除
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiEmbeddingAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiImageAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioSpeechAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioTranscriptionAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiModerationAutoConfiguration
+
+  # ==================== LLM 配置 ====================
+  # Spring AI 自动配置会根据 properties 条件化创建 ChatModel Bean
+  # 未配置的 Provider 不会创建 Bean，不影响启动
+
+  ai:
+    # -------------------- Ollama（本地运行）--------------------
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${OLLAMA_MODEL:qwen2:7b}
+          temperature: 0.3
+
+    retry:
+      max-attempts: 3
+      on-http-codes:
+        - 429
+        - 502
+        - 503
+        - 504
+      backoff:
+        initial-interval: 2000
+        max-interval: 30000
+        multiplier: 2.0
+
+    # -------------------- Google AI Studio（OpenAI Compatible API）--------------------
+    # 设置环境变量: set GEMINI_API_KEY=你的key
+    # openai:
+    #   api-key: ${GEMINI_API_KEY:}
+    #   base-url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+    #   chat:
+    #     options:
+    #       model: gemini-2.5-flash
+    #       temperature: 0.3
+
+  # ==================== 数据库配置 ====================
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/mcp_agent?currentSchema=mcp_agent}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: false
+    schemas: mcp_agent
+
+logging:
+  level:
+    com.mcp: INFO
+    org.springframework.ai: DEBUG
+
+# MCP 配置
+mcp:
+  protocol-version: "2024-11-05"
+  server-name: "MCP-Agent-Orchestrator"
+  workspace:
+    root: ""
+
+app:
+  proxy:
+    enabled: true
+    host: ${PROXY_HOST:127.0.0.1}
+    port: ${PROXY_PORT:7890}
+
+# 搜索工具配置
+websearch:
+  serpapi:
+    key: ${SERPAPI_KEY:}
+  bing:
+    key: ${BING_KEY:}
+
+# QQ Bot 配置
+channel:
+  qq:
+    enabled: ${QQ_BOT_ENABLED:true}
+    onebot-url: ${QQ_ONEBOT_URL:http://127.0.0.1:3002}
+    access-token: ${QQ_ACCESS_TOKEN:}
+    qq-number: ${QQ_NUMBER:}
+    reply-mode: all
+    keywords: ""
+    system-prompt: ${QQ_SYSTEM_PROMPT:你是「澪音」，一个安静、克制、可靠的虚拟二次元助手。}
+  telegram:
+    enabled: false
+    bot-token: ${TELEGRAM_BOT_TOKEN:}
+    webhook-url: ${TELEGRAM_WEBHOOK_URL:}
+  discord:
+    enabled: false
+    bot-token: ${DISCORD_BOT_TOKEN:}
+
+# ==================== TTS 语音合成配置（CosyVoice 3）====================
+tts:
+  enabled: ${TTS_ENABLED:true}
+  api-url: ${TTS_API_URL:http://localhost:5001}
+  output-dir: ./voice-output
+  default-voice: default
+  max-text-length: 500
+
+# ==================== 聊天回顾配置 ====================
+recall:
+  max-history-tokens: 5000
+
+# ==================== 长记忆系统配置 ====================
+memory:
+  max-recent-messages: 20
+  summary-threshold: 30
+  decay-days: 7
+  max-context-tokens: 8000
+
+  lifecycle:
+    judge:
+      enabled: true
+      window-size: 30
+      min-importance: 30
+    merge:
+      enabled: true
+      similarity-threshold: 0.7
+    gc:
+      decay-cron: "0 0 3 * * ?"
+      collect-cron: "0 0 4 * * ?"
+      hard-delete-cron: "0 0 5 * * 0"
+      stale-days: 30
+      low-importance: 30
+      low-access-count: 3
+      low-weight: 20
+    decay-rates:
+      permanent: 1.0

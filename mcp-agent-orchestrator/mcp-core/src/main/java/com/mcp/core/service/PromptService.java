@@ -4,6 +4,7 @@ import com.mcp.common.util.ToolBlockStripper;
 import com.mcp.core.domain.prompt.PromptTemplate;
 import com.mcp.core.domain.prompt.PromptType;
 import com.mcp.core.entity.PromptTemplateEntity;
+import com.mcp.core.entity.PromptTemplateId;
 import com.mcp.core.mapper.PromptTemplateMapper;
 import com.mcp.core.repository.PromptTemplateRepository;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +18,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Prompt 模板领域服务
+ * Prompt 模板领域服务 — 支持 A/B 变体选择与版本管理。
  */
 @Service
 @RequiredArgsConstructor
@@ -25,19 +26,21 @@ public class PromptService {
 
     private final PromptTemplateRepository repository;
     private final PromptTemplateMapper mapper;
+    private final PromptABTestService promptABTestService;
 
     /**
-     * 获取指定名称的 Prompt 模板（缓存）
+     * 获取指定名称的 Prompt 模板（默认变体最新版本，缓存）
      */
     @Cacheable(value = "prompts", key = "#name")
     public Mono<PromptTemplate> getPrompt(String name) {
-        return Mono.fromCallable(() -> repository.findByName(name)
+        return Mono.fromCallable(() -> repository.findByName(name).stream()
+                .findFirst()
                 .map(mapper::toDomain)
                 .orElseThrow(() -> new RuntimeException("Prompt template not found: " + name)));
     }
 
     /**
-     * 根据类型获取最新 Prompt（缓存）
+     * 根据类型获取最新 Prompt（默认变体，缓存）
      */
     @Cacheable(value = "prompts", key = "'type_' + #type.name()")
     public Mono<PromptTemplate> getLatestPromptByType(PromptType type) {
@@ -45,6 +48,14 @@ public class PromptService {
                 .findFirst()
                 .map(mapper::toDomain)
                 .orElseThrow(() -> new RuntimeException("No prompt found for type: " + type)));
+    }
+
+    /**
+     * 根据类型获取 A/B 变体（加权随机选择，不缓存以支持动态切换）。
+     */
+    public Mono<PromptTemplate> getABVariantByType(PromptType type) {
+        return promptABTestService.selectVariant(type)
+                .switchIfEmpty(getLatestPromptByType(type));
     }
 
     /**
@@ -83,17 +94,27 @@ public class PromptService {
     /**
      * 获取所有活跃的 Prompt 模板
      */
-    public Mono<java.util.List<PromptTemplate>> getAllActivePrompts() {
+    public Mono<List<PromptTemplate>> getAllActivePrompts() {
         return Mono.fromCallable(() -> repository.findAllActiveTemplates().stream()
                 .map(mapper::toDomain)
-                .collect(java.util.stream.Collectors.toList()));
+                .collect(Collectors.toList()));
     }
 
     /**
-     * 删除指定名称的 Prompt 模板（清除缓存）
+     * 删除指定名称的 Prompt 模板（所有变体和版本）
      */
     @CacheEvict(value = "prompts", key = "#name")
     public void deletePrompt(String name) {
-        repository.deleteById(name);
+        List<PromptTemplateEntity> all = repository.findByName(name);
+        repository.deleteAll(all);
+    }
+
+    /**
+     * 删除指定名称和变体的 Prompt 模板
+     */
+    @CacheEvict(value = "prompts", key = "#name")
+    public void deletePromptVariant(String name, String variant) {
+        List<PromptTemplateEntity> all = repository.findByNameAndVariant(name, variant);
+        repository.deleteAll(all);
     }
 }

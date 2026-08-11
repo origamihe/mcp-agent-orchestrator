@@ -9,7 +9,6 @@ import com.mcp.tools.model.SearchResult;
 import com.mcp.tools.search.EvidenceItem;
 import com.mcp.tools.search.EvidencePool;
 import com.mcp.tools.search.SourceCredibility;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -24,8 +23,11 @@ import java.util.stream.Collectors;
 @Component
 public class ResearchSynthesizer {
 
-    @Setter
-    private LlmClient llmClient;
+    private final LlmClient llmClient;
+
+    public ResearchSynthesizer(LlmClient llmClient) {
+        this.llmClient = llmClient;
+    }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 

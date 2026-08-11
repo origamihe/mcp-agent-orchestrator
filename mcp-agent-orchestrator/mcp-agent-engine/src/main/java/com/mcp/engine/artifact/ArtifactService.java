@@ -7,8 +7,8 @@ import com.mcp.common.artifact.Artifact;
 import com.mcp.common.artifact.ArtifactType;
 import com.mcp.core.entity.ArtifactEntity;
 import com.mcp.core.repository.ArtifactRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,15 +27,24 @@ import java.util.stream.Collectors;
  * （不同于 Memory 的 create → merge → compress → forget）
  *
  * P0 增强：支持 title、mimeType、metadata、createdBy 字段。
+ *
+ * 召回策略切换：修改 @Qualifier 注解即可切换 KeywordRecallStrategy / EmbeddingRecallStrategy
+ *   - @Qualifier("keyword")   → KeywordRecallStrategy（默认）
+ *   - @Qualifier("embedding") → EmbeddingRecallStrategy（TF-IDF 向量化）
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ArtifactService {
 
     private final ArtifactRepository artifactRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ArtifactRecallStrategy recallStrategy;
+
+    public ArtifactService(ArtifactRepository artifactRepository,
+                           @Qualifier("keyword") ArtifactRecallStrategy recallStrategy) {
+        this.artifactRepository = artifactRepository;
+        this.recallStrategy = recallStrategy;
+    }
 
     private static final TypeReference<Map<String, Object>> METADATA_TYPE = new TypeReference<>() {};
 

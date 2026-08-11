@@ -9,5 +9,6 @@ public enum IntentType {
     SWITCH_GAME_MODE_ON,
     SWITCH_GAME_MODE_OFF,
     AMBIGUOUS,
-    RECALL_HISTORY
+    RECALL_HISTORY,
+    SEARCH
 }

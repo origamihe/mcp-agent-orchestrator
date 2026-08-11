@@ -3,6 +3,7 @@ package com.mcp.engine.orchestrator;
 import com.mcp.core.service.PromptService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 import java.util.Map;
 
@@ -21,14 +22,13 @@ public class OrchestratorPromptService {
         this.promptService = promptService;
     }
 
-    public String render(String templateName, Map<String, Object> variables) {
+    public Mono<String> render(String templateName, Map<String, Object> variables) {
         return promptService.renderPrompt(templateName, variables)
                 .onErrorResume(e -> {
                     log.debug("[OrchestratorPrompt] Template '{}' not found in DB, using default fallback", templateName);
                     String fallback = getDefaultFallback(templateName);
-                    return reactor.core.publisher.Mono.just(renderFallback(fallback, variables));
-                })
-                .block();
+                    return Mono.just(renderFallback(fallback, variables));
+                });
     }
 
     private String renderFallback(String template, Map<String, Object> variables) {

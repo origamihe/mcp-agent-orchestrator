@@ -29,6 +29,7 @@ import com.mcp.common.identity.GroupContext;
 import com.mcp.core.context.BuildContext;
 import com.mcp.core.context.PromptPolicy;
 import com.mcp.engine.memory.MemoryLifecycleOrchestrator;
+import com.mcp.engine.memory.GroupConversationContextAssembler;
 import com.mcp.llm.client.ChatMessage;
 import com.mcp.llm.client.MessageType;
 import java.util.List;
@@ -56,6 +57,7 @@ import com.mcp.common.workspace.Workspace;
 import com.mcp.common.artifact.Artifact;
 import com.mcp.common.artifact.ArtifactType;
 import com.mcp.common.artifact.ConversationContext;
+import com.mcp.common.artifact.GroupConversationContext;
 import com.mcp.engine.artifact.ArtifactService;
 import com.mcp.engine.artifact.ReferenceResolver;
 import com.mcp.tools.executor.ToolExecutor;
@@ -133,6 +135,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     private final PipelineRegistry pipelineRegistry;
 
     private final ToolPipelineExecutor pipelineExecutor;
+
+    private final GroupConversationContextAssembler groupConversationContextAssembler;
 
     private final Map<String, Agent> agents = new ConcurrentHashMap<>();
 
@@ -283,6 +287,27 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         log.info("[Orchestrator] ContextRequirement: {} | session={} | hasActiveDoc={} | isGame={} | source={} | decisionTime={}ms",
                 requirement, sessionId, workingCtx.hasActiveDocument(),
                 state.isGameMode(), workingCtx.getActiveContextSource(), decisionTime);
+
+        if (identity.groupId() != null) {
+            String threadId = ctx.getThreadId();
+            String groupConvCtx = groupConversationContextAssembler
+                    .assemble(identity.groupId(), identity.userId(), threadId, request)
+                    .toPromptText();
+            ctx = RequestContext.builder()
+                    .identity(identity)
+                    .userMessage(request)
+                    .modelConfigId(modelConfigId)
+                    .userProfile(ctx.getUserProfile())
+                    .groupContext(ctx.getGroupContext())
+                    .sessionState(state)
+                    .workingContext(workingCtx)
+                    .workspace(ctx.getWorkspace())
+                    .systemPrompt(ctx.getSystemPrompt())
+                    .groupConversationContext(groupConvCtx)
+                    .build();
+            log.info("[Orchestrator] GroupConversationContext assembled: groupId={}, threadId={}, chars={}",
+                    identity.groupId(), threadId, groupConvCtx.length());
+        }
 
         String currentTask = workingCtx.getCurrentTask();
         if (currentTask != null && currentTask.startsWith("SEARCH:")) {
@@ -914,15 +939,22 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 : promptService.getCoreSystemPrompt();
 
         return promptMono.flatMapMany(resolvedPrompt -> {
+            String groupConvCtx = identity.groupId() != null
+                    ? groupConversationContextAssembler
+                            .assemble(identity.groupId(), identity.userId(), null, request)
+                            .toPromptText()
+                    : null;
+
             BuildContext buildCtx = BuildContext.builder()
                     .baseSystemPrompt(resolvedPrompt)
                     .userMessage(request)
                     .userProfile(userProfile)
                     .groupContext(groupContext)
+                    .groupConversationContext(groupConvCtx)
                     .build();
 
             PromptAssemblyResult assembly = agentRuntime.assemble(buildCtx, PromptPolicy.CHAT);
-            String fullPrompt = assembly.toFullPrompt("", "", "", PromptEnricher.EnrichmentResult.empty());
+            String fullPrompt = assembly.toFullPrompt("", "", "", "", PromptEnricher.EnrichmentResult.empty());
 
             if (modelConfigId != null && !modelConfigId.isEmpty()) {
                 return agentRuntime.runStreamWithConfig(modelConfigId, fullPrompt, request);
@@ -1946,11 +1978,12 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             .groupContext(ctx.getGroupContext())
                             .state(ctx.getSessionState())
                             .workingContext(workingCtx)
+                            .groupConversationContext(ctx.getGroupConversationContext())
                             .build();
 
                     PromptAssemblyResult assembly = agentRuntime.assemble(buildCtx, PromptPolicy.CHAT_LIGHT);
                     String fullPrompt = assembly.toFullPrompt(memoryContext,
-                            "", "", PromptEnricher.EnrichmentResult.empty());
+                            "", "", "", PromptEnricher.EnrichmentResult.empty());
 
                     String userPrompt = buildUserPrompt(request, "");
                     if (modelConfigId != null && !modelConfigId.isEmpty()) {
@@ -2078,12 +2111,13 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     .groupContext(ctx.getGroupContext())
                     .state(ctx.getSessionState())
                     .workingContext(workingCtx)
+                    .groupConversationContext(ctx.getGroupConversationContext())
                     .extension("historyContext", historyContext)
                     .build();
 
             PromptAssemblyResult assembly = agentRuntime.assemble(buildCtx, PromptPolicy.CHAT_LIGHT);
             String fullPrompt = assembly.toFullPrompt(memoryContext,
-                    "", "", PromptEnricher.EnrichmentResult.empty());
+                    "", "", "", PromptEnricher.EnrichmentResult.empty());
             String userPrompt = buildUserPrompt(request, historyContext);
 
             if (modelConfigId != null && !modelConfigId.isEmpty()) {
@@ -2167,6 +2201,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     .groupContext(ctx.getGroupContext())
                     .state(ctx.getSessionState())
                     .workingContext(workingCtx)
+                    .groupConversationContext(ctx.getGroupConversationContext())
                     .extension("historyContext", historyContext)
                     .extension("artifactContext", artifactContext)
                     .build();
@@ -2178,6 +2213,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
             String fullPrompt = assembly.toFullPrompt(memoryContext,
                     artifactContext,
+                    "",
                     isGame ? historyContext : "",
                     PromptEnricher.EnrichmentResult.empty());
             String userPrompt = isGame
@@ -2291,12 +2327,13 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     .groupContext(ctx.getGroupContext())
                     .state(ctx.getSessionState())
                     .workingContext(workingCtx)
+                    .groupConversationContext(ctx.getGroupConversationContext())
                     .extension("artifactContext", artifactContext)
                     .build();
 
             PromptAssemblyResult assembly = agentRuntime.assemble(buildCtx, PromptPolicy.CHAT);
             String fullPrompt = assembly.toFullPrompt(memoryContext,
-                    artifactContext, historyContext, PromptEnricher.EnrichmentResult.empty());
+                    artifactContext, "", historyContext, PromptEnricher.EnrichmentResult.empty());
             String userPrompt = buildUserPrompt(request, historyContext);
 
             int systemChars = assembly.assembledPrompt() != null ? assembly.assembledPrompt().length() : 0;

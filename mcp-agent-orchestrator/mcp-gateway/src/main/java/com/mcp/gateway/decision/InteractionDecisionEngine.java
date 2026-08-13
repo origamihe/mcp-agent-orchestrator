@@ -4,7 +4,7 @@ import com.mcp.common.channel.ChannelMessage;
 import com.mcp.common.identity.UserProfile;
 import com.mcp.common.identity.UserProfileService;
 import com.mcp.engine.conversation.ConversationTracker;
-import com.mcp.engine.task.TaskScheduler;
+import com.mcp.engine.task.AgentTaskScheduler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -25,7 +25,7 @@ import org.springframework.stereotype.Component;
 public class InteractionDecisionEngine {
 
     private final ConversationTracker conversationTracker;
-    private final TaskScheduler taskScheduler;
+    private final AgentTaskScheduler taskScheduler;
     private final UserProfileService userProfileService;
 
     private static final long DEBOUNCE_WINDOW_MS = 800;

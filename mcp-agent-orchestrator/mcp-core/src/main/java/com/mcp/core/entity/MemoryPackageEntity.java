@@ -39,6 +39,9 @@ public class MemoryPackageEntity {
     @Column(length = 64)
     private String groupId;
 
+    @Column(length = 128)
+    private String messageId;
+
     @Enumerated(EnumType.STRING)
     @Column(length = 30, nullable = false)
     private MemoryCategory category;

@@ -22,6 +22,7 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("Tool Pipeline — 工具管道编排")
+@SuppressWarnings("unchecked")
 class ToolPipelineTest {
 
     @Mock

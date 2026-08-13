@@ -79,7 +79,7 @@ class ChannelErrorHandlerTest {
         void gatewayTimeoutToGracefulMessage() {
             ChannelReply reply = handler.buildFallbackReply(privateMsg,
                     new RuntimeException("504 Gateway Timeout"));
-            assertThat(reply.getContent()).isEqualTo("处理超时，请稍候再试。");
+            assertThat(reply.getContent()).isEqualTo("上游服务超时，请稍后重试。");
         }
 
         @Test

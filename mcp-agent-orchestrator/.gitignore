@@ -51,10 +51,10 @@ generated/
 voice-output/
 
 ### Sensitive Config (exclude real configs, keep .sample templates) ###
-application.yml
-application.properties
-!application.yml.sample
-!application.properties.sample
+**/application.yml
+**/application.properties
+!**/application.yml.sample
+!**/application.properties.sample
 
 ### Environment & Secrets ###
 .env

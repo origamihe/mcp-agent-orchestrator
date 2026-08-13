@@ -19,7 +19,7 @@ import com.mcp.engine.workspace.WorkspaceService;
 import com.mcp.engine.world.WorldStateService;
 import com.mcp.engine.memory.GroupMemoryService;
 import com.mcp.engine.task.AgentTask;
-import com.mcp.engine.task.TaskScheduler;
+import com.mcp.engine.task.AgentTaskScheduler;
 import com.mcp.gateway.decision.InteractionDecisionEngine;
 import com.mcp.gateway.handler.ChannelErrorHandler;
 import com.mcp.gateway.ws.WebSocketSessionManager;
@@ -53,7 +53,7 @@ public class ChannelOrchestrator {
     private final WorkspaceService workspaceService;
     private final GroupMemoryService groupMemoryService;
     private final InteractionDecisionEngine decisionEngine;
-    private final TaskScheduler taskScheduler;
+    private final AgentTaskScheduler taskScheduler;
     private final ChannelErrorHandler channelErrorHandler;
     private final ConcurrentHashMap<String, WorkingContext> workingContexts = new ConcurrentHashMap<>();
 
@@ -114,7 +114,7 @@ public class ChannelOrchestrator {
                         userProfileService.getUserProfile(msg.getSenderId()).getRole(),
                         userMessage, decision.threadId(),
                         decision.priority(), decision.reason());
-                TaskScheduler.ScheduleResult result = taskScheduler.submit(task);
+                AgentTaskScheduler.ScheduleResult result = taskScheduler.submit(task);
                 log.info("[Channel:{}] Decision=QUEUE: {} group={} user={} taskId={} result={}",
                         channelType, decision.reason(), msg.getChatId(), msg.getSenderId(),
                         task.getTaskId(), result);
@@ -127,7 +127,7 @@ public class ChannelOrchestrator {
                         userProfileService.getUserProfile(msg.getSenderId()).getRole(),
                         userMessage, decision.threadId(),
                         decision.priority(), decision.reason());
-                TaskScheduler.ScheduleResult result = taskScheduler.submit(task);
+                AgentTaskScheduler.ScheduleResult result = taskScheduler.submit(task);
                 log.info("[Channel:{}] Decision=INTERRUPT: {} group={} user={} taskId={} result={}",
                         channelType, decision.reason(), msg.getChatId(), msg.getSenderId(),
                         task.getTaskId(), result);
@@ -217,6 +217,7 @@ public class ChannelOrchestrator {
                 .workspace(workspace)
                 .userMessage(userMessage)
                 .systemPrompt(systemPrompt)
+                .threadId(agentTask != null ? agentTask.getThreadId() : null)
                 .build();
 
         return agentFacade.call(ctx)
@@ -520,6 +521,7 @@ public class ChannelOrchestrator {
                 .workspace(workspace)
                 .userMessage(userMessage)
                 .systemPrompt(systemPrompt)
+                .threadId(agentTask != null ? agentTask.getThreadId() : null)
                 .build();
 
         return agentFacade.call(ctx)
@@ -601,6 +603,7 @@ public class ChannelOrchestrator {
                 .workspace(workspace)
                 .userMessage(topic)
                 .systemPrompt(systemPrompt)
+                .threadId(agentTask != null ? agentTask.getThreadId() : null)
                 .build();
 
         return agentFacade.call(ctx)
@@ -700,6 +703,7 @@ public class ChannelOrchestrator {
                 .workspace(workspace)
                 .userMessage(pptPrompt)
                 .systemPrompt(adapter.getSystemPrompt())
+                .threadId(agentTask != null ? agentTask.getThreadId() : null)
                 .build();
 
         return agentFacade.call(ctx)

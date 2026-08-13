@@ -10,13 +10,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import com.mcp.core.service.PromptABTestService;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.test.StepVerifier;
 
-import java.util.Optional;
+import java.util.List;
 
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,11 +29,14 @@ class PromptServiceTest {
     @Mock
     private PromptTemplateMapper mapper;
 
+    @Mock
+    private PromptABTestService promptABTestService;
+
     private PromptService promptService;
 
     @BeforeEach
     void setUp() {
-        promptService = new PromptService(repository, mapper);
+        promptService = new PromptService(repository, mapper, promptABTestService);
     }
 
     @Nested
@@ -46,14 +49,17 @@ class PromptServiceTest {
             PromptTemplateEntity entity = new PromptTemplateEntity();
             PromptTemplate template = new PromptTemplate(
                     "core_system",
+                    "default",
                     PromptType.SYSTEM,
                     "你是一个助手。\n如果需要记忆，请输出：\n[Internal_Memory_Storage]\n{\"key\":\"nickname\",\"value\":\"$value\"}\n请友好地回复用户。",
                     "核心系统Prompt",
                     1,
+                    1.0,
+                    true,
                     java.time.LocalDateTime.now()
             );
 
-            when(repository.findByName("core_system")).thenReturn(Optional.of(entity));
+            when(repository.findByName("core_system")).thenReturn(List.of(entity));
             when(mapper.toDomain(entity)).thenReturn(template);
 
             StepVerifier.create(promptService.getCoreSystemPrompt())
@@ -72,14 +78,17 @@ class PromptServiceTest {
             PromptTemplateEntity entity = new PromptTemplateEntity();
             PromptTemplate template = new PromptTemplate(
                     "core_system",
+                    "default",
                     PromptType.SYSTEM,
                     "你是一个专业、友好、高效的 AI Agent 助手。",
                     "核心系统Prompt",
                     1,
+                    1.0,
+                    true,
                     java.time.LocalDateTime.now()
             );
 
-            when(repository.findByName("core_system")).thenReturn(Optional.of(entity));
+            when(repository.findByName("core_system")).thenReturn(List.of(entity));
             when(mapper.toDomain(entity)).thenReturn(template);
 
             StepVerifier.create(promptService.getCoreSystemPrompt())
@@ -93,24 +102,27 @@ class PromptServiceTest {
             PromptTemplateEntity entity = new PromptTemplateEntity();
             PromptTemplate template = new PromptTemplate(
                     "core_system",
+                    "default",
                     PromptType.SYSTEM,
                     """
                             你是一个助手。
-                            
+
                             如果需要记忆用户信息，请输出以下格式：
                             [Internal_Memory_Storage]
                             {
                               "key": "UserNickname",
                               "value": "用户昵称"
                             }
-                            
+
                             回复要简洁友好。""",
                     "核心系统Prompt",
                     1,
+                    1.0,
+                    true,
                     java.time.LocalDateTime.now()
             );
 
-            when(repository.findByName("core_system")).thenReturn(Optional.of(entity));
+            when(repository.findByName("core_system")).thenReturn(List.of(entity));
             when(mapper.toDomain(entity)).thenReturn(template);
 
             StepVerifier.create(promptService.getCoreSystemPrompt())
@@ -126,7 +138,7 @@ class PromptServiceTest {
         @Test
         @DisplayName("DB 中不存在 core_system 时应使用干净的默认值")
         void shouldUseCleanDefaultWhenNotFound() {
-            when(repository.findByName("core_system")).thenReturn(Optional.empty());
+            when(repository.findByName("core_system")).thenReturn(List.of());
 
             StepVerifier.create(promptService.getCoreSystemPrompt())
                     .expectNextMatches(result ->

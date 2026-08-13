@@ -163,4 +163,18 @@ public interface MemoryPackageRepository extends JpaRepository<MemoryPackageEnti
             @Param("userId") String userId,
             @Param("groupId") String groupId);
 
+    /**
+     * 按群ID和时间倒序查找群聊记忆（专用于 Recent Group Context）。
+     */
+    @Query("SELECT m FROM MemoryPackageEntity m WHERE m.groupId = :groupId AND m.scope = 'GROUP' AND m.isActive = true ORDER BY m.createdAt DESC")
+    List<MemoryPackageEntity> findGroupMessagesByCreatedAtDesc(@Param("groupId") String groupId);
+
+    /**
+     * 按群ID和 messageId 列表批量查找群聊记忆（用于 Thread 消息内容回填）。
+     */
+    @Query("SELECT m FROM MemoryPackageEntity m WHERE m.groupId = :groupId AND m.messageId IN :messageIds ORDER BY m.createdAt ASC")
+    List<MemoryPackageEntity> findByGroupIdAndMessageIdIn(
+            @Param("groupId") String groupId,
+            @Param("messageIds") List<String> messageIds);
+
 }

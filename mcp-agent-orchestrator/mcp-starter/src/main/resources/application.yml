@@ -129,7 +129,7 @@ channel:
     enabled: true
     onebot-url: http://127.0.0.1:3002
     access-token: "agent123"
-    qq-number: ""
+    qq-number: "3559443515"
     reply-mode: all
     keywords: ""
     system-prompt: "你是「澪音」，一个安静、克制、可靠的虚拟二次元助手。

@@ -118,6 +118,25 @@ public class ConversationTracker {
     }
 
     /**
+     * 获取指定线程的 messageId 列表。
+     * 返回副本以避免外部修改内部状态。
+     */
+    public List<String> getThreadMessageIds(String threadId) {
+        ConversationThread thread = threads.get(threadId);
+        if (thread == null) return List.of();
+        return thread.getMessageIds();
+    }
+
+    /**
+     * 获取指定线程的创建者 userId。
+     */
+    public String getThreadCreatorUserId(String threadId) {
+        ConversationThread thread = threads.get(threadId);
+        if (thread == null) return null;
+        return thread.getCreatorUserId();
+    }
+
+    /**
      * 对话线程。
      */
     public static class ConversationThread {

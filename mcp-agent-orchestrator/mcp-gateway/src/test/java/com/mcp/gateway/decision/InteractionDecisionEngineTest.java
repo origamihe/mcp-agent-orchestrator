@@ -6,7 +6,7 @@ import com.mcp.common.identity.UserProfileService;
 import com.mcp.common.identity.UserRole;
 import com.mcp.engine.conversation.ConversationTracker;
 import com.mcp.engine.task.AgentTask;
-import com.mcp.engine.task.TaskScheduler;
+import com.mcp.engine.task.AgentTaskScheduler;
 import com.mcp.gateway.decision.InteractionDecisionEngine.Decision;
 import com.mcp.gateway.decision.InteractionDecisionEngine.DecisionType;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,7 +31,7 @@ class InteractionDecisionEngineTest {
 
     private ConversationTracker conversationTracker;
     @Mock
-    private TaskScheduler taskScheduler;
+    private AgentTaskScheduler taskScheduler;
     @Mock
     private UserProfileService userProfileService;
 

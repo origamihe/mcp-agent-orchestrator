@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
@@ -24,19 +25,21 @@ public class ChannelErrorHandler {
 
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(120);
 
-    private static final Map<String, String> ERROR_PATTERNS = Map.ofEntries(
-            Map.entry("429", "当前请求过多，请稍等片刻再试。"),
-            Map.entry("quota", "当前 API 配额已用尽，请稍后再试。"),
-            Map.entry("timed out", "处理超时，请稍候再试。"),
-            Map.entry("timeout", "处理超时，请稍候再试。"),
-            Map.entry("time out", "处理超时，请稍候再试。"),
-            Map.entry("connect", "服务暂时不可用，请稍后重试。"),
-            Map.entry("refused", "服务暂时不可用，请稍后重试。"),
-            Map.entry("reset", "连接意外中断，请重试。"),
-            Map.entry("502", "上游服务异常，请稍后重试。"),
-            Map.entry("503", "服务暂时过载，请稍后重试。"),
-            Map.entry("504", "上游服务超时，请稍后重试。")
-    );
+    private static final Map<String, String> ERROR_PATTERNS = new LinkedHashMap<>();
+
+    static {
+        ERROR_PATTERNS.put("504", "上游服务超时，请稍后重试。");
+        ERROR_PATTERNS.put("502", "上游服务异常，请稍后重试。");
+        ERROR_PATTERNS.put("503", "服务暂时过载，请稍后重试。");
+        ERROR_PATTERNS.put("429", "当前请求过多，请稍等片刻再试。");
+        ERROR_PATTERNS.put("quota", "当前 API 配额已用尽，请稍后再试。");
+        ERROR_PATTERNS.put("timed out", "处理超时，请稍候再试。");
+        ERROR_PATTERNS.put("timeout", "处理超时，请稍候再试。");
+        ERROR_PATTERNS.put("time out", "处理超时，请稍候再试。");
+        ERROR_PATTERNS.put("reset", "连接意外中断，请重试。");
+        ERROR_PATTERNS.put("connect", "服务暂时不可用，请稍后重试。");
+        ERROR_PATTERNS.put("refused", "服务暂时不可用，请稍后重试。");
+    }
 
     private static final String GENERIC_FALLBACK = "处理请求时遇到问题，请稍后再试。";
 

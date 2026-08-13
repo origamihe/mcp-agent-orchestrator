@@ -41,6 +41,7 @@ class BenchmarkReplay {
             .build();
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
+    @SuppressWarnings("unchecked")
     private String callOllama(String systemPrompt, String userPrompt) throws IOException, InterruptedException {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", MODEL_NAME);

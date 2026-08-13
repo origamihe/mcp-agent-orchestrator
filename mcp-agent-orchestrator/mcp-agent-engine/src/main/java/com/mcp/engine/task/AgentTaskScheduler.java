@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentLinkedDeque;
  */
 @Slf4j
 @Component
-public class TaskScheduler {
+public class AgentTaskScheduler {
 
     private static final int MAX_QUEUE_SIZE = 20;
     private static final long DEBOUNCE_WINDOW_MS = 800;  // 消息聚合窗口

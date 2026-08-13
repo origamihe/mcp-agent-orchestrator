@@ -31,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Tag("llm")
 @DisplayName("Real Agent Benchmark - 真实 LLM 基准测试")
+@SuppressWarnings("unchecked")
 class RealAgentBenchmark {
 
     private static final String OLLAMA_BASE_URL = System.getProperty("ollama.base.url", "http://localhost:11434");

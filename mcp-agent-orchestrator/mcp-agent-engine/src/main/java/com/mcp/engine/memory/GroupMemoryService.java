@@ -52,6 +52,7 @@ public class GroupMemoryService {
             entity.setSessionId(msg.getPlatformSessionId());
             entity.setUserId(msg.getSenderId());
             entity.setGroupId(msg.getChatId());
+            entity.setMessageId(msg.getMessageId());
             entity.setContent(msg.getContent() != null ? msg.getContent() : "");
             entity.setCategory(MemoryCategory.SUMMARY);
             entity.setScope(MemoryScope.GROUP);
@@ -79,22 +80,39 @@ public class GroupMemoryService {
 
     /**
      * 获取群聊最近 N 条消息（按入库时间倒序）。
+     * 原 getRecentMessages 按 weight 排序，无法保证时间顺序，已废弃。
      */
     public List<MemoryPackageEntity> getRecentMessages(String groupId, int limit) {
-        List<MemoryPackageEntity> all = memoryPackageRepository
-                .findByGroupIdOrderByWeightDesc(groupId);
-        int n = limit > 0 ? limit : DEFAULT_RECENT_LIMIT;
-        return all.stream()
-                .filter(m -> m.getScope() == MemoryScope.GROUP)
-                .limit(n)
-                .toList();
+        return getRecentMessagesByCreatedAt(groupId, limit);
     }
 
     /**
      * 获取群聊最近 N 条消息（默认 50 条）。
      */
     public List<MemoryPackageEntity> getRecentMessages(String groupId) {
-        return getRecentMessages(groupId, DEFAULT_RECENT_LIMIT);
+        return getRecentMessagesByCreatedAt(groupId, DEFAULT_RECENT_LIMIT);
+    }
+
+    /**
+     * 获取群聊最近 N 条消息，严格按 createdAt 倒序。
+     * 专用于 Recent Group Context 注入，确保时间连续性。
+     */
+    public List<MemoryPackageEntity> getRecentMessagesByCreatedAt(String groupId, int limit) {
+        List<MemoryPackageEntity> all = memoryPackageRepository
+                .findGroupMessagesByCreatedAtDesc(groupId);
+        int n = limit > 0 ? limit : DEFAULT_RECENT_LIMIT;
+        return all.stream()
+                .limit(n)
+                .toList();
+    }
+
+    /**
+     * 根据 messageId 列表批量查询群聊消息内容。
+     * 用于 ConversationTracker 的 Thread 消息内容回填。
+     */
+    public List<MemoryPackageEntity> findByMessageIds(String groupId, List<String> messageIds) {
+        if (messageIds == null || messageIds.isEmpty()) return List.of();
+        return memoryPackageRepository.findByGroupIdAndMessageIdIn(groupId, messageIds);
     }
 
     /**

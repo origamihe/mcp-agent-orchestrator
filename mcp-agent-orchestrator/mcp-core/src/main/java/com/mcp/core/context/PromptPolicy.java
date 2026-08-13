@@ -26,12 +26,12 @@ public enum PromptPolicy {
     CHAT_LIGHT(Set.of(
             "MODE_LOCK",
             "IDENTITY", "CHARACTER",
-            "MEMORY")),
+            "GROUP_CONVERSATION", "MEMORY")),
 
     CHAT(Set.of(
             "MODE_LOCK", "WORLD_STATE",
             "IDENTITY", "CHARACTER", "RELATIONSHIP",
-            "GROUP_CONTEXT", "USER_PROFILE",
+            "GROUP_CONTEXT", "GROUP_CONVERSATION", "USER_PROFILE",
             "WORKSPACE", "HOST_CONTEXT", "MEMORY", "ARTIFACT", "PLAN", "MODE_HINT")),
 
     CODE(Set.of(

@@ -46,4 +46,10 @@ public class RequestContext {
 
     /** 指定的模型配置 ID（可为 null，使用默认） */
     private final String modelConfigId;
+
+    /** 群聊对话上下文（由 GroupConversationContextAssembler 组装，群聊时非空） */
+    private final String groupConversationContext;
+
+    /** 群聊对话线程ID（由 InteractionDecisionEngine 分配，用于 Current Thread 上下文） */
+    private final String threadId;
 }

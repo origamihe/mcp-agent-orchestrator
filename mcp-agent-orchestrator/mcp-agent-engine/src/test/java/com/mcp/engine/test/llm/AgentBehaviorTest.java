@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Tag("llm")
 @DisplayName("Agent Behavior Tests - LLM 行为验证")
+@SuppressWarnings("unchecked")
 class AgentBehaviorTest {
 
     private static final String OLLAMA_BASE_URL = System.getProperty("ollama.base.url", "http://localhost:11434");

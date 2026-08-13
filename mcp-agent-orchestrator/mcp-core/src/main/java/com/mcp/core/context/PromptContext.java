@@ -46,6 +46,9 @@ public class PromptContext {
     /** 群上下文（群聊时的群设定） */
     private String groupContext;
 
+    /** 群聊对话上下文（Current Thread + Recent Group Context + Relevant Group Memory） */
+    private String groupConversation;
+
     /** 用户身份（角色、关系、权限） */
     private String userProfile;
 
@@ -93,6 +96,7 @@ public class PromptContext {
         addLayer(layers, "RELATIONSHIP", 24, relationship);
         addLayer(layers, "PERSONA", 28, persona);
         addLayer(layers, "GROUP_CONTEXT", 30, groupContext);
+        addLayer(layers, "GROUP_CONVERSATION", 35, groupConversation);
         addLayer(layers, "USER_PROFILE", 40, userProfile);
         addLayer(layers, "WORKSPACE", 50, workspace);
         addLayer(layers, "HOST_CONTEXT", 55, hostContext);

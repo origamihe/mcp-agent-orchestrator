@@ -30,6 +30,7 @@ public class BuildContext {
     private final WorkingContext workingContext;
     private final String workspacePrompt;
     private final String hostContextPrompt;
+    private final String groupConversationContext;
     private final Map<String, Object> extensions;
 
     private BuildContext(Builder builder) {
@@ -43,6 +44,7 @@ public class BuildContext {
         this.workingContext = builder.workingContext;
         this.workspacePrompt = builder.workspacePrompt;
         this.hostContextPrompt = builder.hostContextPrompt;
+        this.groupConversationContext = builder.groupConversationContext;
         this.extensions = builder.extensions;
     }
 
@@ -56,6 +58,7 @@ public class BuildContext {
     public WorkingContext workingContext() { return workingContext; }
     public String workspacePrompt() { return workspacePrompt; }
     public String hostContextPrompt() { return hostContextPrompt; }
+    public String groupConversationContext() { return groupConversationContext; }
     public Map<String, Object> extensions() { return extensions; }
 
     public static Builder builder() { return new Builder(); }
@@ -71,6 +74,7 @@ public class BuildContext {
         private WorkingContext workingContext;
         private String workspacePrompt;
         private String hostContextPrompt;
+        private String groupConversationContext;
         private Map<String, Object> extensions = Collections.emptyMap();
 
         public Builder baseSystemPrompt(String v) { this.baseSystemPrompt = v; return this; }
@@ -83,6 +87,7 @@ public class BuildContext {
         public Builder workingContext(WorkingContext v) { this.workingContext = v; return this; }
         public Builder workspacePrompt(String v) { this.workspacePrompt = v; return this; }
         public Builder hostContextPrompt(String v) { this.hostContextPrompt = v; return this; }
+        public Builder groupConversationContext(String v) { this.groupConversationContext = v; return this; }
         public Builder extensions(Map<String, Object> v) { this.extensions = v; return this; }
         public Builder extension(String key, Object value) {
             if (this.extensions.isEmpty()) {

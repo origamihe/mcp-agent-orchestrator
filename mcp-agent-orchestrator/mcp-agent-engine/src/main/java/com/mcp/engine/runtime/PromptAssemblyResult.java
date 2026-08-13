@@ -33,9 +33,30 @@ public record PromptAssemblyResult(
      * 优先保留核心 System Prompt 和 enrichment 的完整性。
      *
      * @param historyContext 对话历史摘要，在 GAME 模式进入 System Prompt 以提升上下文权重
+     * @deprecated 请使用 {@link #toFullPrompt(String, String, String, String, PromptEnricher.EnrichmentResult)}
      */
+    @Deprecated
     public String toFullPrompt(String memoryContext, String artifactContext,
                                String historyContext,
+                               PromptEnricher.EnrichmentResult enrichment) {
+        return toFullPrompt(memoryContext, artifactContext, "", historyContext, enrichment);
+    }
+
+    /**
+     * 将 memoryContext、artifactContext、groupConversationContext、historyContext 和 enrichment
+     * 合并到 assembledPrompt 中，返回最终的 fullPrompt。
+     *
+     * 追加优先级（从高到低）：
+     * assembledPrompt > groupConversationContext > enrichment > history > memory > artifact
+     *
+     * 当总长度超过 {@link #MAX_TOTAL_PROMPT_LENGTH} 时，按优先级截断非核心上下文，
+     * 优先保留核心 System Prompt 和群聊上下文的完整性。
+     *
+     * @param groupConversationContext 群聊对话上下文，优先级仅次于 assembledPrompt
+     * @param historyContext 对话历史摘要，在 GAME 模式进入 System Prompt 以提升上下文权重
+     */
+    public String toFullPrompt(String memoryContext, String artifactContext,
+                               String groupConversationContext, String historyContext,
                                PromptEnricher.EnrichmentResult enrichment) {
         String result = assembledPrompt;
 
@@ -43,21 +64,34 @@ public record PromptAssemblyResult(
         int memLen = memoryContext != null ? memoryContext.length() : 0;
         int artLen = artifactContext != null ? artifactContext.length() : 0;
         int histLen = historyContext != null ? historyContext.length() : 0;
+        int groupLen = groupConversationContext != null ? groupConversationContext.length() : 0;
         int enrichLen = (enrichment != null && !enrichment.isEmpty()) ? enrichment.promptText().length() : 0;
 
-        int estimatedTotal = coreLength + memLen + artLen + histLen + enrichLen;
+        int estimatedTotal = coreLength + memLen + artLen + histLen + groupLen + enrichLen;
 
         if (estimatedTotal <= MAX_TOTAL_PROMPT_LENGTH) {
-            return appendAll(result, memoryContext, artifactContext, historyContext, enrichment);
+            return appendAll(result, memoryContext, artifactContext, groupConversationContext, historyContext, enrichment);
         }
 
         log.info("[PromptAssembly] Total prompt ({}) exceeds limit ({}), applying truncation: "
-                + "core={}, mem={}, art={}, hist={}, enrich={}",
-                estimatedTotal, MAX_TOTAL_PROMPT_LENGTH, coreLength, memLen, artLen, histLen, enrichLen);
+                + "core={}, group={}, mem={}, art={}, hist={}, enrich={}",
+                estimatedTotal, MAX_TOTAL_PROMPT_LENGTH, coreLength, groupLen, memLen, artLen, histLen, enrichLen);
 
         int remainingBudget = MAX_TOTAL_PROMPT_LENGTH - coreLength;
 
-        if (enrichment != null && !enrichment.isEmpty()) {
+        // 群聊上下文优先级最高（仅次于 assembledPrompt）
+        if (remainingBudget > 0 && groupConversationContext != null && !groupConversationContext.isEmpty()) {
+            if (groupConversationContext.length() <= remainingBudget) {
+                result = result + "\n\n" + groupConversationContext;
+                remainingBudget -= groupConversationContext.length();
+            } else {
+                String truncated = groupConversationContext.substring(0, remainingBudget);
+                result = result + "\n\n" + truncated;
+                remainingBudget = 0;
+            }
+        }
+
+        if (remainingBudget > 0 && enrichment != null && !enrichment.isEmpty()) {
             String enrichText = enrichment.promptText();
             if (enrichText.length() <= remainingBudget) {
                 result = result + "\n\n" + enrichText;
@@ -104,7 +138,11 @@ public record PromptAssemblyResult(
     }
 
     private String appendAll(String result, String memoryContext, String artifactContext,
-                             String historyContext, PromptEnricher.EnrichmentResult enrichment) {
+                             String groupConversationContext, String historyContext,
+                             PromptEnricher.EnrichmentResult enrichment) {
+        if (groupConversationContext != null && !groupConversationContext.isEmpty()) {
+            result = result + "\n\n" + groupConversationContext;
+        }
         if (memoryContext != null && !memoryContext.isEmpty()) {
             result = result + "\n\n" + memoryContext;
         }

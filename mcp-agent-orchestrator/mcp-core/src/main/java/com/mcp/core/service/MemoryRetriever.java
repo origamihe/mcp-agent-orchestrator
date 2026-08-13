@@ -66,6 +66,7 @@ public class MemoryRetriever {
         List<MemoryPackageEntity> episodeMemories = new ArrayList<>();
         for (MemoryPackageEntity m : allActive) {
             if (m.getImportance() < 5) continue;
+            if (m.getScope() != MemoryScope.USER) continue;
             if (ALWAYS_INJECT_TYPES.contains(m.getMemoryType())) {
                 alwaysInjectMemories.add(m);
             } else if (EPISODE_TYPES.contains(m.getMemoryType())) {
@@ -212,6 +213,44 @@ public class MemoryRetriever {
 
     private int estimateTokens(String text) {
         return text == null ? 0 : text.length() / 4;
+    }
+
+    /**
+     * 群聊上下文语义检索 — 专门针对群聊 EVENT 记忆进行语义相关性匹配。
+     * 与 retrieveWithTiers 不同，此方法仅检索 GROUP scope 的 EVENT 类型记忆，
+     * 不包含 USER scope 的 PREFERENCE/PROFILE 等个人记忆。
+     *
+     * @param userId   用户ID（用于过滤同用户的群聊记忆）
+     * @param groupId  群ID
+     * @param userQuery 当前用户查询
+     * @param topK     返回条数上限
+     * @return 按相关性排序的群聊记忆列表
+     */
+    public List<MemoryPackageEntity> retrieveForGroupContext(String userId, String groupId,
+                                                              String userQuery, int topK) {
+        List<MemoryPackageEntity> allActive = repository.findAllActiveByUserIdOrGroupId(userId, groupId);
+
+        List<MemoryPackageEntity> groupMemories = allActive.stream()
+                .filter(m -> m.getScope() == MemoryScope.GROUP
+                        && m.getMemoryType() == MemoryType.EVENT)
+                .toList();
+
+        if (groupMemories.isEmpty()) {
+            log.debug("[MemoryRetriever] retrieveForGroupContext: no group memories found groupId={}", groupId);
+            return List.of();
+        }
+
+        return groupMemories.stream()
+                .map(m -> {
+                    double relevance = computeRelevance(m, userQuery);
+                    double score = m.getImportance() * 0.3 + relevance * 30.0;
+                    return new ScoredMemoryEntity(m, score, deriveTier(score));
+                })
+                .sorted(Comparator.comparingDouble(ScoredMemoryEntity::score).reversed())
+                .filter(sm -> sm.tier != RetrievalTier.ARCHIVED)
+                .limit(topK)
+                .map(ScoredMemoryEntity::entity)
+                .toList();
     }
 
     private record ScoredMemoryEntity(MemoryPackageEntity entity, double score, RetrievalTier tier) {}

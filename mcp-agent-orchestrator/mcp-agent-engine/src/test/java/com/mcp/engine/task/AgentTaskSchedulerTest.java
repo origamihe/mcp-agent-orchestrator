@@ -1,7 +1,7 @@
 package com.mcp.engine.task;
 
 import com.mcp.common.identity.UserRole;
-import com.mcp.engine.task.TaskScheduler.ScheduleResult;
+import com.mcp.engine.task.AgentTaskScheduler.ScheduleResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -13,14 +13,14 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@DisplayName("TaskScheduler - 任务调度器")
-class TaskSchedulerTest {
+@DisplayName("AgentTaskScheduler - 任务调度器")
+class AgentTaskSchedulerTest {
 
-    private TaskScheduler scheduler;
+    private AgentTaskScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new TaskScheduler();
+        scheduler = new AgentTaskScheduler();
     }
 
     // ==================== 优先级计算 ====================

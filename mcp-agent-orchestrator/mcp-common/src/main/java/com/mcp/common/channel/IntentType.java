@@ -1,6 +1,7 @@
 package com.mcp.common.channel;
 
 public enum IntentType {
+    IGNORE,
     CHAT,
     GENERATE_DOCX,
     GENERATE_PPT,

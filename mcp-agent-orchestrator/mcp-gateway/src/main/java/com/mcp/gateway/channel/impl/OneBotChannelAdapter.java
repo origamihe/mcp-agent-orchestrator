@@ -61,6 +61,7 @@ public class OneBotChannelAdapter implements ChannelAdapter {
     /**
      * OneBot v11 消息 → 通用 ChannelMessage。
      * 填充 HostContext 以支持 QQ Host 的身份感知和工作空间关联。
+     * 解析 CQ:at 信息以支持 @Agent 检测和多用户调度。
      */
     @Override
     public ChannelMessage normalize(Object rawPayload) {
@@ -74,7 +75,12 @@ public class OneBotChannelAdapter implements ChannelAdapter {
         String groupId = "group".equals(messageType) && payload.has("group_id")
                 ? payload.get("group_id").asText() : null;
 
-        String content = extractText(payload);
+        ParsedMessage parsed = parseMessage(payload);
+        String content = parsed.text;
+        List<String> mentionedUsers = parsed.mentionedUsers;
+        boolean mentionedAgent = parsed.mentionedAgent;
+        String messageId = payload.has("message_id") ? String.valueOf(payload.get("message_id").asLong()) : null;
+        String replyToMessageId = parsed.replyToMessageId;
 
         ChannelMessage.ChatType chatType = "group".equals(messageType)
                 ? ChannelMessage.ChatType.GROUP
@@ -94,6 +100,10 @@ public class OneBotChannelAdapter implements ChannelAdapter {
                 .chatType(chatType)
                 .platformSessionId(sessionId)
                 .hostContext(hostContext)
+                .messageId(messageId)
+                .mentionedUsers(mentionedUsers)
+                .mentionedAgent(mentionedAgent)
+                .replyToMessageId(replyToMessageId)
                 .raw(new HashMap<>() {{ put("payload", payload); }})
                 .build();
     }
@@ -138,10 +148,17 @@ public class OneBotChannelAdapter implements ChannelAdapter {
             log.warn("[OneBot] Skipping empty message to {}", reply.getTargetId());
             return Mono.empty();
         }
+
+        String message = content;
+        if (reply.getMentionTargetId() != null && !reply.getMentionTargetId().isBlank()
+                && reply.getChatType() == ChannelMessage.ChatType.GROUP) {
+            message = "[CQ:at,qq=" + reply.getMentionTargetId() + "] " + content;
+        }
+
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("message_type", reply.getChatType() == ChannelMessage.ChatType.GROUP ? "group" : "private");
         body.put(reply.getChatType() == ChannelMessage.ChatType.GROUP ? "group_id" : "user_id", reply.getTargetId());
-        body.put("message", content);
+        body.put("message", message);
         body.put("auto_escape", false);
 
         return buildWebClient()
@@ -150,7 +167,8 @@ public class OneBotChannelAdapter implements ChannelAdapter {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(String.class)
-                .doOnSuccess(r -> log.info("[OneBot] Sent text to {}", reply.getTargetId()))
+                .doOnSuccess(r -> log.info("[OneBot] Sent text to {} (mention={})",
+                        reply.getTargetId(), reply.getMentionTargetId()))
                 .doOnError(e -> log.error("[OneBot] Send failed: {}", e.getMessage()))
                 .then();
     }
@@ -216,24 +234,79 @@ public class OneBotChannelAdapter implements ChannelAdapter {
                 .build();
     }
 
-    private String extractText(JsonNode payload) {
-        if (payload.has("raw_message")) {
-            return payload.get("raw_message").asText()
-                    .replaceAll("\\[CQ:[^]]+\\]", "").trim();
-        }
+    /**
+     * 解析 OneBot v11 消息数组，提取纯文本、@ 提及列表、是否 @Bot、回复消息ID。
+     * OneBot 消息格式：
+     * <pre>
+     *   "message": [
+     *     {"type": "at", "data": {"qq": "123456"}},
+     *     {"type": "text", "data": {"text": "你好"}},
+     *     {"type": "reply", "data": {"id": "789"}}
+     *   ]
+     * </pre>
+     */
+    private ParsedMessage parseMessage(JsonNode payload) {
+        List<String> mentionedUsers = new ArrayList<>();
+        boolean mentionedAgent = false;
+        String replyToMessageId = null;
+        StringBuilder textBuilder = new StringBuilder();
+
         if (payload.has("message")) {
             JsonNode msgNode = payload.get("message");
-            if (msgNode.isTextual()) return msgNode.asText();
-            if (msgNode.isArray()) {
-                StringBuilder sb = new StringBuilder();
+            if (msgNode.isTextual()) {
+                textBuilder.append(msgNode.asText());
+            } else if (msgNode.isArray()) {
                 for (JsonNode seg : msgNode) {
-                    if (seg.has("data") && seg.get("data").has("text")) {
-                        sb.append(seg.get("data").get("text").asText());
+                    String type = seg.has("type") ? seg.get("type").asText() : "";
+                    JsonNode data = seg.has("data") ? seg.get("data") : null;
+
+                    switch (type) {
+                        case "at":
+                            if (data != null && data.has("qq")) {
+                                String atQq = data.get("qq").asText();
+                                if ("all".equals(atQq)) {
+                                    mentionedUsers.add("all");
+                                } else {
+                                    mentionedUsers.add(atQq);
+                                    if (qqNumber != null && qqNumber.equals(atQq)) {
+                                        mentionedAgent = true;
+                                    }
+                                }
+                            }
+                            break;
+                        case "text":
+                            if (data != null && data.has("text")) {
+                                textBuilder.append(data.get("text").asText());
+                            }
+                            break;
+                        case "reply":
+                            if (data != null && data.has("id")) {
+                                replyToMessageId = data.get("id").asText();
+                            }
+                            break;
+                        default:
+                            break;
                     }
                 }
-                return sb.toString().trim();
             }
         }
-        return null;
+
+        String text = textBuilder.toString().trim();
+        if (text.isEmpty() && payload.has("raw_message")) {
+            text = payload.get("raw_message").asText()
+                    .replaceAll("\\[CQ:[^]]+\\]", "").trim();
+        }
+
+        return new ParsedMessage(text, mentionedUsers, mentionedAgent, replyToMessageId);
+    }
+
+    /**
+     * 解析后的消息结构。
+     */
+    private record ParsedMessage(
+            String text,
+            List<String> mentionedUsers,
+            boolean mentionedAgent,
+            String replyToMessageId) {
     }
 }

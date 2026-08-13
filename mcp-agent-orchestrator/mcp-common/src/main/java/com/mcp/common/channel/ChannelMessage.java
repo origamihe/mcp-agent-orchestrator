@@ -2,6 +2,7 @@ package com.mcp.common.channel;
 
 import lombok.Builder;
 import lombok.Data;
+import java.util.List;
 import java.util.Map;
 
 @Data
@@ -16,6 +17,10 @@ public class ChannelMessage {
     private ChatType chatType;        // PRIVATE / GROUP / CHANNEL / HOST
     private Map<String, Object> raw;  // 原始消息（平台特有数据）
     private String platformSessionId; // 平台会话ID（用于上下文管理）
+
+    private List<String> mentionedUsers;   // 被 @ 的用户ID列表（QQ号等）
+    private boolean mentionedAgent;         // 是否 @了 Agent/Bot
+    private String replyToMessageId;        // 回复的消息ID（引用回复）
 
     /**
      * Host 上下文 — Host 向 Agent 提供的世界感知能力。

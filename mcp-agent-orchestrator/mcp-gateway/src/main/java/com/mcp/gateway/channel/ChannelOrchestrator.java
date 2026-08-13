@@ -17,6 +17,11 @@ import com.mcp.common.workspace.Workspace;
 import com.mcp.engine.reflection.ReflectionJudge;
 import com.mcp.engine.workspace.WorkspaceService;
 import com.mcp.engine.world.WorldStateService;
+import com.mcp.engine.memory.GroupMemoryService;
+import com.mcp.engine.task.AgentTask;
+import com.mcp.engine.task.TaskScheduler;
+import com.mcp.gateway.decision.InteractionDecisionEngine;
+import com.mcp.gateway.handler.ChannelErrorHandler;
 import com.mcp.gateway.ws.WebSocketSessionManager;
 import com.mcp.tools.tool.DocxGeneratorTool;
 import com.mcp.tools.tool.PptGeneratorTool;
@@ -46,6 +51,10 @@ public class ChannelOrchestrator {
     private final ReflectionJudge reflectionJudge;
     private final WorldStateService worldStateService;
     private final WorkspaceService workspaceService;
+    private final GroupMemoryService groupMemoryService;
+    private final InteractionDecisionEngine decisionEngine;
+    private final TaskScheduler taskScheduler;
+    private final ChannelErrorHandler channelErrorHandler;
     private final ConcurrentHashMap<String, WorkingContext> workingContexts = new ConcurrentHashMap<>();
 
     @Value("${docx.output.dir:./generated/docx}")
@@ -78,18 +87,82 @@ public class ChannelOrchestrator {
         log.info("[Channel:{}] Processing message from {} (chat={}): {}",
                 channelType, msg.getSenderId(), msg.getChatId(), userMessage);
 
-        // Step 2: 意图路由
+        // Step 2: 所有群聊消息异步记录到 GroupMemory
+        if (msg.getChatType() == ChannelMessage.ChatType.GROUP) {
+            groupMemoryService.recordMessage(msg);
+        }
+
+        // Step 3: 交互决策引擎 — 决定处理方式
+        InteractionDecisionEngine.Decision decision = decisionEngine.decide(msg);
+
+        return switch (decision.type()) {
+            case IGNORE -> {
+                log.info("[Channel:{}] Decision=IGNORE: {} group={} user={}",
+                        channelType, decision.reason(), msg.getChatId(), msg.getSenderId());
+                yield Mono.empty();
+            }
+
+            case MERGE -> {
+                log.info("[Channel:{}] Decision=MERGE: {} group={} user={} thread={}",
+                        channelType, decision.reason(), msg.getChatId(), msg.getSenderId(), decision.threadId());
+                yield Mono.empty();
+            }
+
+            case QUEUE -> {
+                AgentTask task = AgentTask.create(sessionId, msg.getChatId(),
+                        msg.getSenderId(), msg.getSenderName(),
+                        userProfileService.getUserProfile(msg.getSenderId()).getRole(),
+                        userMessage, decision.threadId(),
+                        decision.priority(), decision.reason());
+                TaskScheduler.ScheduleResult result = taskScheduler.submit(task);
+                log.info("[Channel:{}] Decision=QUEUE: {} group={} user={} taskId={} result={}",
+                        channelType, decision.reason(), msg.getChatId(), msg.getSenderId(),
+                        task.getTaskId(), result);
+                yield Mono.empty();
+            }
+
+            case INTERRUPT -> {
+                AgentTask task = AgentTask.create(sessionId, msg.getChatId(),
+                        msg.getSenderId(), msg.getSenderName(),
+                        userProfileService.getUserProfile(msg.getSenderId()).getRole(),
+                        userMessage, decision.threadId(),
+                        decision.priority(), decision.reason());
+                TaskScheduler.ScheduleResult result = taskScheduler.submit(task);
+                log.info("[Channel:{}] Decision=INTERRUPT: {} group={} user={} taskId={} result={}",
+                        channelType, decision.reason(), msg.getChatId(), msg.getSenderId(),
+                        task.getTaskId(), result);
+                yield dispatchToAgent(msg, adapter, userMessage, sessionId, task);
+            }
+
+            case REPLY -> {
+                AgentTask task = AgentTask.create(sessionId, msg.getChatId(),
+                        msg.getSenderId(), msg.getSenderName(),
+                        userProfileService.getUserProfile(msg.getSenderId()).getRole(),
+                        userMessage, decision.threadId(),
+                        decision.priority(), decision.reason());
+                taskScheduler.submit(task);
+                log.info("[Channel:{}] Decision=REPLY: {} group={} user={} thread={}",
+                        channelType, decision.reason(), msg.getChatId(), msg.getSenderId(), decision.threadId());
+                yield dispatchToAgent(msg, adapter, userMessage, sessionId, task);
+            }
+        };
+    }
+
+    /**
+     * 分发到 Agent 处理（意图路由 + 执行）。
+     */
+    private Mono<Void> dispatchToAgent(ChannelMessage msg, ChannelAdapter adapter,
+                                        String userMessage, String sessionId, AgentTask agentTask) {
         IntentRouter.IntentResult intentResult = intentRouter.detect(sessionId, userMessage);
         SessionState state = intentResult.state();
 
-        // Step 3: 根据意图分发
         return switch (intentResult.intent()) {
-            case GENERATE_DOCX -> handleDocxGeneration(msg, adapter, intentResult.task(), state);
-            case GENERATE_PPT   -> handlePptGeneration(msg, adapter, intentResult.task(), state);
-            case AMBIGUOUS      -> handleAmbiguous(msg, adapter, state);
-            case RECALL_HISTORY -> handleRecallHistory(msg, adapter, userMessage, sessionId, state, intentResult.recallMode());
-            case SEARCH          -> handleSearch(msg, adapter, userMessage, sessionId, state);
-            default             -> handleChat(msg, adapter, userMessage, sessionId, state);
+            case GENERATE_DOCX -> handleDocxGeneration(msg, adapter, intentResult.task(), state, agentTask);
+            case GENERATE_PPT   -> handlePptGeneration(msg, adapter, intentResult.task(), state, agentTask);
+            case AMBIGUOUS      -> handleAmbiguous(msg, adapter, state, agentTask);
+            case RECALL_HISTORY -> handleRecallHistory(msg, adapter, userMessage, sessionId, state, intentResult.recallMode(), agentTask);
+            case SEARCH          -> handleSearch(msg, adapter, userMessage, sessionId, state, agentTask);
+            default             -> handleChat(msg, adapter, userMessage, sessionId, state, agentTask);
         };
     }
 
@@ -97,7 +170,8 @@ public class ChannelOrchestrator {
      * 普通聊天链路 - 注入身份信息、群上下文、分层 Prompt、Workspace 和 Host 上下文
      */
     private Mono<Void> handleChat(ChannelMessage msg, ChannelAdapter adapter,
-                                   String userMessage, String sessionId, SessionState state) {
+                                   String userMessage, String sessionId, SessionState state,
+                                   AgentTask agentTask) {
         // 加载持久化的世界状态
         loadWorldStateIfNeeded(sessionId, state);
 
@@ -146,6 +220,7 @@ public class ChannelOrchestrator {
                 .build();
 
         return agentFacade.call(ctx)
+                .timeout(channelErrorHandler.getDefaultTimeout())
                 .flatMap(agentResponse -> validateAndRetry(
                         agentResponse, userMessage, sessionId, systemPrompt, state, 0))
                 .flatMap(agentResponse -> responsePipeline.process(
@@ -155,8 +230,16 @@ public class ChannelOrchestrator {
                     log.info("[Channel:{}] Reply sent", adapter.getChannelType());
                     saveWorldStateIfNeeded(sessionId, state);
                     saveWorkspaceIfNeeded(sessionId, workspace, msg);
+                    onTaskCompleted(agentTask, adapter);
                 })
-                .doOnError(e -> log.error("[Channel:{}] Error: {}", adapter.getChannelType(), e.getMessage(), e))
+                .doOnError(e -> {
+                    log.error("[Channel:{}] Error: {}", adapter.getChannelType(), e.getMessage(), e);
+                    onTaskFailed(agentTask, adapter, e.getMessage());
+                })
+                .onErrorResume(e -> {
+                    ChannelReply fallback = channelErrorHandler.buildFallbackReply(msg, e);
+                    return adapter.sendReply(fallback).then();
+                })
                 .then();
     }
 
@@ -347,24 +430,36 @@ public class ChannelOrchestrator {
      */
     private Mono<Void> handleRecallHistory(ChannelMessage msg, ChannelAdapter adapter,
                                             String userMessage, String sessionId, SessionState state,
-                                            RecallMode recallMode) {
+                                            RecallMode recallMode, AgentTask agentTask) {
         String systemPrompt = adapter.getSystemPrompt();
 
         log.info("[Channel:{}] RECALL_HISTORY ({} mode) | Session: {}", adapter.getChannelType(), recallMode, sessionId);
 
         return agentFacade.callWithHistory(userMessage, sessionId, systemPrompt, recallMode)
+                .timeout(channelErrorHandler.getDefaultTimeout())
                 .flatMap(agentResponse -> responsePipeline.process(
                         adapter.getChannelType(), msg, agentResponse, state))
                 .flatMap(adapter::sendReply)
-                .doOnSuccess(v -> log.info("[Channel:{}] RECALL_HISTORY reply sent", adapter.getChannelType()))
-                .doOnError(e -> log.error("[Channel:{}] RECALL_HISTORY error: {}", adapter.getChannelType(), e.getMessage(), e))
+                .doOnSuccess(v -> {
+                    log.info("[Channel:{}] RECALL_HISTORY reply sent", adapter.getChannelType());
+                    onTaskCompleted(agentTask, adapter);
+                })
+                .doOnError(e -> {
+                    log.error("[Channel:{}] RECALL_HISTORY error: {}", adapter.getChannelType(), e.getMessage(), e);
+                    onTaskFailed(agentTask, adapter, e.getMessage());
+                })
+                .onErrorResume(e -> {
+                    ChannelReply fallback = channelErrorHandler.buildFallbackReply(msg, e);
+                    return adapter.sendReply(fallback).then();
+                })
                 .then();
     }
 
     /**
      * 歧义处理：用户同时提到文档和PPT，追问澄清
      */
-    private Mono<Void> handleAmbiguous(ChannelMessage msg, ChannelAdapter adapter, SessionState state) {
+    private Mono<Void> handleAmbiguous(ChannelMessage msg, ChannelAdapter adapter,
+                                        SessionState state, AgentTask agentTask) {
         String clarifyMsg = "你想生成文档还是PPT？两个都做也行，告诉我一声就好。";
         ChannelReply reply = ChannelReply.builder()
                 .channelType(adapter.getChannelType())
@@ -373,14 +468,22 @@ public class ChannelOrchestrator {
                 .chatType(msg.getChatType())
                 .sendAsVoice(false)
                 .build();
-        return adapter.sendReply(reply).then();
+        return adapter.sendReply(reply)
+                .doOnSuccess(v -> onTaskCompleted(agentTask, adapter))
+                .doOnError(e -> onTaskFailed(agentTask, adapter, e.getMessage()))
+                .onErrorResume(e -> {
+                    ChannelReply fallback = channelErrorHandler.buildFallbackReply(msg, e);
+                    return adapter.sendReply(fallback).then();
+                })
+                .then();
     }
 
     /**
      * 搜索链路 — 使用 SearchAgent 进行联网搜索，调用搜索工具获取最新信息。
      */
     private Mono<Void> handleSearch(ChannelMessage msg, ChannelAdapter adapter,
-                                     String userMessage, String sessionId, SessionState state) {
+                                     String userMessage, String sessionId, SessionState state,
+                                     AgentTask agentTask) {
         String systemPrompt = adapter.getSystemPrompt();
 
         UserProfile userProfile = userProfileService.getUserProfile(msg.getSenderId());
@@ -420,14 +523,23 @@ public class ChannelOrchestrator {
                 .build();
 
         return agentFacade.call(ctx)
+                .timeout(channelErrorHandler.getDefaultTimeout())
                 .flatMap(agentResponse -> responsePipeline.process(
                         adapter.getChannelType(), msg, agentResponse, state))
                 .flatMap(adapter::sendReply)
                 .doOnSuccess(v -> {
                     log.info("[Channel:{}] SEARCH reply sent", adapter.getChannelType());
                     saveWorkspaceIfNeeded(sessionId, workspace, msg);
+                    onTaskCompleted(agentTask, adapter);
                 })
-                .doOnError(e -> log.error("[Channel:{}] SEARCH error: {}", adapter.getChannelType(), e.getMessage(), e))
+                .doOnError(e -> {
+                    log.error("[Channel:{}] SEARCH error: {}", adapter.getChannelType(), e.getMessage(), e);
+                    onTaskFailed(agentTask, adapter, e.getMessage());
+                })
+                .onErrorResume(e -> {
+                    ChannelReply fallback = channelErrorHandler.buildFallbackReply(msg, e);
+                    return adapter.sendReply(fallback).then();
+                })
                 .then();
     }
 
@@ -435,7 +547,8 @@ public class ChannelOrchestrator {
      * 文档生成链路 — 明确的双消息模式：先发文件，再发文本说明
      */
     private Mono<Void> handleDocxGeneration(ChannelMessage msg, ChannelAdapter adapter,
-                                             GenerationTask task, SessionState state) {
+                                             GenerationTask task, SessionState state,
+                                             AgentTask agentTask) {
         String topic = task.topic();
         String sessionId = msg.getPlatformSessionId();
         String systemPrompt = """
@@ -491,6 +604,7 @@ public class ChannelOrchestrator {
                 .build();
 
         return agentFacade.call(ctx)
+                .timeout(channelErrorHandler.getDefaultTimeout())
                 .flatMap(markdownResponse -> {
                     try {
                         DocxGeneratorTool.DocxResult result = docxGeneratorTool.generateDocxFromMarkdown(
@@ -526,8 +640,18 @@ public class ChannelOrchestrator {
                             .build();
                     return adapter.sendReply(textReply);
                 })
-                .doOnSuccess(v -> log.info("[Channel:{}] DOCX reply sent", channelType))
-                .doOnError(e -> log.error("[Channel:{}] DOCX error: {}", channelType, e.getMessage(), e))
+                .doOnSuccess(v -> {
+                    log.info("[Channel:{}] DOCX reply sent", channelType);
+                    onTaskCompleted(agentTask, adapter);
+                })
+                .doOnError(e -> {
+                    log.error("[Channel:{}] DOCX error: {}", channelType, e.getMessage(), e);
+                    onTaskFailed(agentTask, adapter, e.getMessage());
+                })
+                .onErrorResume(e -> {
+                    ChannelReply fallback = channelErrorHandler.buildFallbackReply(msg, e);
+                    return adapter.sendReply(fallback).then();
+                })
                 .then();
     }
 
@@ -535,7 +659,8 @@ public class ChannelOrchestrator {
      * PPT生成链路 — 明确的双消息模式：先发文件，再发文本说明
      */
     private Mono<Void> handlePptGeneration(ChannelMessage msg, ChannelAdapter adapter,
-                                            GenerationTask task, SessionState state) {
+                                            GenerationTask task, SessionState state,
+                                            AgentTask agentTask) {
         String topic = task.topic();
         String sessionId = msg.getPlatformSessionId();
         String pptPrompt = promptComposer.buildPptPrompt(task);
@@ -578,6 +703,7 @@ public class ChannelOrchestrator {
                 .build();
 
         return agentFacade.call(ctx)
+                .timeout(channelErrorHandler.getDefaultTimeout())
                 .flatMap(llmResponse -> {
                     try {
                         PptGeneratorTool.PptResult result = pptGeneratorTool.generatePptx(llmResponse, topic);
@@ -612,8 +738,65 @@ public class ChannelOrchestrator {
                             .build();
                     return adapter.sendReply(textReply);
                 })
-                .doOnSuccess(v -> log.info("[Channel:{}] PPT reply sent", channelType))
-                .doOnError(e -> log.error("[Channel:{}] PPT error: {}", channelType, e.getMessage(), e))
+                .doOnSuccess(v -> {
+                    log.info("[Channel:{}] PPT reply sent", channelType);
+                    onTaskCompleted(agentTask, adapter);
+                })
+                .doOnError(e -> {
+                    log.error("[Channel:{}] PPT error: {}", channelType, e.getMessage(), e);
+                    onTaskFailed(agentTask, adapter, e.getMessage());
+                })
+                .onErrorResume(e -> {
+                    ChannelReply fallback = channelErrorHandler.buildFallbackReply(msg, e);
+                    return adapter.sendReply(fallback).then();
+                })
                 .then();
+    }
+
+    /**
+     * 任务完成钩子 — 标记任务完成，调度下一个排队任务。
+     */
+    private void onTaskCompleted(AgentTask agentTask, ChannelAdapter adapter) {
+        if (agentTask == null || agentTask.getGroupId() == null) return;
+        taskScheduler.completeTask(agentTask.getGroupId())
+                .ifPresent(nextTask -> dispatchNextTask(nextTask, adapter));
+    }
+
+    /**
+     * 任务失败钩子 — 标记任务失败，调度下一个排队任务。
+     */
+    private void onTaskFailed(AgentTask agentTask, ChannelAdapter adapter, String error) {
+        if (agentTask == null || agentTask.getGroupId() == null) return;
+        taskScheduler.failTask(agentTask.getGroupId(), error)
+                .ifPresent(nextTask -> dispatchNextTask(nextTask, adapter));
+    }
+
+    /**
+     * 调度下一个排队任务 — 从队列中取出任务并重新进入 Agent 处理链路。
+     */
+    private void dispatchNextTask(AgentTask nextTask, ChannelAdapter adapter) {
+        log.info("[Channel:{}] 调度下一个任务 {} group={} user={} priority={}",
+                adapter.getChannelType(), nextTask.getTaskId(),
+                nextTask.getGroupId(), nextTask.getUserId(), nextTask.getPriority());
+
+        ChannelMessage syntheticMsg = ChannelMessage.builder()
+                .messageId("dequeue-" + nextTask.getTaskId())
+                .platformSessionId(nextTask.getSessionId())
+                .senderId(nextTask.getUserId())
+                .senderName(nextTask.getUserName())
+                .chatId(nextTask.getGroupId())
+                .chatType(ChannelMessage.ChatType.GROUP)
+                .content(nextTask.getMessageContent())
+                .mentionedAgent(true)
+                .build();
+
+        dispatchToAgent(syntheticMsg, adapter,
+                nextTask.getMessageContent(), nextTask.getSessionId(), nextTask)
+                .subscribe(
+                        v -> log.info("[Channel:{}] 排队任务 {} 执行完成",
+                                adapter.getChannelType(), nextTask.getTaskId()),
+                        e -> log.error("[Channel:{}] 排队任务 {} 执行失败: {}",
+                                adapter.getChannelType(), nextTask.getTaskId(), e.getMessage())
+                );
     }
 }

@@ -40,16 +40,6 @@ public class MemoryBoundaryGuard {
     }
 
     /**
-     * 检查一条 UserMemory 是否与 Persona 定义冲突（无身份信息，默认视为 MEMBER）。
-     *
-     * @deprecated 请使用 {@link #isConflictWithPersona(String, UserRole)}
-     */
-    @Deprecated
-    public boolean isConflictWithPersona(String userMemory) {
-        return isConflictWithPersona(userMemory, null);
-    }
-
-    /**
      * 检查一条 UserMemory 是否与 Persona 定义冲突（含身份权限检查）。
      *
      * 检查流程：
@@ -95,16 +85,6 @@ public class MemoryBoundaryGuard {
         }
 
         return false;
-    }
-
-    /**
-     * 过滤 UserMemory 列表，移除与 Persona 冲突的条目（无身份信息）。
-     *
-     * @deprecated 请使用 {@link #filterConflicting(List, UserRole)}
-     */
-    @Deprecated
-    public List<MemoryPackageEntity> filterConflicting(List<MemoryPackageEntity> userMemories) {
-        return filterConflicting(userMemories, null);
     }
 
     /**

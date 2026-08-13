@@ -25,6 +25,9 @@ public class ChannelReply {
     private String notificationTitle;                        // 系统通知标题
     private String notificationBody;                         // 系统通知内容
 
+    // === 群聊 @提及 ===
+    private String mentionTargetId;                         // 回复中需要 @ 的用户ID（QQ号）
+
     // === 通用 Host 动作 ===
     private String hostAction;                               // 动作类型：APPLY_DIFF, EXEC_COMMAND, SHOW_NOTIFICATION, OPEN_FILE
 
@@ -47,6 +50,7 @@ public class ChannelReply {
         this.notificationTitle = builder.notificationTitle;
         this.notificationBody = builder.notificationBody;
         this.hostAction = builder.hostAction;
+        this.mentionTargetId = builder.mentionTargetId;
     }
 
     public static Builder builder() {
@@ -97,6 +101,7 @@ public class ChannelReply {
         private String notificationTitle;
         private String notificationBody;
         private String hostAction;
+        private String mentionTargetId;
 
         public Builder channelType(String channelType) { this.channelType = channelType; return this; }
         public Builder targetId(String targetId) { this.targetId = targetId; return this; }
@@ -114,6 +119,7 @@ public class ChannelReply {
         public Builder notificationTitle(String notificationTitle) { this.notificationTitle = notificationTitle; return this; }
         public Builder notificationBody(String notificationBody) { this.notificationBody = notificationBody; return this; }
         public Builder hostAction(String hostAction) { this.hostAction = hostAction; return this; }
+        public Builder mentionTargetId(String mentionTargetId) { this.mentionTargetId = mentionTargetId; return this; }
         public ChannelReply build() { return new ChannelReply(this); }
     }
 
@@ -135,4 +141,5 @@ public class ChannelReply {
     public String getNotificationTitle() { return notificationTitle; }
     public String getNotificationBody() { return notificationBody; }
     public String getHostAction() { return hostAction; }
+    public String getMentionTargetId() { return mentionTargetId; }
 }

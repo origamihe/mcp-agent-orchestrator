@@ -208,7 +208,7 @@ public class MemoryLifecycleOrchestrator {
                 : scored.importance() / 10.0);
         entity.setTtl(scored.ttl());
         entity.setSourceQuote(scored.sourceQuote());
-        entity.setScope(MemoryScope.USER);
+        entity.setScope(identity.groupId() != null ? MemoryScope.GROUP : MemoryScope.USER);
         entity.setCategory(mapMemoryTypeToCategory(scored.memoryType()));
         entity.setVersion(1);
         entity.setAccessCount(0);

@@ -65,49 +65,6 @@ public class LongTermMemoryService {
         return buildWorkingContext(identity.sessionId(), identity.userId(), identity.groupId(), currentQuery, userRole);
     }
 
-    /**
-     * 构建分层工作上下文（无身份信息，默认 MEMBER 权限）。
-     *
-     * @deprecated 请使用 {@link #buildWorkingContext(MemoryIdentity, UserRole)}
-     */
-    @Deprecated
-    public Mono<String> buildWorkingContext(MemoryIdentity identity) {
-        return buildWorkingContext(identity, null, null);
-    }
-
-    /**
-     * @deprecated 请使用 {@link #buildWorkingContext(MemoryIdentity, String, UserRole)}
-     */
-    @Deprecated
-    public Mono<String> buildWorkingContext(MemoryIdentity identity, String currentQuery) {
-        return buildWorkingContext(identity, currentQuery, null);
-    }
-
-    /**
-     * @deprecated 请使用 {@link #buildWorkingContext(MemoryIdentity, UserRole)}
-     */
-    @Deprecated
-    public Mono<String> buildWorkingContext(String sessionId) {
-        return buildWorkingContext(sessionId, null, null, null, null);
-    }
-
-    /**
-     * @deprecated 请使用 {@link #buildWorkingContext(MemoryIdentity, UserRole)}
-     */
-    @Deprecated
-    public Mono<String> buildWorkingContext(String sessionId, String userId, String groupId) {
-        return buildWorkingContext(sessionId, userId, groupId, null, null);
-    }
-
-    /**
-     * @deprecated 请使用 {@link #buildWorkingContext(MemoryIdentity, String, UserRole)}
-     */
-    @Deprecated
-    public Mono<String> buildWorkingContext(String sessionId, String userId, String groupId,
-                                            String currentQuery) {
-        return buildWorkingContext(sessionId, userId, groupId, currentQuery, null);
-    }
-
     public Mono<String> buildWorkingContext(String sessionId, String userId, String groupId,
                                             String currentQuery, UserRole userRole) {
         long startTime = System.currentTimeMillis();

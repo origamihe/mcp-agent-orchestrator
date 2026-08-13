@@ -4,6 +4,7 @@ import com.mcp.common.channel.ChannelMessage;
 import com.mcp.common.channel.ChannelReply;
 import com.mcp.common.channel.SessionState;
 import com.mcp.common.tts.TtsService;
+import com.mcp.gateway.decision.ResponsePlanner;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -17,6 +18,7 @@ import java.util.regex.Pattern;
 public class ResponsePipeline {
 
     private final TtsService ttsService;
+    private final ResponsePlanner responsePlanner;
 
     private static final Pattern PSYCH_DESCRIPTION_PATTERN = Pattern.compile(
             "[（(][^）)]*[）)]"
@@ -30,6 +32,8 @@ public class ResponsePipeline {
 
     public Mono<ChannelReply> process(String channelType, ChannelMessage msg,
                                       String agentResponse, SessionState state) {
+        ResponsePlanner.ResponsePlan plan = responsePlanner.plan(msg);
+
         if (!state.isVoiceMode()) {
             return Mono.just(ChannelReply.builder()
                     .channelType(channelType)
@@ -37,6 +41,7 @@ public class ResponsePipeline {
                     .content(agentResponse)
                     .chatType(msg.getChatType())
                     .sendAsVoice(false)
+                    .mentionTargetId(plan.mentionTargetId())
                     .build());
         }
 
@@ -44,7 +49,7 @@ public class ResponsePipeline {
         String cleanResponse = sanitizeForVoice(agentResponse);
         cleanResponse = segmentForVoice(cleanResponse);
 
-        return synthesizeVoice(cleanResponse, channelType, msg);
+        return synthesizeVoice(cleanResponse, channelType, msg, plan);
     }
 
     String sanitizeForVoice(String text) {
@@ -123,7 +128,8 @@ public class ResponsePipeline {
         return text + "。";
     }
 
-    private Mono<ChannelReply> synthesizeVoice(String cleanText, String channelType, ChannelMessage msg) {
+    private Mono<ChannelReply> synthesizeVoice(String cleanText, String channelType,
+                                              ChannelMessage msg, ResponsePlanner.ResponsePlan plan) {
         if (!ttsService.isAvailable()) {
             log.info("[TTS] TTS service not available, using text-only reply");
             return Mono.just(ChannelReply.builder()
@@ -132,6 +138,7 @@ public class ResponsePipeline {
                     .content(cleanText)
                     .chatType(msg.getChatType())
                     .sendAsVoice(false)
+                    .mentionTargetId(plan.mentionTargetId())
                     .build());
         }
 
@@ -143,6 +150,7 @@ public class ResponsePipeline {
                         .chatType(msg.getChatType())
                         .sendAsVoice(true)
                         .voiceData(voiceData)
+                        .mentionTargetId(plan.mentionTargetId())
                         .build())
                 .onErrorResume(e -> {
                     log.warn("[TTS] Voice synthesis failed, fallback to text: {}", e.getMessage());
@@ -152,6 +160,7 @@ public class ResponsePipeline {
                             .content(cleanText)
                             .chatType(msg.getChatType())
                             .sendAsVoice(false)
+                            .mentionTargetId(plan.mentionTargetId())
                             .build());
                 })
                 .defaultIfEmpty(ChannelReply.builder()
@@ -160,6 +169,7 @@ public class ResponsePipeline {
                         .content(cleanText)
                         .chatType(msg.getChatType())
                         .sendAsVoice(false)
+                        .mentionTargetId(plan.mentionTargetId())
                         .build());
     }
 }

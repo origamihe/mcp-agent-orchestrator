@@ -149,13 +149,13 @@ public class LlmConfigService {
 
     /**
      * 兜底默认配置（数据库无配置时使用）
-     * 当前默认：Ollama 本地 qwen2:7b
+     * 当前默认：Ollama 本地 qwen3:8b
      */
     private LlmModelConfig getDefaultOllamaConfig() {
         return LlmModelConfig.builder()
-                .configId("default-ollama-qwen2")
+                .configId("default-ollama-qwen3")
                 .provider(LlmProviderType.LOCAL_OLLAMA)
-                .modelName("qwen2:7b")
+                .modelName("qwen3:8b")
                 .temperature(0.7)
                 .maxTokens(4096)
                 .enabled(true)

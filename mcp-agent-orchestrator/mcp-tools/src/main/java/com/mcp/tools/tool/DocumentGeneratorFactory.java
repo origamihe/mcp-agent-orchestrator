@@ -3,9 +3,10 @@ package com.mcp.tools.tool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Set;
 
 /**
  * 文档生成器工厂 — 根据格式路由到对应的 DocumentGenerator 实现。
@@ -21,22 +22,17 @@ import java.util.stream.Collectors;
 @Component
 public class DocumentGeneratorFactory {
 
-    private final Map<String, DocumentGenerator> generators;
+    private final List<DocumentGenerator> generators;
 
     public DocumentGeneratorFactory(List<DocumentGenerator> generatorList) {
-        this.generators = generatorList.stream()
-                .collect(Collectors.toMap(
-                        gen -> gen.getClass().getSimpleName(),
-                        gen -> gen,
-                        (a, b) -> a
-                ));
+        this.generators = new ArrayList<>(generatorList);
         log.info("[DocGenFactory] Registered {} document generators: {}",
                 generators.size(),
                 generatorList.stream().map(g -> g.getClass().getSimpleName()).toList());
     }
 
     public DocumentGenerator getGenerator(String format) {
-        for (DocumentGenerator gen : generators.values()) {
+        for (DocumentGenerator gen : generators) {
             if (gen.supports(format)) {
                 return gen;
             }
@@ -46,19 +42,23 @@ public class DocumentGeneratorFactory {
     }
 
     public List<String> getSupportedFormats() {
-        return generators.values().stream()
-                .flatMap(gen -> {
-                    try {
-                        return java.util.stream.Stream.of(
-                                gen.getClass().getSimpleName().replace("GeneratorTool", "").toLowerCase());
-                    } catch (Exception e) {
-                        return java.util.stream.Stream.empty();
-                    }
-                })
-                .toList();
+        Set<String> formats = new LinkedHashSet<>();
+        for (DocumentGenerator gen : generators) {
+            try {
+                String format = gen.getClass().getSimpleName()
+                        .replace("GeneratorTool", "")
+                        .toLowerCase();
+                if (!format.isEmpty()) {
+                    formats.add(format);
+                }
+            } catch (Exception e) {
+                log.warn("[DocGenFactory] Failed to resolve format for {}", gen.getClass().getSimpleName(), e);
+            }
+        }
+        return List.copyOf(formats);
     }
 
     public List<DocumentGenerator> getAllGenerators() {
-        return List.copyOf(generators.values());
+        return List.copyOf(generators);
     }
 }

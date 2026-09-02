@@ -36,4 +36,9 @@ public interface ChannelAdapter {
     default String getSystemPrompt() {
         return null;
     }
+
+    /** 获取 Bot 在该平台的用户 ID（如 QQ 号），用于过滤群聊上下文中 Agent 自己的消息 */
+    default String getBotUserId() {
+        return null;
+    }
 }

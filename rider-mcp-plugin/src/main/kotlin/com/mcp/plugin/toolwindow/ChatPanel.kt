@@ -28,6 +28,12 @@ class ChatPanel(
     private val toolWindow: ToolWindow
 ) : JPanel(BorderLayout()) {
 
+    companion object {
+        private const val HTML_CONTENT_TYPE = "text/html"
+        private const val FONT_FAMILY = "SansSerif"
+        private const val WELCOME_MESSAGE = "欢迎使用 MCP Agent！输入 Ctrl+Enter 发送消息。"
+    }
+
     private val logger = Logger.getInstance(ChatPanel::class.java)
     private val settings = ApplicationManager.getApplication().getService(McpPluginSettings::class.java) ?: McpPluginSettings()
     private val transport: Transport? = project.getService(WebSocketTransport::class.java)
@@ -37,7 +43,7 @@ class ChatPanel(
 
     private val chatArea = JTextPane().apply {
         isEditable = false
-        contentType = "text/html"
+        contentType = HTML_CONTENT_TYPE
         putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
         (caret as DefaultCaret).updatePolicy = DefaultCaret.ALWAYS_UPDATE
     }
@@ -45,7 +51,7 @@ class ChatPanel(
     private val inputField = JTextArea(3, 30).apply {
         lineWrap = true
         wrapStyleWord = true
-        font = Font("SansSerif", Font.PLAIN, 13)
+        font = Font(FONT_FAMILY, Font.PLAIN, 13)
     }
 
     private val sendButton = JButton("发送").apply { addActionListener { sendChat() } }
@@ -56,7 +62,7 @@ class ChatPanel(
         border = BorderFactory.createEmptyBorder(8, 8, 8, 8)
 
         val header = JPanel(BorderLayout()).apply {
-            add(JLabel(settings.agentName).apply { font = Font("SansSerif", Font.BOLD, 16) }, BorderLayout.WEST)
+            add(JLabel(settings.agentName).apply { font = Font(FONT_FAMILY, Font.BOLD, 16) }, BorderLayout.WEST)
             add(statusLabel, BorderLayout.EAST)
             border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.LIGHT_GRAY)
         }
@@ -97,13 +103,14 @@ class ChatPanel(
             sendHello()
         }
 
-        appendSystem("欢迎使用 MCP Agent！输入 Ctrl+Enter 发送消息。")
+        appendSystem(WELCOME_MESSAGE)
     }
 
     private fun sendHello() {
-        transport?.send(OutgoingEnvelope(
+        val t = transport ?: return
+        t.send(OutgoingEnvelope(
             type = "hello",
-            sessionId = transport!!.sessionId,
+            sessionId = t.sessionId,
             workspaceId = eventBus?.workspaceId,
             capabilities = ALL_CAPABILITIES.map {
                 mapOf("name" to it.name, "description" to it.description, "params" to it.params)
@@ -113,13 +120,14 @@ class ChatPanel(
 
     private fun sendChat() {
         val text = inputField.text.trim()
-        if (text.isEmpty() || transport == null) return
+        if (text.isEmpty()) return
 
+        val t = transport ?: return
         val context = capabilityAdapter.execute("get_editor_state", emptyMap())
 
-        transport!!.send(OutgoingEnvelope(
+        t.send(OutgoingEnvelope(
             type = "chat",
-            sessionId = transport!!.sessionId,
+            sessionId = t.sessionId,
             workspaceId = eventBus?.workspaceId,
             content = text,
             context = context
@@ -139,9 +147,10 @@ class ChatPanel(
                         val capability = msg.capability ?: return@invokeLater
                         val params = msg.params ?: emptyMap()
                         val result = capabilityAdapter.execute(capability, params)
-                        transport?.send(OutgoingEnvelope(
+                        val t = transport ?: return@invokeLater
+                        t.send(OutgoingEnvelope(
                             type = "capability_result",
-                            sessionId = transport!!.sessionId,
+                            sessionId = t.sessionId,
                             callId = callId,
                             capability = capability,
                             result = result

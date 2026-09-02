@@ -52,4 +52,7 @@ public class RequestContext {
 
     /** 群聊对话线程ID（由 InteractionDecisionEngine 分配，用于 Current Thread 上下文） */
     private final String threadId;
+
+    /** Bot 在平台上的用户 ID（如 QQ 号），用于过滤群聊上下文中 Agent 自己的消息 */
+    private final String botUserId;
 }

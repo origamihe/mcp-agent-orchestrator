@@ -11,9 +11,4 @@ interface Transport {
     fun send(message: OutgoingEnvelope)
     fun onMessage(listener: (String) -> Unit)
     fun onConnectionChange(listener: (Boolean) -> Unit)
-
-    companion object {
-        @Volatile
-        var instance: Transport? = null
-    }
 }

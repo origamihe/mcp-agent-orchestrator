@@ -14,6 +14,8 @@ import com.mcp.common.identity.GroupContext;
 import com.mcp.common.identity.UserProfile;
 import com.mcp.common.identity.UserProfileService;
 import com.mcp.common.workspace.Workspace;
+import com.mcp.common.delivery.DeliveryMessage;
+import com.mcp.engine.delivery.DeliveryManager;
 import com.mcp.engine.reflection.ReflectionJudge;
 import com.mcp.engine.workspace.WorkspaceService;
 import com.mcp.engine.world.WorldStateService;
@@ -55,6 +57,7 @@ public class ChannelOrchestrator {
     private final InteractionDecisionEngine decisionEngine;
     private final AgentTaskScheduler taskScheduler;
     private final ChannelErrorHandler channelErrorHandler;
+    private final DeliveryManager deliveryManager;
     private final ConcurrentHashMap<String, WorkingContext> workingContexts = new ConcurrentHashMap<>();
 
     @Value("${docx.output.dir:./generated/docx}")
@@ -218,14 +221,18 @@ public class ChannelOrchestrator {
                 .userMessage(userMessage)
                 .systemPrompt(systemPrompt)
                 .threadId(agentTask != null ? agentTask.getThreadId() : null)
+                .botUserId(adapter.getBotUserId())
                 .build();
 
         return agentFacade.call(ctx)
                 .timeout(channelErrorHandler.getDefaultTimeout())
                 .flatMap(agentResponse -> validateAndRetry(
                         agentResponse, userMessage, sessionId, systemPrompt, state, 0))
-                .flatMap(agentResponse -> responsePipeline.process(
-                        adapter.getChannelType(), msg, agentResponse, state))
+                .flatMap(agentResponse -> {
+                    trackDelivery(adapter.getChannelType(), msg.getSenderId(), agentResponse);
+                    return responsePipeline.process(
+                            adapter.getChannelType(), msg, agentResponse, state);
+                })
                 .flatMap(adapter::sendReply)
                 .doOnSuccess(v -> {
                     log.info("[Channel:{}] Reply sent", adapter.getChannelType());
@@ -802,5 +809,17 @@ public class ChannelOrchestrator {
                         e -> log.error("[Channel:{}] 排队任务 {} 执行失败: {}",
                                 adapter.getChannelType(), nextTask.getTaskId(), e.getMessage())
                 );
+    }
+
+    /**
+     * 记录消息投递到 DeliveryManager，用于追踪和重试。
+     */
+    private void trackDelivery(String channelType, String targetId, String content) {
+        try {
+            DeliveryMessage deliveryMsg = DeliveryMessage.text(channelType, targetId, content);
+            deliveryManager.deliver(deliveryMsg);
+        } catch (Exception e) {
+            log.warn("[Channel:{}] Failed to track delivery: {}", channelType, e.getMessage());
+        }
     }
 }

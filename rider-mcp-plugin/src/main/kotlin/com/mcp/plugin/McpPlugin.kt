@@ -1,20 +1,26 @@
 package com.mcp.plugin
 
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.project.ProjectManagerListener
 import com.intellij.openapi.startup.ProjectActivity
 import com.mcp.plugin.event.IdeEventBus
 import com.mcp.plugin.event.IdeEventType
 import com.mcp.plugin.event.OutgoingEnvelope
-import com.mcp.plugin.transport.Transport
+import com.mcp.plugin.transport.WebSocketTransport
 
 class McpPlugin : ProjectActivity {
     override suspend fun execute(project: Project) {
         val eventBus = project.getService(IdeEventBus::class.java)
         eventBus.init()
 
-        val transport = Transport.instance
-        if (transport != null && transport.isConnected) {
+        ProjectManager.getInstance().addProjectManagerListener(
+            ProjectCloseListener(),
+            project
+        )
+
+        val transport = project.getService(WebSocketTransport::class.java)
+        if (transport.isConnected) {
             transport.send(OutgoingEnvelope(
                 type = "event",
                 sessionId = transport.sessionId,
@@ -33,6 +39,7 @@ class McpPlugin : ProjectActivity {
 
 class ProjectCloseListener : ProjectManagerListener {
     override fun projectClosed(project: Project) {
-        Transport.instance?.disconnect()
+        val transport = project.getService(WebSocketTransport::class.java)
+        transport.disconnect()
     }
 }

@@ -43,6 +43,9 @@ env/
 *.ipr
 *.iws
 
+# Visual Studio
+.vs/
+
 # Eclipse / STS
 .apt_generated
 .classpath
@@ -58,6 +61,17 @@ env/
 /dist/
 /nbdist/
 /.nb-gradle/
+
+# ==================== Gradle ====================
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# ==================== Documentation ====================
+mcp-agent-frontend/docs/
+mcp-agent-orchestrator/docs/
+rider-mcp-plugin/docs/
 
 # ==================== Node.js ====================
 node_modules/
@@ -83,6 +97,7 @@ huggingface/
 # ==================== Logs ====================
 *.log
 logs/
+mcp-agent-orchestrator/log/
 
 # ==================== OS Files ====================
 .DS_Store
@@ -93,6 +108,31 @@ desktop.ini
 .env
 .env.local
 .env.*.local
+*.env
+
+# ==================== Sensitive Config ====================
+mcp-agent-orchestrator/**/application.yml
+mcp-agent-orchestrator/**/application.properties
+!mcp-agent-orchestrator/**/application.yml.sample
+!mcp-agent-orchestrator/**/application.properties.sample
+
+# ==================== Secrets & Credentials ====================
+*.p12
+*.jks
+*.keystore
+*.pem
+*.key
+*.crt
+*.cer
+credentials*
+*secret*
+*Secret*
+
+# ==================== Generated & Archive ====================
+mcp-agent-orchestrator/generated/
+mcp-agent-orchestrator/voice-output/
+mcp-agent-orchestrator/archive/
+mcp-agent-orchestrator/_external/
 
 # ==================== Archive ====================
 *.zip

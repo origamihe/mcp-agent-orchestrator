@@ -58,7 +58,7 @@ import org.junit.platform.suite.api.Suite;
  * 日常开发：mvn test                       (仅第一层，不调 LLM)
  * LLM 验证：mvn test -P llm-test           (仅第二层，调 LLM)
  * 全部测试：mvn test -P all-tests          (两层都跑)
- * 指定模型：mvn test -P llm-test -Dollama.model=qwen2:7b
+ * 指定模型：mvn test -P llm-test -Dollama.model=qwen3:8b
  * 指定 URL：mvn test -P llm-test -Dollama.base.url=http://localhost:11434
  *
  * IDE 运行：直接运行此类，默认排除 @Tag("llm") 测试

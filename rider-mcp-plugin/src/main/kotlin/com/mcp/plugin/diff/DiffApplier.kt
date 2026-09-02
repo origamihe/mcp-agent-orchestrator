@@ -88,7 +88,7 @@ class DiffApplier(private val project: Project) {
     private fun applyPatchInMemory(original: String, diff: String): String? {
         return try {
             val lines = original.lines().toMutableList()
-            val diffLines = diff.lines()
+            val diffLines = diff.lines().filter { it.isNotBlank() }
             var currentLine = 0
             var i = 0
 
@@ -97,11 +97,18 @@ class DiffApplier(private val project: Project) {
                 when {
                     line.startsWith("@@") -> {
                         val match = Regex("@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@").find(line)
-                        currentLine = (match?.groupValues?.get(2)?.toInt() ?: 1) - 1
+                        if (match != null) {
+                            currentLine = (match.groupValues[2].toIntOrNull() ?: 1) - 1
+                        }
                         i++
                     }
                     line.startsWith("+") && !line.startsWith("+++") -> {
-                        lines.add(currentLine, line.removePrefix("+"))
+                        val content = line.removePrefix("+")
+                        if (currentLine <= lines.size) {
+                            lines.add(currentLine, content)
+                        } else {
+                            lines.add(content)
+                        }
                         currentLine++
                         i++
                     }
@@ -111,14 +118,23 @@ class DiffApplier(private val project: Project) {
                         }
                         i++
                     }
-                    line.startsWith(" ") -> {
+                    line.startsWith(" ") || line.startsWith("\\") -> {
                         currentLine++
                         i++
                     }
                     else -> i++
                 }
             }
-            lines.joinToString("\n")
+
+            val result = lines.joinToString("\n")
+            if (result.isEmpty() && original.isNotEmpty()) {
+                logger.warn("[DiffApplier] Patch produced empty result from non-empty original")
+                return null
+            }
+            result
+        } catch (e: IndexOutOfBoundsException) {
+            logger.error("[DiffApplier] Patch failed (index error): ${e.message}")
+            null
         } catch (e: Exception) {
             logger.error("[DiffApplier] Patch failed: ${e.message}")
             null

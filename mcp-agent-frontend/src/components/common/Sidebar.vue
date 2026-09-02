@@ -1,22 +1,30 @@
 <template>
-    <nav class="sidebar">
-        <div class="sidebar-logo">
-            <span class="logo-text">MCP Agent</span>
-            <span class="logo-subtitle">Admin Console</span>
-        </div>
+    <nav :class="['sidebar', { collapsed: !isExpanded }]">
+        <router-link to="/" class="sidebar-logo" @click="isExpanded = true">
+            <span class="logo-text">{{ isExpanded ? 'MCP Agent' : 'MCP' }}</span>
+            <span v-if="isExpanded" class="logo-subtitle">Admin Console</span>
+        </router-link>
         <ul class="sidebar-nav">
             <li
                 v-for="item in navItems"
-                :key="item.id"
-                :class="['nav-item', { active: activeTab === item.id }]"
-                @click="handleNavClick(item.id)"
+                :key="item.path"
             >
-                <component :is="iconComponent(item.icon)" class="nav-icon" />
-                <span class="nav-label">{{ item.label }}</span>
-                <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
+                <router-link
+                    :to="item.path"
+                    :class="['nav-item', { active: isActive(item.path) }]"
+                    :title="item.label"
+                >
+                    <component :is="item.icon" class="nav-icon" />
+                    <span v-if="isExpanded" class="nav-label">{{ item.label }}</span>
+                    <span v-if="isExpanded && item.badge" class="nav-badge">{{ item.badge }}</span>
+                </router-link>
             </li>
         </ul>
-        <div class="sidebar-footer">
+        <button class="sidebar-toggle" @click="isExpanded = !isExpanded" :title="isExpanded ? '收起' : '展开'">
+            <ChevronLeftIcon v-if="isExpanded" class="toggle-icon" />
+            <ChevronRightIcon v-else class="toggle-icon" />
+        </button>
+        <div class="sidebar-footer" v-if="isExpanded">
             <span class="version">v2.0 · Workspace First</span>
         </div>
     </nav>
@@ -24,55 +32,45 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { AgentFeature } from '@/types/agent'
+import { useRoute } from 'vue-router'
 import {
-  HomeIcon,
-  FolderOpenIcon,
-  ComputerDesktopIcon,
-  ChatBubbleLeftRightIcon,
-  CpuChipIcon,
-  UserGroupIcon,
-  Cog6ToothIcon,
-  BoltIcon,
-  SquaresPlusIcon,
+    HomeIcon,
+    ComputerDesktopIcon,
+    ChatBubbleLeftRightIcon,
+    Cog6ToothIcon,
+    SquaresPlusIcon,
+    BookOpenIcon,
+    WrenchScrewdriverIcon,
+    ShieldCheckIcon,
+    ClockIcon,
+    DocumentTextIcon,
+    CircleStackIcon,
+    ChevronLeftIcon,
+    ChevronRightIcon,
 } from '@heroicons/vue/24/outline'
 
-const activeTab = ref<AgentFeature>('dashboard')
+const route = useRoute()
+const isExpanded = ref(true)
 
 const navItems = [
-    { id: 'dashboard' as AgentFeature, label: '仪表盘', icon: 'home' },
-    { id: 'workspaces' as AgentFeature, label: '工作空间', icon: 'folder-open' },
-    { id: 'hosts' as AgentFeature, label: '宿主管理', icon: 'computer-desktop' },
-    { id: 'agents' as AgentFeature, label: 'Agent 管理', icon: 'squares-plus' },
-    { id: 'chat' as AgentFeature, label: '调试对话', icon: 'chat-bubble' },
-    { id: 'skills' as AgentFeature, label: '技能管理', icon: 'cpu-chip' },
-    { id: 'prompt-manager' as AgentFeature, label: '角色管理', icon: 'user-group' },
-    { id: 'settings' as AgentFeature, label: '系统配置', icon: 'cog' },
+    { path: '/', label: '仪表盘', icon: HomeIcon },
+    { path: '/agents', label: 'Agent 管理', icon: SquaresPlusIcon },
+    { path: '/runs', label: '执行历史', icon: ClockIcon },
+    { path: '/memory', label: '记忆管理', icon: CircleStackIcon },
+    { path: '/knowledge', label: '知识库', icon: BookOpenIcon },
+    { path: '/tools', label: '工具管理', icon: WrenchScrewdriverIcon },
+    { path: '/policies', label: '安全策略', icon: ShieldCheckIcon },
+    { path: '/hosts', label: '宿主管理', icon: ComputerDesktopIcon },
+    { path: '/sessions', label: '会话', icon: ChatBubbleLeftRightIcon },
+    { path: '/logs', label: '日志', icon: DocumentTextIcon },
+    { path: '/settings', label: '系统配置', icon: Cog6ToothIcon },
 ]
 
-const emit = defineEmits<{
-    (e: 'navigate', feature: AgentFeature): void
-}>()
-
-const iconMap: Record<string, any> = {
-  'home': HomeIcon,
-  'folder-open': FolderOpenIcon,
-  'computer-desktop': ComputerDesktopIcon,
-  'chat-bubble': ChatBubbleLeftRightIcon,
-  'cpu-chip': CpuChipIcon,
-  'user-group': UserGroupIcon,
-  'cog': Cog6ToothIcon,
-  'bolt': BoltIcon,
-  'squares-plus': SquaresPlusIcon,
-}
-
-function iconComponent(name: string) {
-  return iconMap[name] || null
-}
-
-function handleNavClick(id: AgentFeature) {
-    activeTab.value = id
-    emit('navigate', id)
+function isActive(path: string): boolean {
+    if (path === '/') {
+        return route.path === '/'
+    }
+    return route.path.startsWith(path)
 }
 </script>
 
@@ -87,13 +85,25 @@ function handleNavClick(id: AgentFeature) {
     flex-direction: column;
     flex-shrink: 0;
     border-right: 1.5px solid rgba(255,255,255,0.6);
-    box-shadow: 4px 0 24px rgba(106, 133, 255, 0.08);
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+}
+
+.sidebar.collapsed {
+    width: 64px;
 }
 
 .sidebar-logo {
     padding: 24px 20px 16px;
     text-align: center;
     border-bottom: 1.5px solid rgba(255,255,255,0.5);
+    text-decoration: none;
+    display: block;
+    transition: padding 0.3s;
+}
+
+.sidebar.collapsed .sidebar-logo {
+    padding: 20px 12px 14px;
 }
 
 .logo-text {
@@ -103,6 +113,10 @@ function handleNavClick(id: AgentFeature) {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+}
+
+.sidebar.collapsed .logo-text {
+    font-size: 18px;
 }
 
 .logo-subtitle {
@@ -122,6 +136,10 @@ function handleNavClick(id: AgentFeature) {
     gap: 4px;
 }
 
+.sidebar.collapsed .sidebar-nav {
+    padding: 16px 8px;
+}
+
 .nav-item {
     display: flex;
     align-items: center;
@@ -133,6 +151,14 @@ function handleNavClick(id: AgentFeature) {
     font-weight: 500;
     border-radius: 14px;
     color: #444;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.sidebar.collapsed .nav-item {
+    padding: 12px;
+    justify-content: center;
+    gap: 0;
 }
 
 .nav-item:hover {
@@ -149,9 +175,10 @@ function handleNavClick(id: AgentFeature) {
 }
 
 .nav-icon {
-  transition: transform 0.3s ease;
-  width: 24px;
-  height: 24px;
+    transition: transform 0.3s ease;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
 }
 
 .nav-item:hover .nav-icon {
@@ -160,7 +187,6 @@ function handleNavClick(id: AgentFeature) {
 
 .nav-badge {
     margin-left: auto;
-    background: rgba(255, 82, 82, 0.15);
     color: #ff5252;
     font-size: 11px;
     font-weight: 600;
@@ -168,8 +194,30 @@ function handleNavClick(id: AgentFeature) {
     border-radius: 10px;
 }
 
+.sidebar-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    border: none;
+    border-top: 1.5px solid rgba(255,255,255,0.5);
+    background: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: color 0.2s;
+}
+
+.sidebar-toggle:hover {
+    color: #667eea;
+}
+
+.toggle-icon {
+    width: 20px;
+    height: 20px;
+}
+
 .sidebar-footer {
-    padding: 16px 20px;
+    padding: 12px 20px;
     border-top: 1.5px solid rgba(255,255,255,0.5);
     text-align: center;
 }

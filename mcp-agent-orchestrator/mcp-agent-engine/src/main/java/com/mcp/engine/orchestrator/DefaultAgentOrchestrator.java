@@ -46,6 +46,10 @@ import com.mcp.engine.reflection.SkillLibraryService;
 import com.mcp.engine.reflection.TaskEvaluator;
 import com.mcp.engine.evolution.StrategyEvolutionManager;
 import com.mcp.engine.sanitizer.ResponseSanitizer;
+import com.mcp.engine.trace.ContractVerifier;
+import com.mcp.engine.trace.SessionEventStore;
+import com.mcp.engine.trace.SessionTrace;
+import com.mcp.engine.trace.SessionTraceHolder;
 import com.mcp.engine.workspace.WorkspaceService;
 import com.mcp.common.channel.IntentType;
 import com.mcp.common.channel.RecallMode;
@@ -138,13 +142,19 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
     private final GroupConversationContextAssembler groupConversationContextAssembler;
 
+    private final SessionEventStore sessionEventStore = new SessionEventStore.InMemory();
+
+    SessionEventStore getSessionEventStore() {
+        return sessionEventStore;
+    }
+
     private final Map<String, Agent> agents = new ConcurrentHashMap<>();
 
     private final Map<String, ConversationContext> conversationContexts = new ConcurrentHashMap<>();
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private static final int MAX_PLAN_STEPS = 16;
+    private static final int MAX_PLAN_STEPS = OrchestratorConstants.MAX_PLAN_STEPS;
 
     @Value("${recall.max-history-tokens:5000}")
     private int maxHistoryTokens;
@@ -283,6 +293,14 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         ContextRequirement requirement = determineContextRequirement(request, state, workingCtx);
         workingCtx.setLastContextType(requirement);
 
+        SessionTraceHolder.start(sessionId, sessionEventStore);
+        SessionTrace trace = SessionTraceHolder.current();
+        trace.recordUserMessage(request, request.length());
+        trace.recordContextClassification(requirement.name(),
+                "hasActiveDoc=" + workingCtx.hasActiveDocument() + ", isGame=" + state.isGameMode(),
+                workingCtx.hasActiveDocument(), state.isGameMode(),
+                workingCtx.getActiveContextSource() != null ? workingCtx.getActiveContextSource().name() : "NONE");
+
         long decisionTime = System.currentTimeMillis() - startTime;
         log.info("[Orchestrator] ContextRequirement: {} | session={} | hasActiveDoc={} | isGame={} | source={} | decisionTime={}ms",
                 requirement, sessionId, workingCtx.hasActiveDocument(),
@@ -291,7 +309,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         if (identity.groupId() != null) {
             String threadId = ctx.getThreadId();
             String groupConvCtx = groupConversationContextAssembler
-                    .assemble(identity.groupId(), identity.userId(), threadId, request)
+                    .assemble(identity.groupId(), identity.userId(), threadId, request, ctx.getBotUserId())
                     .toPromptText();
             ctx = RequestContext.builder()
                     .identity(identity)
@@ -305,17 +323,18 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     .systemPrompt(ctx.getSystemPrompt())
                     .groupConversationContext(groupConvCtx)
                     .build();
+            trace.recordContextInjection("GROUP_CONVERSATION", groupConvCtx.length(), "group conversation assembled");
             log.info("[Orchestrator] GroupConversationContext assembled: groupId={}, threadId={}, chars={}",
                     identity.groupId(), threadId, groupConvCtx.length());
         }
 
         String currentTask = workingCtx.getCurrentTask();
+        Mono<String> result;
         if (currentTask != null && currentTask.startsWith("SEARCH:")) {
             log.info("[Orchestrator] Detected SEARCH task, routing to SearchAgent: session={}", sessionId);
-            return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
-        }
-
-        if (currentTask != null && (currentTask.startsWith("DOCX_GENERATION:") || currentTask.startsWith("PPT_GENERATION:"))) {
+            trace.recordAgentSelection("SearchAgent", "SEARCH_TASK");
+            result = processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
+        } else if (currentTask != null && (currentTask.startsWith("DOCX_GENERATION:") || currentTask.startsWith("PPT_GENERATION:"))) {
             log.info("[Orchestrator] Detected {} task, session={}",
                     currentTask.startsWith("DOCX_GENERATION:") ? "DOCX_GENERATION" : "PPT_GENERATION", sessionId);
 
@@ -325,30 +344,41 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             ToolPipeline pipeline = pipelineRegistry.get(pipelineId);
             if (pipeline != null) {
                 log.info("[Orchestrator] Pipeline route: {} → {} | session={}", currentTask, pipelineId, sessionId);
-                return processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline);
+                trace.recordAgentSelection("Pipeline", pipelineId);
+                result = processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline);
+            } else {
+                log.info("[Orchestrator] Routing to SearchAgent: session={}", sessionId);
+                trace.recordAgentSelection("SearchAgent", "DOCX_GENERATION_TASK");
+                result = processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
             }
-
-            log.info("[Orchestrator] Routing to SearchAgent: session={}", sessionId);
-            return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
+        } else {
+            result = processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime, userRole, requirement, workingCtx);
         }
-
-        return processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime, userRole, requirement, workingCtx);
+        return result.doFinally(signalType -> {
+            SessionTrace t = SessionTraceHolder.currentOrNull();
+            if (t != null) {
+                try {
+                    t.close();
+                    ContractVerifier.ContractReport report = ContractVerifier.createDefault().verify(t.getEvents());
+                    log.info("[Trace] Contract verification: {} passed, {} failed | session={}",
+                            report.passed(), report.failed(), sessionId);
+                    if (!report.allPassed()) {
+                        log.warn("[Trace] Contract violations: {}", report);
+                    }
+                } finally {
+                    SessionTraceHolder.end();
+                }
+            }
+        });
     }
 
-    private static final Pattern WINDOWS_PATH_PATTERN =
-            Pattern.compile("[A-Za-z]:\\\\\\S+", Pattern.CASE_INSENSITIVE);
+    private static final Pattern WINDOWS_PATH_PATTERN = OrchestratorConstants.WINDOWS_PATH_PATTERN;
 
-    private static final Pattern FILENAME_PATTERN =
-            Pattern.compile("[^\\s.,;:!?，。；：！？\"'<>`|]+\\.\\w{1,10}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern FILENAME_PATTERN = OrchestratorConstants.FILENAME_PATTERN;
 
-    private static final Set<String> TEXT_EXTENSIONS = Set.of(
-            ".txt", ".md", ".java", ".py", ".js", ".ts", ".json", ".xml",
-            ".yaml", ".yml", ".properties", ".gradle", ".html", ".css", ".sql",
-            ".sh", ".bat", ".cfg", ".conf", ".ini", ".log", ".csv", ".kt",
-            ".go", ".rs", ".c", ".cpp", ".h", ".hpp", ".cs", ".php", ".rb", ".scala"
-    );
+    private static final Set<String> TEXT_EXTENSIONS = OrchestratorConstants.TEXT_EXTENSIONS;
 
-    private static final Set<String> DOCUMENT_EXTENSIONS = Set.of(".docx", ".pdf");
+    private static final Set<String> DOCUMENT_EXTENSIONS = OrchestratorConstants.DOCUMENT_EXTENSIONS;
 
     private static boolean isTextFile(Path path) {
         String name = path.getFileName().toString().toLowerCase();
@@ -550,7 +580,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         }
     }
 
-    private static final int MIN_ARTIFACT_RESPONSE_LENGTH = 200;
+    private static final int MIN_ARTIFACT_RESPONSE_LENGTH = OrchestratorConstants.MIN_ARTIFACT_RESPONSE_LENGTH;
 
     private boolean shouldSkipArtifactPersistence(String response) {
         if (response == null || response.trim().isEmpty()) return true;
@@ -560,8 +590,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         return false;
     }
 
-    private static final int MIN_MEMORY_LIFECYCLE_REQUEST_LENGTH = 10;
-    private static final int MIN_MEMORY_LIFECYCLE_TOTAL_LENGTH = 300;
+    private static final int MIN_MEMORY_LIFECYCLE_REQUEST_LENGTH = OrchestratorConstants.MIN_MEMORY_LIFECYCLE_REQUEST_LENGTH;
+    private static final int MIN_MEMORY_LIFECYCLE_TOTAL_LENGTH = OrchestratorConstants.MIN_MEMORY_LIFECYCLE_TOTAL_LENGTH;
 
     private boolean shouldSkipMemoryLifecycle(String request, String response) {
         if (request == null || request.trim().isEmpty()) return true;
@@ -710,9 +740,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         };
     }
 
-    private static final Pattern FOLLOW_UP_REFERENCE_PATTERN =
-            Pattern.compile("(这个|那个|它|其|该|上次|刚刚|刚才).*(?:文件|prompt|代码|文档|内容)",
-                    Pattern.CASE_INSENSITIVE);
+    private static final Pattern FOLLOW_UP_REFERENCE_PATTERN = OrchestratorConstants.FOLLOW_UP_REFERENCE_PATTERN;
 
     private String buildFollowUpFileContext(String request, Workspace workspace, String sessionId) {
         if (workspace == null || workspace.getOpenedFiles().isEmpty()) {
@@ -941,7 +969,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         return promptMono.flatMapMany(resolvedPrompt -> {
             String groupConvCtx = identity.groupId() != null
                     ? groupConversationContextAssembler
-                            .assemble(identity.groupId(), identity.userId(), null, request)
+                            .assemble(identity.groupId(), identity.userId(), null, request, null)
                             .toPromptText()
                     : null;
 
@@ -1109,19 +1137,18 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
     /**
      * 搜索相关意图检测（classifyRequiredSkills 与 likelyNeedsToolsKeyword 共用）。
+     * P1修复：移除过于宽泛的关键词（了解、研究、事件、动态、资料、信息、find、lookup 等），
+     * 仅保留明确的搜索/检索动词，避免纯对话问题被误判为 SEARCH。
      */
     private boolean isSearchRelated(String lower) {
         return lower.contains("搜索") || lower.contains("search") || lower.contains("查找")
                 || lower.contains("查询") || lower.contains("最新") || lower.contains("新闻")
-                || lower.contains("资料") || lower.contains("信息") || lower.contains("搜")
-                || lower.contains("查一下") || lower.contains("搜一下") || lower.contains("找一下")
+                || lower.contains("搜一下") || lower.contains("找一下")
                 || lower.contains("帮我搜") || lower.contains("帮我查") || lower.contains("帮我找")
                 || lower.contains("再搜") || lower.contains("重新搜") || lower.contains("搜一次")
                 || lower.contains("检索") || lower.contains("搜寻") || lower.contains("搜集")
-                || lower.contains("收集") || lower.contains("了解") || lower.contains("调研")
-                || lower.contains("研究") || lower.contains("热点") || lower.contains("事件")
-                || lower.contains("动态") || lower.contains("报道") || lower.contains("资讯")
-                || lower.contains("find") || lower.contains("lookup");
+                || lower.contains("收集") || lower.contains("调研")
+                || lower.contains("热点") || lower.contains("报道") || lower.contains("资讯");
     }
 
     @Override
@@ -1914,7 +1941,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         MemoryIdentity identity = ctx.getIdentity();
         String sessionId = identity.sessionId();
 
-        return Mono.justOrEmpty(agentRegistry.getAgent("search-agent"))
+        return Mono.justOrEmpty(agentRegistry.getAgent(OrchestratorConstants.AGENT_SEARCH))
                 .switchIfEmpty(resolveBestAgentKeyword(request)
                         .doOnNext(agent -> log.info(
                                 "[Orchestrator] SearchAgent not in registry, fallback keyword routing to: {} | session={}",
@@ -1968,6 +1995,10 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     long memElapsed = System.currentTimeMillis() - memStart;
                     log.info("[DIAG-Perf] FastPath[NONE] memory loading: {}ms | memCtxLen={}",
                             memElapsed, memCtx != null ? memCtx.length() : 0);
+                    if (memCtx != null && !memCtx.isEmpty()) {
+                        SessionTrace t = SessionTraceHolder.currentOrNull();
+                        if (t != null) t.recordContextInjection("MEMORY", memCtx.length(), "FastPath[NONE] memory context");
+                    }
                 })
                 .flatMap(memoryContext -> {
                     BuildContext buildCtx = BuildContext.builder()
@@ -1982,6 +2013,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             .build();
 
                     PromptAssemblyResult assembly = agentRuntime.assemble(buildCtx, PromptPolicy.CHAT_LIGHT);
+                    SessionTrace t = SessionTraceHolder.currentOrNull();
+                    if (t != null) t.recordSystemPrompt("CHAT_LIGHT", assembly.assembledPrompt().length(), assembly.layerCount());
                     String fullPrompt = assembly.toFullPrompt(memoryContext,
                             "", "", "", PromptEnricher.EnrichmentResult.empty());
 
@@ -2010,6 +2043,20 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 .onErrorResume(error -> handleFastPathError(error));
     }
 
+    /**
+     * SEARCH FastPath：路由到 SearchAgent 执行搜索任务。
+     *
+     * 流程：
+     * 1. 加载记忆和历史上下文
+     * 2. 从 AgentRegistry 获取 SearchAgent（无则回退关键词路由）
+     * 3. 构建 LLMRequest 并调用 SearchAgent.execute()
+     * 4. 保存对话历史 → 触发记忆生命周期
+     *
+     * 与 CONVERSATION FastPath 的区别：
+     * - 不注入群聊上下文（搜索场景不需要群聊对话背景）
+     * - 不注入工作空间上下文
+     * - 使用 SearchAgent 的 system prompt 和工具集
+     */
     private Mono<String> processFastPathSearch(RequestContext ctx, String resolvedSystemPrompt,
                                                 long startTime, UserRole userRole,
                                                 WorkingContext workingCtx) {
@@ -2034,7 +2081,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     memoryContext != null ? memoryContext.length() : 0,
                     historyContext != null ? historyContext.length() : 0);
 
-            return Mono.justOrEmpty(agentRegistry.getAgent("search-agent"))
+            return Mono.justOrEmpty(agentRegistry.getAgent(OrchestratorConstants.AGENT_SEARCH))
                     .switchIfEmpty(resolveBestAgentKeyword(request)
                             .doOnNext(agent -> log.info(
                                     "[Orchestrator] SearchAgent not in registry, fallback keyword routing to: {} | session={}",
@@ -2095,6 +2142,17 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             String historyContext = tuple.getT2();
             long memElapsed = System.currentTimeMillis() - memStart;
 
+            // P0修复：当 ChatHistoryService 返回空时，从群聊上下文构建回退历史
+            if (historyContext == null || historyContext.isBlank() || historyContext.length() < 50) {
+                int originalLen = historyContext != null ? historyContext.length() : 0;
+                String groupConvCtx = ctx.getGroupConversationContext();
+                if (groupConvCtx != null && !groupConvCtx.isBlank()) {
+                    historyContext = groupConvCtx;
+                    log.info("[DIAG-FallbackHistory] ChatHistory为空({} chars)，使用群聊上下文回退历史: {} chars",
+                            originalLen, historyContext.length());
+                }
+            }
+
             log.info("[DIAG-Perf] FastPath[CONVERSATION] memory+history loading: {}ms | memCtxLen={} | histCtxLen={}",
                     memElapsed,
                     memoryContext != null ? memoryContext.length() : 0,
@@ -2112,7 +2170,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     .state(ctx.getSessionState())
                     .workingContext(workingCtx)
                     .groupConversationContext(ctx.getGroupConversationContext())
-                    .extension("historyContext", historyContext)
+                    .extension(OrchestratorConstants.EXTENSION_HISTORY_CONTEXT, historyContext)
                     .build();
 
             PromptAssemblyResult assembly = agentRuntime.assemble(buildCtx, PromptPolicy.CHAT_LIGHT);
@@ -2202,8 +2260,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     .state(ctx.getSessionState())
                     .workingContext(workingCtx)
                     .groupConversationContext(ctx.getGroupConversationContext())
-                    .extension("historyContext", historyContext)
-                    .extension("artifactContext", artifactContext)
+                    .extension(OrchestratorConstants.EXTENSION_HISTORY_CONTEXT, historyContext)
+                    .extension(OrchestratorConstants.EXTENSION_ARTIFACT_CONTEXT, artifactContext)
                     .build();
 
             boolean isGame = ctx.getSessionState() != null && ctx.getSessionState().isGameMode();
@@ -2328,7 +2386,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     .state(ctx.getSessionState())
                     .workingContext(workingCtx)
                     .groupConversationContext(ctx.getGroupConversationContext())
-                    .extension("artifactContext", artifactContext)
+                    .extension(OrchestratorConstants.EXTENSION_ARTIFACT_CONTEXT, artifactContext)
                     .build();
 
             PromptAssemblyResult assembly = agentRuntime.assemble(buildCtx, PromptPolicy.CHAT);

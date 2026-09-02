@@ -62,11 +62,13 @@ public class GroupConversationContext {
     /**
      * 按优先级层次格式化为 Prompt 文本。
      * 顺序：Current Thread → Recent Group Context → Relevant Group Memory
+     * P0修复：添加优先级提示，防止 LLM 被【最近群聊上下文】中的无关话题干扰。
      */
     public String toPromptText() {
         if (isEmpty()) return "";
 
         StringBuilder sb = new StringBuilder();
+        sb.append("【重要：请优先回应【当前对话线程】中的问题，【最近群聊上下文】和【相关群聊记忆】仅作为背景参考，不要混淆不同用户的问题】\n\n");
 
         if (currentThread != null && !currentThread.isEmpty()) {
             sb.append("【当前对话线程】\n");

@@ -6,7 +6,8 @@ import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.mcp.plugin.event.IdeEventBus
 import com.mcp.plugin.event.OutgoingEnvelope
-import com.mcp.plugin.transport.Transport
+import com.mcp.plugin.util.LanguageDetector
+import com.mcp.plugin.transport.WebSocketTransport
 
 data class PromptDef(
     val id: String,
@@ -79,7 +80,7 @@ class PromptRegistry : DefaultActionGroup("MCP Agent", true) {
                     val selectedCode = editor?.selectionModel?.selectedText?.takeIf { it.isNotBlank() }
                         ?: editor?.document?.text ?: ""
 
-                    val transport = Transport.instance ?: return
+                    val transport = project.getService(WebSocketTransport::class.java)
                     val eventBus = project.getService(IdeEventBus::class.java)
 
                     val fullPrompt = "${prompt.prompt}\n\n```\n$selectedCode\n```"
@@ -103,19 +104,7 @@ class PromptRegistry : DefaultActionGroup("MCP Agent", true) {
             "currentFilePath" to (currentFile?.path),
             "cursorLine" to (editor?.let { it.document.getLineNumber(it.caretModel.primaryCaret.offset) + 1 } ?: 0),
             "selectedCode" to (editor?.selectionModel?.selectedText?.takeIf { it.isNotBlank() }),
-            "language" to (currentFile?.let { detectLanguage(it) })
+            "language" to (currentFile?.let { LanguageDetector.detect(it) })
         )
-    }
-
-    private fun detectLanguage(file: com.intellij.openapi.vfs.VirtualFile): String? {
-        return when (file.extension?.lowercase()) {
-            "java" -> "java"
-            "kt", "kts" -> "kotlin"
-            "cs" -> "csharp"
-            "py" -> "python"
-            "js" -> "javascript"
-            "ts" -> "typescript"
-            else -> file.fileType.name.lowercase()
-        }
     }
 }

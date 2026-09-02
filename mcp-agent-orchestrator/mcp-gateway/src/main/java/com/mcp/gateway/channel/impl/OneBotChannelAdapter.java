@@ -50,6 +50,11 @@ public class OneBotChannelAdapter implements ChannelAdapter {
     }
 
     @Override
+    public String getBotUserId() {
+        return qqNumber;
+    }
+
+    @Override
     public Map<String, Object> getStatus() {
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("channel", "qq");

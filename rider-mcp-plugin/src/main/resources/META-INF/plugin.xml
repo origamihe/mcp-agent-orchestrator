@@ -26,6 +26,12 @@
         <applicationService
                 serviceImplementation="com.mcp.plugin.McpPluginSettings"/>
 
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.mcp.plugin.settings.McpPluginSettingsConfigurable"
+                id="com.mcp.plugin.settings"
+                displayName="MCP Agent"/>
+
         <!-- 项目级服务 -->
         <projectService
                 serviceImplementation="com.mcp.plugin.event.IdeEventBus"/>

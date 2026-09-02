@@ -35,6 +35,11 @@
             <artifactId>mcp-agent-engine</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>io.github.origamihe</groupId>
+            <artifactId>mcp-tools</artifactId>
+        </dependency>
+
         <!-- WebFlux + SSE 支持 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -8,19 +8,16 @@ export const useAppStore = defineStore('app', () => {
     const connectionStatus = ref('未连接')
     const selectedModelId = ref('')
     const activeFeature = ref<AgentFeature>('dashboard')
-
     const availableModels = ref<LlmModelInfo[]>([])
+    const sidebarCollapsed = ref(false)
 
-    const statusClass = computed(() => {
-        if (isConnected.value) return 'status-connected'
-        return 'status-disconnected'
-    })
+    const statusClass = computed(() =>
+        isConnected.value ? 'status-connected' : 'status-disconnected',
+    )
 
     const currentModel = computed(() => {
         if (!selectedModelId.value) return null
-        return availableModels.value.find(
-            (m) => m.configId === selectedModelId.value,
-        ) ?? null
+        return availableModels.value.find((m) => m.configId === selectedModelId.value) ?? null
     })
 
     function setConnected(val: boolean) {
@@ -40,17 +37,23 @@ export const useAppStore = defineStore('app', () => {
         activeFeature.value = feature
     }
 
+    function toggleSidebar() {
+        sidebarCollapsed.value = !sidebarCollapsed.value
+    }
+
     return {
         isConnected,
         connectionStatus,
         selectedModelId,
         activeFeature,
         availableModels,
+        sidebarCollapsed,
         statusClass,
         currentModel,
         setConnected,
         setModels,
         selectModel,
         setActiveFeature,
+        toggleSidebar,
     }
 })

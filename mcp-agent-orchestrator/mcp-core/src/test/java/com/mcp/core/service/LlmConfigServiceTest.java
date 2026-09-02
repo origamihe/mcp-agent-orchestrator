@@ -94,7 +94,7 @@ class LlmConfigServiceTest {
             StepVerifier.create(service.getDefaultConfig())
                     .expectNextMatches(config ->
                             config.getProvider() == LlmProviderType.LOCAL_OLLAMA
-                                    && "qwen2:7b".equals(config.getModelName()))
+                                    && "qwen3:8b".equals(config.getModelName()))
                     .verifyComplete();
         }
 

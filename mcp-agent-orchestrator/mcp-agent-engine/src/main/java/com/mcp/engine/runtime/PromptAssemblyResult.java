@@ -26,23 +26,6 @@ public record PromptAssemblyResult(
     private static final int MAX_TOTAL_PROMPT_LENGTH = 8000;
 
     /**
-     * 将 memoryContext、artifactContext、historyContext 和 enrichment
-     * 合并到 assembledPrompt 中，返回最终的 fullPrompt。
-     *
-     * 当总长度超过 {@link #MAX_TOTAL_PROMPT_LENGTH} 时，按优先级截断非核心上下文，
-     * 优先保留核心 System Prompt 和 enrichment 的完整性。
-     *
-     * @param historyContext 对话历史摘要，在 GAME 模式进入 System Prompt 以提升上下文权重
-     * @deprecated 请使用 {@link #toFullPrompt(String, String, String, String, PromptEnricher.EnrichmentResult)}
-     */
-    @Deprecated
-    public String toFullPrompt(String memoryContext, String artifactContext,
-                               String historyContext,
-                               PromptEnricher.EnrichmentResult enrichment) {
-        return toFullPrompt(memoryContext, artifactContext, "", historyContext, enrichment);
-    }
-
-    /**
      * 将 memoryContext、artifactContext、groupConversationContext、historyContext 和 enrichment
      * 合并到 assembledPrompt 中，返回最终的 fullPrompt。
      *

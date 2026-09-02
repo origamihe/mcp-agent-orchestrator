@@ -6,6 +6,8 @@ import com.mcp.engine.agent.Agent;
 import com.mcp.engine.agent.LLMRequest;
 import com.mcp.engine.agent.card.AgentCard;
 import com.mcp.engine.runtime.AgentRuntime;
+import com.mcp.engine.trace.SessionTrace;
+import com.mcp.engine.trace.SessionTraceHolder;
 import com.mcp.llm.client.ChatMessage;
 import com.mcp.llm.client.LlmClient;
 import com.mcp.llm.client.LlmToolResponse;
@@ -311,12 +313,20 @@ public class SearchAgent implements Agent {
 
         return llmClient.chatWithTools(messages, buildToolDefinitions())
                 .flatMap(response -> {
+                    List<LlmToolResponse.ToolCall> effectiveCalls = response.getToolCalls();
+
                     log.info("[SearchAgent Round {}] LLM response: hasToolCalls={}, contentLength={}, collectedToolResults={}",
                             round, response.hasToolCalls(),
                             response.getContent() != null ? response.getContent().length() : 0,
                             collectedToolResults.size());
 
-                    List<LlmToolResponse.ToolCall> effectiveCalls = response.getToolCalls();
+                    SessionTrace trace = SessionTraceHolder.currentOrNull();
+                    if (trace != null) {
+                        trace.recordToolDecision(
+                                effectiveCalls.isEmpty() ? "NONE" : effectiveCalls.get(0).getName(),
+                                response.hasToolCalls(),
+                                effectiveCalls.size());
+                    }
 
                     // 文本回退已在 SpringAiLlmClient.toLlmToolResponse() 中统一处理，
                     // 此处仅做防御性日志：如果仍然为空，说明 LLM 完全未尝试调用工具
@@ -336,18 +346,30 @@ public class SearchAgent implements Agent {
                                 effectiveCalls.stream().map(LlmToolResponse.ToolCall::getName).toList());
 
                         List<Mono<Map.Entry<LlmToolResponse.ToolCall, ToolResultEntry>>> tasks = effectiveCalls.stream()
-                                .map(tc -> executeSingleTool(tc).map(result -> {
-                                    String resultStr = toToolResultJson(tc, result);
-                                    Map<String, Object> parsedContent = extractParsedContent(resultStr, tc.getName());
-                                    log.info("[SearchAgent Round {}] RAW tool response for {}: {}",
-                                            round, tc.getName(),
-                                            resultStr.length() > 500
-                                                    ? resultStr.substring(0, 500) + "..."
-                                                    : resultStr);
-                                    return (Map.Entry<LlmToolResponse.ToolCall, ToolResultEntry>)
-                                            new java.util.AbstractMap.SimpleEntry<>(
-                                                    tc, new ToolResultEntry(tc.getName(), resultStr, parsedContent));
-                                }))
+                                .map(tc -> {
+                                    SessionTrace t = SessionTraceHolder.currentOrNull();
+                                    if (t != null) {
+                                        t.recordToolCall(tc.getName(),
+                                                tc.getArguments() != null ? tc.getArguments().toString() : "",
+                                                round);
+                                    }
+                                    return executeSingleTool(tc).map(result -> {
+                                        String resultStr = toToolResultJson(tc, result);
+                                        Map<String, Object> parsedContent = extractParsedContent(resultStr, tc.getName());
+                                        SessionTrace t2 = SessionTraceHolder.currentOrNull();
+                                        if (t2 != null) {
+                                            t2.recordToolResult(tc.getName(), true, resultStr.length(), round, null);
+                                        }
+                                        log.info("[SearchAgent Round {}] RAW tool response for {}: {}",
+                                                round, tc.getName(),
+                                                resultStr.length() > 500
+                                                        ? resultStr.substring(0, 500) + "..."
+                                                        : resultStr);
+                                        return (Map.Entry<LlmToolResponse.ToolCall, ToolResultEntry>)
+                                                new java.util.AbstractMap.SimpleEntry<>(
+                                                        tc, new ToolResultEntry(tc.getName(), resultStr, parsedContent));
+                                    });
+                                })
                                 .toList();
 
                         return Flux.merge(tasks)
@@ -504,6 +526,11 @@ public class SearchAgent implements Agent {
         List<SearchDocument> documents = new ArrayList<>();
 
         log.info("[SearchAgent] buildFinalResult: parsing {} tool result entries", toolResults.size());
+
+        SessionTrace trace = SessionTraceHolder.currentOrNull();
+        if (trace != null) {
+            trace.recordLlmResponse(finalAnswer != null ? finalAnswer.length() : 0, "search-agent", 0);
+        }
 
         for (ToolResultEntry entry : toolResults) {
             try {

@@ -211,7 +211,7 @@ function handleSend() {
         expertContext.value.question = msg
         addMessage('user', '🐝 专家模式: ' + msg)
         const phase1Prompt = buildExpertPhase1Prompt(msg)
-        executeTask('expert-mode', phase1Prompt, props.selectedModelId || undefined, undefined, selectedRole.value || undefined)
+        executeTask('chat', phase1Prompt, props.selectedModelId || undefined, undefined, selectedRole.value || undefined)
     } else {
         const feature = (enableWebSearch.value || hasUrl) ? 'web-search' : 'chat'
         const prefix = (enableWebSearch.value || hasUrl) ? '🔍 联网搜索: ' : ''
@@ -222,6 +222,16 @@ function handleSend() {
 }
 
 // 简易 Markdown 渲染：将纯文本转为支持换行和基础格式的 HTML
+function sanitizeUrl(url: string): string | null {
+    if (!url) return null
+    const trimmed = url.trim()
+    const lower = trimmed.toLowerCase()
+    if (lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('vbscript:')) {
+        return null
+    }
+    return trimmed.replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
 function renderContent(text: string): string {
     if (!text) return ''
     let html = text
@@ -232,7 +242,10 @@ function renderContent(text: string): string {
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
     html = html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     html = html.replace(/\*(.+?)\*/g, '<i>$1</i>')
-    html = html.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    html = html.replace(/\[(.+?)\]\((.+?)\)/g, (_: string, text: string, url: string) => {
+        const safe = sanitizeUrl(url)
+        return safe ? `<a href="${safe}" target="_blank" rel="noopener noreferrer">${text}</a>` : text
+    })
     html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>')
     html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>')
     html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>')

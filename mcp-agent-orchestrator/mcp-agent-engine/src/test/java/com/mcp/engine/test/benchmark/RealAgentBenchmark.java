@@ -35,7 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RealAgentBenchmark {
 
     private static final String OLLAMA_BASE_URL = System.getProperty("ollama.base.url", "http://localhost:11434");
-    private static final String MODEL_NAME = System.getProperty("ollama.model", "qwen2:7b");
+    private static final String MODEL_NAME = System.getProperty("ollama.model", "qwen3:8b");
     private static final Duration TIMEOUT = Duration.ofSeconds(120);
     private static final String BENCHMARK_DIR = "benchmark-results";
 

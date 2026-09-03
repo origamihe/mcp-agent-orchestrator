@@ -23,6 +23,12 @@ public class TraceEventEntity {
     @Column(length = 64, nullable = false)
     private String runId;
 
+    @Column(length = 64)
+    private String agentId;
+
+    @Column(length = 64)
+    private String sessionId;
+
     @Column
     private Long parentId;
 

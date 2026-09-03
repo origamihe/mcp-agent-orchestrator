@@ -32,25 +32,21 @@ CREATE TABLE IF NOT EXISTS mcp_agent.knowledge_documents (
 -- Create knowledge_chunks with conditional embedding type:
 -- Uses vector(1536) if pgvector is available, falls back to TEXT otherwise
 DO $$
-DECLARE
-    has_vector boolean;
 BEGIN
-    SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'vector') INTO has_vector;
-
-    IF has_vector THEN
-        EXECUTE '
-            CREATE TABLE IF NOT EXISTS mcp_agent.knowledge_chunks (
-                id              VARCHAR(64)     NOT NULL PRIMARY KEY,
-                document_id     VARCHAR(64)     NOT NULL,
-                content         TEXT            NOT NULL,
-                embedding       vector(1536),
-                chunk_index     INTEGER         NOT NULL DEFAULT 0,
-                metadata        JSONB,
-                created_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT fk_knowledge_chunks_doc FOREIGN KEY (document_id)
-                    REFERENCES mcp_agent.knowledge_documents(id) ON DELETE CASCADE
-            )';
-    ELSE
+    EXECUTE '
+        CREATE TABLE IF NOT EXISTS mcp_agent.knowledge_chunks (
+            id              VARCHAR(64)     NOT NULL PRIMARY KEY,
+            document_id     VARCHAR(64)     NOT NULL,
+            content         TEXT            NOT NULL,
+            embedding       vector(1536),
+            chunk_index     INTEGER         NOT NULL DEFAULT 0,
+            metadata        JSONB,
+            created_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_knowledge_chunks_doc FOREIGN KEY (document_id)
+                REFERENCES mcp_agent.knowledge_documents(id) ON DELETE CASCADE
+        )';
+EXCEPTION
+    WHEN OTHERS THEN
         EXECUTE '
             CREATE TABLE IF NOT EXISTS mcp_agent.knowledge_chunks (
                 id              VARCHAR(64)     NOT NULL PRIMARY KEY,
@@ -63,7 +59,7 @@ BEGIN
                 CONSTRAINT fk_knowledge_chunks_doc FOREIGN KEY (document_id)
                     REFERENCES mcp_agent.knowledge_documents(id) ON DELETE CASCADE
             )';
-    END IF;
+        RAISE NOTICE 'pgvector not available, embedding column created as TEXT';
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_docs_collection  ON mcp_agent.knowledge_documents(collection_id);

@@ -19,16 +19,33 @@
 │  │ 渠道适配层  │  │Agent编排 │  │ 文件生成/工具 │  │
 │  │ QQ/Web/API │  │ LLM调度  │  │DOCX/PPT/CosyVoice│  │
 │  └───────────┘  └──────────┘  └──────────────┘  │
+│                      │                           │
+│  ┌───────────────────▼────────────────────────┐  │
+│  │        Host Bridge / CapabilityRouter       │  │
+│  │      (安全控制面: Auth + Sandbox + Audit)    │  │
+│  └───────────────────┬────────────────────────┘  │
+└──────────────────────┼──────────────────────────┘
+                       │ WebSocket (ws://, ?token)
+┌──────────────────────▼──────────────────────────┐
+│              rider-mcp-plugin                   │
+│            (IntelliJ Plugin / Kotlin)            │
+│  ┌───────────┐  ┌──────────┐  ┌──────────────┐  │
+│  │Capability │  │  Diff    │  │  Path        │  │
+│  │ Adapter   │  │ Applier  │  │  Validator   │  │
+│  │ 13 个能力  │  │          │  │  纵深防御     │  │
+│  └───────────┘  └──────────┘  └──────────────┘  │
 └─────────────────────────────────────────────────┘
 ```
 
 ## 功能特性
 
-- **多渠道接入**：QQ Bot（OneBot 协议）、Web 前端、REST API
+- **多渠道接入**：QQ Bot（OneBot 协议）、Web 前端、REST API、IDE 插件（Rider/IntelliJ）
 - **语音模式**：中文 TTS 语音合成（CosyVoice），QQ 语音消息回复
-- **文件生成**：AI 驱动的 DOCX 和 PPT 文件生成
+- **文件生成**：AI 驱动的 DOCX、PPT、PDF、XLSX、HTML 文件生成
 - **实时监控**：WebSocket 推送文件下载链接到前端监控面板
-- **Agent 编排**：可配置的 LLM Agent 会话管理
+- **Agent 编排**：可配置的 LLM Agent 会话管理、多 Agent 协作流水线
+- **安全控制面**：L0-L5 工具风险分级、Workspace/Process/Container 三级沙箱隔离、Capability 授权与审计
+- **Agent 管理控制台**：14 个页面，涵盖 Agent 生命周期、Runtime 监控、数据管理、安全治理
 
 ## 环境要求
 
@@ -256,34 +273,57 @@ npm run dev
 ## 项目结构
 
 ```
-mcp-agent-orchestrator-main/
+mcp-agent-orchestrator/
 ├── mcp-agent-orchestrator/          # 后端（Java / Spring Boot）
 │   ├── mcp-bom/                     # 依赖版本管理
-│   ├── mcp-common/                  # 公共模块（DTO、接口）
-│   ├── mcp-core/                    # 核心模块（实体、服务、Repository）
-│   ├── mcp-tools/                   # 工具模块（DOCX/PPT 生成、注册中心）
+│   ├── mcp-common/                  # 公共模块（上下文对象、DTO、接口）
+│   ├── mcp-core/                    # 核心模块（Prompt 构建管线、ContextProvider）
+│   ├── mcp-agent-engine/            # Agent 引擎（编排、Pipeline、规划、记忆、反射）
+│   ├── mcp-gateway/                 # 网关模块（WebSocket、REST API、Host 桥接、安全控制面）
 │   ├── mcp-llm/                     # LLM 客户端（Ollama 集成）
-│   ├── mcp-agent-engine/            # Agent 引擎（ReAct 编排）
-│   ├── mcp-gateway/                 # 网关模块（渠道适配、WebSocket）
-│   └── mcp-starter/                 # 启动模块（配置、Flyway 迁移）
+│   ├── mcp-tools/                   # 工具模块（沙箱体系、文件生成、工具注册）
+│   ├── mcp-starter/                 # 启动模块（配置、Flyway 迁移）
+│   └── docs/                        # 架构文档
+│       ├── Architecture-Contract.md
+│       ├── MCP-Agent Workflow.md
+│       ├── MCP-Agent Test Workflow.md
+│       └── metrics-history.md
 ├── mcp-agent-frontend/              # 前端（Vue 3 + TypeScript）
-│   └── src/
-│       └── components/features/     # 功能组件
-│           ├── ChatPanel.vue        # 聊天面板
-│           ├── QqBotPanel.vue       # QQ Bot 监控面板
-│           ├── DocxGenerator.vue    # DOCX 文档生成
-│           ├── PptGenerator.vue     # PPT 演示文稿生成
-│           └── MainLayout.vue       # 主布局（WebSocket 路由）
+│   ├── src/
+│   │   ├── pages/                   # 15 个路由页面
+│   │   ├── stores/                  # 11 个 Pinia Store
+│   │   ├── api/                     # 9 个 API 模块
+│   │   ├── types/                   # 14 个类型文件
+│   │   ├── components/              # 7 个通用组件
+│   │   └── composables/             # 6 个组合式 API
+│   └── docs/                        # 架构文档
+│       ├── architecture-workflow.md
+│       └── product-redesign.md
+├── rider-mcp-plugin/                # IDE 插件（Kotlin / IntelliJ Platform）
+│   ├── src/
+│   │   └── main/kotlin/com/mcp/plugin/
+│   │       ├── capability/          # 13 个能力定义 + 适配器
+│   │       ├── transport/           # WebSocket 传输层
+│   │       ├── util/                # 语言检测 + 路径安全校验
+│   │       └── toolwindow/          # 聊天面板
+│   └── docs/                        # 安全审计文档
+│       ├── architecture-workflow.md
+│       ├── audit-report.md
+│       └── code-review-findings.md
 ├── cosyvoice-server/                # CosyVoice TTS 服务（Python）
 │   ├── main.py                      # FastAPI TTS 服务（端口 5001）
 │   ├── start.ps1                    # PowerShell 启动脚本
-│   ├── .venv/                       # Python 虚拟环境（Git 忽略）
 │   └── CosyVoice/                   # CosyVoice 模型源码
-├── tts_bridge.py                    # TTS 桥接服务（已弃用，保留兼容）
-├── tts_bridge_requirements.txt      # TTS Bridge 依赖（已弃用）
-├── start_tts_services.bat           # 旧版 TTS 启动脚本（已弃用）
 └── README.md
 ```
+
+## 文档索引
+
+| 模块 | README | 架构文档 |
+|------|--------|----------|
+| 前端 | [mcp-agent-frontend/README.md](mcp-agent-frontend/README.md) | [架构工作流与数据流](mcp-agent-frontend/docs/architecture-workflow.md) · [产品重定位](mcp-agent-frontend/docs/product-redesign.md) |
+| 后端 | [mcp-agent-orchestrator/README.md](mcp-agent-orchestrator/README.md) | [架构契约](mcp-agent-orchestrator/docs/Architecture-Contract.md) · [Agent 工作流](mcp-agent-orchestrator/docs/MCP-Agent%20Workflow.md) · [指标历史](mcp-agent-orchestrator/docs/metrics-history.md) |
+| 插件 | [rider-mcp-plugin/README.md](rider-mcp-plugin/README.md) | [架构与信任边界](rider-mcp-plugin/docs/architecture-workflow.md) · [安全审计](rider-mcp-plugin/docs/audit-report.md) |
 
 ## 许可证
 

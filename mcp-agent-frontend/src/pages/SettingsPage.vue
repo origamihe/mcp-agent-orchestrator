@@ -99,7 +99,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { LlmModelInfo } from '@/types/llm'
-import http from '@/utils/request'
+import http from '@/api/client'
 
 const availableModels = ref<LlmModelInfo[]>([])
 

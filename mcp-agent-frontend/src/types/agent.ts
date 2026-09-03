@@ -121,6 +121,11 @@ export interface AgentCard {
     supportsStreaming?: boolean
     maxConcurrentTasks?: number
     version?: string
+    status?: 'online' | 'idle' | 'offline' | 'active'
+    model?: string
+    modelId?: string
+    host?: string
+    sessionCount?: number
 }
 
 /** Agent 匹配结果 */

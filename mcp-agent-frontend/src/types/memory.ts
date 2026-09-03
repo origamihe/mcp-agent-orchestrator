@@ -1,11 +1,16 @@
 export type MemoryType =
-    | 'long_term'
-    | 'short_term'
-    | 'project'
-    | 'user'
-    | 'session'
-    | 'semantic'
-    | 'episodic'
+    | 'PROFILE'
+    | 'IDENTITY'
+    | 'PREFERENCE'
+    | 'HABIT'
+    | 'GOAL'
+    | 'PROJECT'
+    | 'FACT'
+    | 'RELATION'
+    | 'SKILL'
+    | 'SCHEDULE'
+    | 'TEMPORARY'
+    | 'EVENT'
 
 export interface MemoryEntry {
     id: string

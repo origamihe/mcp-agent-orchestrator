@@ -9,7 +9,6 @@ import com.intellij.ui.components.JBScrollPane
 import com.mcp.plugin.McpPluginSettings
 import com.mcp.plugin.capability.ALL_CAPABILITIES
 import com.mcp.plugin.capability.CapabilityAdapter
-import com.mcp.plugin.diff.DiffApplier
 import com.mcp.plugin.event.IdeEventBus
 import com.mcp.plugin.event.OutgoingEnvelope
 import com.mcp.plugin.event.Protocol
@@ -39,7 +38,6 @@ class ChatPanel(
     private val transport: Transport? = project.getService(WebSocketTransport::class.java)
     private val eventBus = project.getService(IdeEventBus::class.java)
     private val capabilityAdapter = project.getService(CapabilityAdapter::class.java)
-    private val diffApplier = project.getService(DiffApplier::class.java)
 
     private val chatArea = JTextPane().apply {
         isEditable = false
@@ -163,18 +161,20 @@ class ChatPanel(
                                 "apply_diff" -> {
                                     val filePath = action["filePath"] as? String ?: return@forEach
                                     val diff = action["diff"] as? String ?: return@forEach
+                                    logger.warn("[ChatPanel] apply_diff via reply action — should use capability_call for full security audit")
                                     val result = JOptionPane.showConfirmDialog(
                                         this, "Agent 建议修改: $filePath\n\n是否应用？",
                                         "Apply Diff", JOptionPane.YES_NO_OPTION
                                     )
                                     if (result == JOptionPane.YES_OPTION) {
-                                        diffApplier.applyDiff(filePath, diff)
+                                        capabilityAdapter.execute("apply_diff", mapOf("filePath" to filePath, "diff" to diff))
                                     }
                                 }
                                 "apply_full" -> {
                                     val filePath = action["filePath"] as? String ?: return@forEach
                                     val content = action["content"] as? String ?: return@forEach
-                                    diffApplier.applyFullContent(filePath, content)
+                                    logger.warn("[ChatPanel] apply_full via reply action — should use capability_call for full security audit")
+                                    capabilityAdapter.execute("apply_full_content", mapOf("filePath" to filePath, "content" to content))
                                 }
                                 "notify" -> {
                                     val title = action["title"] as? String ?: ""

@@ -74,11 +74,6 @@ const router = createRouter({
             component: () => import('@/pages/SettingsPage.vue'),
         },
         {
-            path: '/chat',
-            name: 'chat',
-            component: () => import('@/pages/ChatPage.vue'),
-        },
-        {
             path: '/:pathMatch(.*)*',
             name: 'not-found',
             component: () => import('@/pages/NotFoundPage.vue'),

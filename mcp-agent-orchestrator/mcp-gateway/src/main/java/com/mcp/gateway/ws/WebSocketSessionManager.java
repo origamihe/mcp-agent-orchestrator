@@ -12,12 +12,24 @@ public class WebSocketSessionManager {
 
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
 
+    private final Map<String, String> aliases = new ConcurrentHashMap<>();
+
     public void register(String sessionId, WebSocketSession session) {
         sessions.put(sessionId, session);
     }
 
+    public void registerAlias(String aliasSessionId, String originalSessionId) {
+        WebSocketSession session = sessions.get(originalSessionId);
+        if (session != null) {
+            sessions.put(aliasSessionId, session);
+            aliases.put(aliasSessionId, originalSessionId);
+        }
+    }
+
     public void unregister(String sessionId) {
         sessions.remove(sessionId);
+        aliases.entrySet().removeIf(e -> e.getValue().equals(sessionId));
+        aliases.remove(sessionId);
     }
 
     public void broadcast(String message) {

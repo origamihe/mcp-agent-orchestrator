@@ -46,4 +46,14 @@ public interface ChatSessionRepository extends JpaRepository<ChatSessionEntity, 
      */
     @Query("SELECT DISTINCT s FROM ChatSessionEntity s JOIN s.messages m WHERE m.sessionId = :sessionId")
     Optional<ChatSessionEntity> findWithMessages(@Param("sessionId") String sessionId);
+
+    /**
+     * 根据 Agent ID 查找所有会话
+     */
+    List<ChatSessionEntity> findByAgentIdOrderByLastActiveAtDesc(String agentId);
+
+    /**
+     * 根据 Agent ID 和状态查找会话
+     */
+    List<ChatSessionEntity> findByAgentIdAndStatusOrderByLastActiveAtDesc(String agentId, String status);
 }

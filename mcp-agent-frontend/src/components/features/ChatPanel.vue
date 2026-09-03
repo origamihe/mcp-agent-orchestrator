@@ -91,7 +91,7 @@ import { useChatHistory } from '@/composables/useChatHistory'
 import { useAgentTask } from '@/composables/useAgentTask'
 import type { WebSocketMessage, PromptInfo } from '@/types/agent'
 import { formatTimestamp } from '@/utils/format'
-import http from '@/utils/request'
+import http from '@/api/client'
 import { ChatBubbleLeftRightIcon, UserGroupIcon, CpuChipIcon, ClockIcon, TrashIcon, MagnifyingGlassIcon } from '@heroicons/vue/24/outline'
 
 const props = defineProps<{

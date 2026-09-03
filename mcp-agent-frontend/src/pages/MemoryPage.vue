@@ -8,11 +8,18 @@
         <div class="memory-toolbar">
             <select v-model="filterType" class="filter-select" @change="loadMemories">
                 <option value="">全部类型</option>
-                <option value="long_term">长期记忆</option>
-                <option value="short_term">短期记忆</option>
-                <option value="project">项目记忆</option>
-                <option value="user">用户记忆</option>
-                <option value="session">会话记忆</option>
+                <option value="PROFILE">用户资料</option>
+                <option value="IDENTITY">身份信息</option>
+                <option value="PREFERENCE">喜好</option>
+                <option value="HABIT">习惯</option>
+                <option value="GOAL">长期目标</option>
+                <option value="PROJECT">项目</option>
+                <option value="FACT">事实</option>
+                <option value="RELATION">人物关系</option>
+                <option value="SKILL">技能</option>
+                <option value="SCHEDULE">日程</option>
+                <option value="TEMPORARY">临时信息</option>
+                <option value="EVENT">重要事件</option>
             </select>
             <input v-model="searchQuery" placeholder="搜索记忆..." class="search-input" @keyup.enter="handleSearch" />
             <button class="btn-search" @click="handleSearch">搜索</button>
@@ -23,11 +30,18 @@
             <textarea v-model="newContent" placeholder="输入记忆内容..." rows="3"></textarea>
             <div class="add-form-row">
                 <select v-model="newType" class="filter-select">
-                    <option value="long_term">长期记忆</option>
-                    <option value="short_term">短期记忆</option>
-                    <option value="project">项目记忆</option>
-                    <option value="user">用户记忆</option>
-                    <option value="session">会话记忆</option>
+                    <option value="PROFILE">用户资料</option>
+                    <option value="IDENTITY">身份信息</option>
+                    <option value="PREFERENCE">喜好</option>
+                    <option value="HABIT">习惯</option>
+                    <option value="GOAL">长期目标</option>
+                    <option value="PROJECT">项目</option>
+                    <option value="FACT">事实</option>
+                    <option value="RELATION">人物关系</option>
+                    <option value="SKILL">技能</option>
+                    <option value="SCHEDULE">日程</option>
+                    <option value="TEMPORARY">临时信息</option>
+                    <option value="EVENT">重要事件</option>
                 </select>
                 <input v-model="newImportance" type="number" min="0" max="10" placeholder="重要性 (0-10)" class="filter-select" />
                 <button class="btn-save" @click="handleAddMemory" :disabled="!newContent.trim()">保存</button>
@@ -63,15 +77,15 @@
 import { ref, computed, onMounted } from 'vue'
 import { CircleStackIcon } from '@heroicons/vue/24/outline'
 import { useMemoryStore } from '@/stores/memoryStore'
-import type { MemoryEntry, MemorySearchResult } from '@/types/memory'
+import type { MemorySearchResult, MemoryType } from '@/types/memory'
 
 const memoryStore = useMemoryStore()
 
-const filterType = ref('')
+const filterType = ref<MemoryType | ''>('')
 const searchQuery = ref('')
 const showAddForm = ref(false)
 const newContent = ref('')
-const newType = ref<MemoryEntry['type']>('long_term')
+const newType = ref<MemoryType>('PROFILE')
 const newImportance = ref(5)
 const searchResults = ref<MemorySearchResult[]>([])
 
@@ -88,8 +102,10 @@ const displayedItems = computed(() => {
 
 function typeLabel(type: string): string {
     const labels: Record<string, string> = {
-        long_term: '长期', short_term: '短期', project: '项目',
-        user: '用户', session: '会话', semantic: '语义', episodic: '情景',
+        PROFILE: '用户资料', IDENTITY: '身份信息', PREFERENCE: '喜好',
+        HABIT: '习惯', GOAL: '长期目标', PROJECT: '项目',
+        FACT: '事实', RELATION: '人物关系', SKILL: '技能',
+        SCHEDULE: '日程', TEMPORARY: '临时信息', EVENT: '重要事件',
     }
     return labels[type] || type
 }
@@ -305,11 +321,18 @@ onMounted(() => {
     font-weight: 600;
 }
 
-.type-long_term { background: #e8f5e9; color: #2e7d32; }
-.type-short_term { background: #e3f2fd; color: #1565c0; }
-.type-project { background: #fff3e0; color: #ef6c00; }
-.type-user { background: #f3e5f5; color: #7b1fa2; }
-.type-session { background: #e0f7fa; color: #00838f; }
+.type-PROFILE { background: #e8f5e9; color: #2e7d32; }
+.type-IDENTITY { background: #e3f2fd; color: #1565c0; }
+.type-PREFERENCE { background: #fff3e0; color: #ef6c00; }
+.type-HABIT { background: #f3e5f5; color: #7b1fa2; }
+.type-GOAL { background: #e0f7fa; color: #00838f; }
+.type-PROJECT { background: #fce4ec; color: #c62828; }
+.type-FACT { background: #f1f8e9; color: #558b2f; }
+.type-RELATION { background: #e8eaf6; color: #283593; }
+.type-SKILL { background: #fff8e1; color: #f57f17; }
+.type-SCHEDULE { background: #e0f2f1; color: #00695c; }
+.type-TEMPORARY { background: #fbe9e7; color: #bf360c; }
+.type-EVENT { background: #ede7f6; color: #4527a0; }
 
 .memory-score, .memory-importance {
     font-size: 12px;

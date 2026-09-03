@@ -186,11 +186,34 @@ public class ChatHistoryService {
                     Map<String, Object> map = new LinkedHashMap<>();
                     map.put("sessionId", s.getSessionId());
                     map.put("userId", s.getUserId());
+                    map.put("platform", s.getPlatform());
+                    map.put("agentId", s.getAgentId());
+                    map.put("status", s.getStatus());
                     map.put("createdAt", s.getCreatedAt());
                     map.put("lastActiveAt", s.getLastActiveAt());
                     map.put("messageCount", messageRepository.countBySessionId(s.getSessionId()));
                     ChatMessageEntity firstMsg = messageRepository.findFirstBySessionIdOrderByCreatedAtAsc(s.getSessionId());
                     map.put("firstMessage", firstMsg != null ? firstMsg.getContent() : null);
+                    return map;
+                }).collect(Collectors.toList()))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * 根据 Agent ID 获取会话列表
+     */
+    public Mono<List<Map<String, Object>>> getSessionsByAgentId(String agentId) {
+        return Mono.fromCallable(() ->
+                sessionRepository.findByAgentIdOrderByLastActiveAtDesc(agentId).stream().map(s -> {
+                    Map<String, Object> map = new LinkedHashMap<>();
+                    map.put("sessionId", s.getSessionId());
+                    map.put("userId", s.getUserId());
+                    map.put("platform", s.getPlatform());
+                    map.put("agentId", s.getAgentId());
+                    map.put("status", s.getStatus());
+                    map.put("createdAt", s.getCreatedAt());
+                    map.put("lastActiveAt", s.getLastActiveAt());
+                    map.put("messageCount", messageRepository.countBySessionId(s.getSessionId()));
                     return map;
                 }).collect(Collectors.toList()))
                 .subscribeOn(Schedulers.boundedElastic());

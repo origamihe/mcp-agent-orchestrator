@@ -84,7 +84,7 @@ import { useAgentStore } from '@/stores/agentStore'
 import { useAppStore } from '@/stores/app'
 import type { LlmModelInfo } from '@/types/llm'
 import { ArrowPathRoundedSquareIcon, WrenchScrewdriverIcon } from '@heroicons/vue/24/outline'
-import http from '@/utils/request'
+import http from '@/api/client'
 
 const route = useRoute()
 const agentStore = useAgentStore()

@@ -7,7 +7,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
@@ -16,26 +15,16 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiFile
+import com.mcp.plugin.diff.DiffApplier
 import com.mcp.plugin.util.LanguageDetector
+import com.mcp.plugin.util.PathValidator
 import java.io.File
 import java.io.InputStream
-import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
 @Service(Service.Level.PROJECT)
 class CapabilityAdapter(private val project: Project) {
     private val logger = Logger.getInstance(CapabilityAdapter::class.java)
-
-    companion object {
-        private val SENSITIVE_DIRS = setOf(
-            ".ssh", ".aws", ".config", ".gnupg", ".docker",
-            "AppData", "Windows", "System32", "/etc", "/root", "/home"
-        )
-        private val SENSITIVE_FILES = setOf(
-            "id_rsa", "id_ed25519", "authorized_keys", "known_hosts",
-            "credentials", ".env", ".bashrc", ".zshrc", ".profile"
-        )
-    }
 
     fun execute(capability: String, params: Map<String, Any?>): Map<String, Any?> {
         return when (capability) {
@@ -49,6 +38,9 @@ class CapabilityAdapter(private val project: Project) {
             "open_file" -> openFile(params)
             "search_files" -> searchFiles(params)
             "run_terminal" -> runTerminal(params)
+            "apply_diff" -> applyDiff(params)
+            "apply_full_content" -> applyFullContent(params)
+            "get_open_files" -> getOpenFiles(params)
             else -> mapOf("error" to "Unknown capability: $capability")
         }
     }
@@ -56,12 +48,12 @@ class CapabilityAdapter(private val project: Project) {
     private fun readFile(params: Map<String, Any?>): Map<String, Any?> {
         val filePath = params["filePath"] as? String ?: return mapOf("error" to "filePath required")
 
-        if (!isPathInWorkspace(filePath)) {
+        if (!PathValidator.isPathInWorkspace(filePath, project.basePath)) {
             logger.warn("[CapabilityAdapter] readFile blocked: path outside workspace: $filePath")
             return mapOf("error" to "Path outside workspace", "filePath" to filePath)
         }
 
-        if (isSensitivePath(filePath)) {
+        if (PathValidator.isSensitivePath(filePath)) {
             logger.warn("[CapabilityAdapter] readFile blocked: sensitive path: $filePath")
             return mapOf("error" to "Access to sensitive path denied", "filePath" to filePath)
         }
@@ -80,12 +72,12 @@ class CapabilityAdapter(private val project: Project) {
         val filePath = params["filePath"] as? String ?: return mapOf("error" to "filePath required")
         val content = params["content"] as? String ?: return mapOf("error" to "content required")
 
-        if (!isPathInWorkspace(filePath)) {
+        if (!PathValidator.isPathInWorkspace(filePath, project.basePath)) {
             logger.warn("[CapabilityAdapter] writeFile blocked: path outside workspace: $filePath")
             return mapOf("error" to "Path outside workspace", "filePath" to filePath)
         }
 
-        if (isSensitivePath(filePath)) {
+        if (PathValidator.isSensitivePath(filePath)) {
             logger.warn("[CapabilityAdapter] writeFile blocked: sensitive path: $filePath")
             return mapOf("error" to "Access to sensitive path denied", "filePath" to filePath)
         }
@@ -98,7 +90,7 @@ class CapabilityAdapter(private val project: Project) {
                         val doc = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(vf)
                         doc?.setText(content)
                     } else {
-                        val normalizedPath = normalizePath(filePath)
+                        val normalizedPath = PathValidator.normalizePath(filePath)
                         File(normalizedPath).writeText(content)
                         LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath)
                     }
@@ -115,9 +107,14 @@ class CapabilityAdapter(private val project: Project) {
         val path = params["path"] as? String ?: project.basePath ?: return mapOf("error" to "path required")
         val depth = (params["depth"] as? Number)?.toInt() ?: 2
 
-        if (!isPathInWorkspace(path)) {
+        if (!PathValidator.isPathInWorkspace(path, project.basePath)) {
             logger.warn("[CapabilityAdapter] readDirectory blocked: path outside workspace: $path")
             return mapOf("error" to "Path outside workspace", "path" to path)
+        }
+
+        if (PathValidator.isSensitivePath(path)) {
+            logger.warn("[CapabilityAdapter] readDirectory blocked: sensitive path: $path")
+            return mapOf("error" to "Access to sensitive path denied", "path" to path)
         }
 
         val dir = File(path)
@@ -267,9 +264,14 @@ class CapabilityAdapter(private val project: Project) {
         val filePath = params["filePath"] as? String ?: return mapOf("error" to "filePath required")
         val line = (params["line"] as? Number)?.toInt() ?: 0
 
-        if (!isPathInWorkspace(filePath)) {
+        if (!PathValidator.isPathInWorkspace(filePath, project.basePath)) {
             logger.warn("[CapabilityAdapter] openFile blocked: path outside workspace: $filePath")
             return mapOf("error" to "Path outside workspace", "filePath" to filePath)
+        }
+
+        if (PathValidator.isSensitivePath(filePath)) {
+            logger.warn("[CapabilityAdapter] openFile blocked: sensitive path: $filePath")
+            return mapOf("error" to "Access to sensitive path denied", "filePath" to filePath)
         }
 
         return try {
@@ -309,7 +311,7 @@ class CapabilityAdapter(private val project: Project) {
         val command = params["command"] as? String ?: return mapOf("error" to "command required")
 
         val cwd = (params["cwd"] as? String)?.let {
-            if (!isPathInWorkspace(it)) {
+            if (!PathValidator.isPathInWorkspace(it, project.basePath)) {
                 logger.warn("[CapabilityAdapter] runTerminal blocked: cwd outside workspace: $it")
                 return mapOf("error" to "Working directory outside workspace", "cwd" to it)
             }
@@ -350,33 +352,70 @@ class CapabilityAdapter(private val project: Project) {
         }
     }
 
-    private fun isPathInWorkspace(filePath: String): Boolean {
-        val workspacePath = project.basePath ?: return true
+    private fun applyDiff(params: Map<String, Any?>): Map<String, Any?> {
+        val filePath = params["filePath"] as? String ?: return mapOf("error" to "filePath required")
+        val diff = params["diff"] as? String ?: return mapOf("error" to "diff required")
+
+        if (!PathValidator.isPathInWorkspace(filePath, project.basePath)) {
+            logger.warn("[CapabilityAdapter] applyDiff blocked: path outside workspace: $filePath")
+            return mapOf("error" to "Path outside workspace", "filePath" to filePath)
+        }
+
+        if (PathValidator.isSensitivePath(filePath)) {
+            logger.warn("[CapabilityAdapter] applyDiff blocked: sensitive path: $filePath")
+            return mapOf("error" to "Access to sensitive path denied", "filePath" to filePath)
+        }
+
         return try {
-            val normalized = normalizePath(filePath)
-            val normalizedWorkspace = normalizePath(workspacePath)
-            normalized.startsWith(normalizedWorkspace)
+            val diffApplier = project.getService(DiffApplier::class.java)
+            var success = false
+            ApplicationManager.getApplication().invokeAndWait {
+                diffApplier.applyDiff(filePath, diff) { result -> success = result }
+            }
+            if (success) {
+                mapOf("success" to true, "filePath" to filePath)
+            } else {
+                mapOf("error" to "Failed to apply diff", "filePath" to filePath)
+            }
         } catch (e: Exception) {
-            false
+            logger.error("[CapabilityAdapter] applyDiff error: ${e.message}")
+            mapOf("error" to e.message)
         }
     }
 
-    private fun isSensitivePath(filePath: String): Boolean {
-        val normalized = normalizePath(filePath).lowercase()
-        val parts = normalized.split(File.separator, "/", "\\").filter { it.isNotBlank() }
+    private fun applyFullContent(params: Map<String, Any?>): Map<String, Any?> {
+        val filePath = params["filePath"] as? String ?: return mapOf("error" to "filePath required")
+        val content = params["content"] as? String ?: return mapOf("error" to "content required")
 
-        return SENSITIVE_DIRS.any { sensitive ->
-            parts.any { part -> part.lowercase() == sensitive.lowercase() }
-        } || SENSITIVE_FILES.any { sensitive ->
-            parts.lastOrNull()?.lowercase() == sensitive.lowercase()
+        if (!PathValidator.isPathInWorkspace(filePath, project.basePath)) {
+            logger.warn("[CapabilityAdapter] applyFullContent blocked: path outside workspace: $filePath")
+            return mapOf("error" to "Path outside workspace", "filePath" to filePath)
+        }
+
+        if (PathValidator.isSensitivePath(filePath)) {
+            logger.warn("[CapabilityAdapter] applyFullContent blocked: sensitive path: $filePath")
+            return mapOf("error" to "Access to sensitive path denied", "filePath" to filePath)
+        }
+
+        return try {
+            val diffApplier = project.getService(DiffApplier::class.java)
+            ApplicationManager.getApplication().invokeAndWait {
+                diffApplier.applyFullContent(filePath, content)
+            }
+            mapOf("success" to true, "filePath" to filePath)
+        } catch (e: Exception) {
+            logger.error("[CapabilityAdapter] applyFullContent error: ${e.message}")
+            mapOf("error" to e.message)
         }
     }
 
-    private fun normalizePath(filePath: String): String {
+    private fun getOpenFiles(params: Map<String, Any?>): Map<String, Any?> {
         return try {
-            Path.of(filePath).normalize().toString()
+            val openFiles = FileEditorManager.getInstance(project).openFiles.map { it.path }
+            mapOf("openFiles" to openFiles)
         } catch (e: Exception) {
-            filePath
+            logger.error("[CapabilityAdapter] getOpenFiles error: ${e.message}")
+            mapOf("error" to e.message)
         }
     }
 

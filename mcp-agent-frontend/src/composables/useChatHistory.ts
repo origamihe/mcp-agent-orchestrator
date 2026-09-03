@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import type { ChatMessage } from '@/types/agent'
-import http from '@/utils/request'
+import http from '@/api/client'
 
 export interface SessionInfo {
     sessionId: string

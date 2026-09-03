@@ -11,5 +11,6 @@ public interface ChatSessionMapper {
     @Mapping(target = "messages", source = "messages")
     ChatSession toDomain(ChatSessionEntity entity);
 
+    @Mapping(target = "messages", ignore = true)
     ChatSessionEntity toEntity(ChatSession domain);
 }

@@ -34,6 +34,12 @@ public class ChatSessionEntity {
     @Column(length = 64)
     private String groupId;
 
+    @Column(length = 100)
+    private String agentId;
+
+    @Column(length = 20, nullable = false)
+    private String status = "active";
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

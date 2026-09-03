@@ -3,9 +3,11 @@ package com.mcp.gateway.host.bridge;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcp.gateway.channel.ChannelOrchestrator;
+import com.mcp.gateway.host.capability.CapabilityAuthorization;
 import com.mcp.gateway.host.capability.CapabilityRouter;
 import com.mcp.gateway.host.event.HostEvent;
 import com.mcp.gateway.host.event.HostEventBus;
+import com.mcp.gateway.ws.WebSocketSessionManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
@@ -24,14 +26,20 @@ public class HostBridge {
     private final HostEventBus eventBus;
     private final CapabilityRouter capabilityRouter;
     private final ChannelOrchestrator channelOrchestrator;
+    private final WebSocketSessionManager sessionManager;
+    private final CapabilityAuthorization capabilityAuth;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public HostBridge(HostEventBus eventBus,
                       CapabilityRouter capabilityRouter,
-                      ChannelOrchestrator channelOrchestrator) {
+                      ChannelOrchestrator channelOrchestrator,
+                      WebSocketSessionManager sessionManager,
+                      CapabilityAuthorization capabilityAuth) {
         this.eventBus = eventBus;
         this.capabilityRouter = capabilityRouter;
         this.channelOrchestrator = channelOrchestrator;
+        this.sessionManager = sessionManager;
+        this.capabilityAuth = capabilityAuth;
     }
 
     /**
@@ -40,16 +48,16 @@ public class HostBridge {
      * - "event"   → 发布到 HostEventBus
      * - "chat"    → 走聊天链路（ChannelOrchestrator）
      * - "capability_result" → 通知 CapabilityRouter
-     * - "hello"   → 插件注册，返回可用能力列表
+     * - "hello"   → 插件注册，建立 sessionId 映射并授权
      */
-    public Mono<Void> handleMessage(JsonNode payload) {
+    public Mono<Void> handleMessage(JsonNode payload, String wsSessionId) {
         String type = payload.has("type") ? payload.get("type").asText() : "chat";
 
         return switch (type) {
             case "event" -> handleEvent(payload);
             case "chat" -> handleChat(payload);
             case "capability_result" -> handleCapabilityResult(payload);
-            case "hello" -> handleHello(payload);
+            case "hello" -> handleHello(payload, wsSessionId);
             default -> {
                 log.warn("[HostBridge] Unknown message type: {}", type);
                 yield Mono.empty();
@@ -108,10 +116,23 @@ public class HostBridge {
         return Mono.empty();
     }
 
-    private Mono<Void> handleHello(JsonNode payload) {
+    private Mono<Void> handleHello(JsonNode payload, String wsSessionId) {
         String hostType = payload.has("hostType") ? payload.get("hostType").asText() : "unknown";
         String ideType = payload.has("ideType") ? payload.get("ideType").asText() : "unknown";
-        log.info("[HostBridge] Host registered: {} ({})", hostType, ideType);
+        String pluginSessionId = payload.has("sessionId") ? payload.get("sessionId").asText() : null;
+
+        log.info("[HostBridge] Host registered: {} ({}) pluginSession={}, wsSession={}",
+                hostType, ideType, pluginSessionId, wsSessionId);
+
+        if (pluginSessionId != null) {
+            sessionManager.registerAlias(pluginSessionId, wsSessionId);
+            capabilityAuth.authorizeSessionAsIDE(pluginSessionId);
+            log.info("[HostBridge] Session authorized as IDE: pluginSession={} -> wsSession={}",
+                    pluginSessionId, wsSessionId);
+        } else {
+            log.warn("[HostBridge] Hello message missing sessionId from {}", hostType);
+        }
+
         return Mono.empty();
     }
 }

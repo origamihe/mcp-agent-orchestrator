@@ -1,12 +1,5 @@
 package com.mcp.plugin.diff
 
-import com.intellij.diff.DiffManager
-import com.intellij.diff.DiffRequestFactory
-import com.intellij.diff.contents.DocumentContent
-import com.intellij.diff.contents.DocumentContentImpl
-import com.intellij.diff.merge.MergeRequest
-import com.intellij.diff.merge.MergeResult
-import com.intellij.diff.tools.simple.SimpleOnesideDiffViewer
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.Service
@@ -14,6 +7,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.mcp.plugin.util.PathValidator
 import java.io.File
 
 @Service(Service.Level.PROJECT)
@@ -21,6 +15,17 @@ class DiffApplier(private val project: Project) {
     private val logger = Logger.getInstance(DiffApplier::class.java)
 
     fun applyDiff(filePath: String, diff: String, callback: (Boolean) -> Unit = {}) {
+        if (!PathValidator.isPathInWorkspace(filePath, project.basePath)) {
+            logger.warn("[DiffApplier] applyDiff blocked: path outside workspace: $filePath")
+            callback(false)
+            return
+        }
+        if (PathValidator.isSensitivePath(filePath)) {
+            logger.warn("[DiffApplier] applyDiff blocked: sensitive path: $filePath")
+            callback(false)
+            return
+        }
+
         ApplicationManager.getApplication().invokeLater {
             try {
                 val file = File(filePath)
@@ -60,6 +65,15 @@ class DiffApplier(private val project: Project) {
     }
 
     fun applyFullContent(filePath: String, newContent: String) {
+        if (!PathValidator.isPathInWorkspace(filePath, project.basePath)) {
+            logger.warn("[DiffApplier] applyFullContent blocked: path outside workspace: $filePath")
+            return
+        }
+        if (PathValidator.isSensitivePath(filePath)) {
+            logger.warn("[DiffApplier] applyFullContent blocked: sensitive path: $filePath")
+            return
+        }
+
         ApplicationManager.getApplication().invokeLater {
             try {
                 val file = File(filePath)

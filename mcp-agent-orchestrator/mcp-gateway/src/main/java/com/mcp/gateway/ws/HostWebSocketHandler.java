@@ -65,7 +65,7 @@ public class HostWebSocketHandler implements WebSocketHandler {
                 .flatMap(rawMessage -> {
                     try {
                         JsonNode payload = objectMapper.readTree(rawMessage);
-                        return hostBridge.handleMessage(payload)
+                        return hostBridge.handleMessage(payload, sessionId)
                                 .doOnError(e -> log.error("[HostWS] Error: {}", e.getMessage()))
                                 .onErrorResume(e -> Mono.empty());
                     } catch (Exception e) {

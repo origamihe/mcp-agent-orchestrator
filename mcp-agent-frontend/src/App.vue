@@ -23,7 +23,7 @@ import ToastContainer from '@/components/common/ToastContainer.vue'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { registerToastContainer } from '@/composables/useToast'
 import { useAppStore } from '@/stores/app'
-import http from '@/utils/request'
+import http from '@/api/client'
 
 const appStore = useAppStore()
 const toastRef = ref()

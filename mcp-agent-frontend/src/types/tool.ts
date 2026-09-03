@@ -3,7 +3,7 @@ export type ToolRiskLevel = 'L0' | 'L1' | 'L2' | 'L3' | 'L4' | 'L5'
 export interface ToolInfo {
     name: string
     description: string
-    riskLevel: ToolRiskLevel
+    riskLevel?: ToolRiskLevel
     status: 'enabled' | 'disabled' | 'confirmation_required' | 'restricted'
     authorization: ToolAuthorization
     sandbox: SandboxConfig

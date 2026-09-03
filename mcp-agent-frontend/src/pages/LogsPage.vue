@@ -166,8 +166,9 @@
     </div>
 
     <LogDetailModal
+        v-if="selectedEntry"
         :visible="showDetailModal"
-        :entry="selectedEntry!"
+        :entry="selectedEntry"
         @close="closeDetail"
     />
 </template>

@@ -14,7 +14,8 @@ export const useToolStore = defineStore('tool', () => {
     const riskDistribution = computed(() => {
         const dist: Record<string, number> = { L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0 }
         for (const t of tools.value) {
-            dist[t.riskLevel] = (dist[t.riskLevel] || 0) + 1
+            const level = t.riskLevel || 'L0'
+            dist[level] = (dist[level] || 0) + 1
         }
         return dist
     })

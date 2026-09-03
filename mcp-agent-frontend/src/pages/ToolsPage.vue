@@ -6,9 +6,9 @@
         </div>
 
         <div class="risk-overview">
-            <div v-for="(count, level) in riskDistribution" :key="level" :class="['risk-chip', `risk-${level.toLowerCase()}`]">
+            <div v-for="(count, level) in riskDistribution" :key="level" :class="['risk-chip', `risk-${(level || 'l0').toLowerCase()}`]">
                 <span class="risk-count">{{ count }}</span>
-                <span class="risk-label">{{ level }}</span>
+                <span class="risk-label">{{ level || 'L0' }}</span>
             </div>
             <span class="total-chip">共 {{ toolStore.toolCount }} 个工具</span>
         </div>
@@ -22,12 +22,12 @@
             <div
                 v-for="tool in toolStore.tools"
                 :key="tool.name"
-                :class="['tool-card', `risk-border-${tool.riskLevel.toLowerCase()}`]"
+                :class="['tool-card', `risk-border-${(tool.riskLevel || 'l0').toLowerCase()}`]"
                 @click="selectTool(tool.name)"
             >
                 <div class="tool-header">
                     <span class="tool-name">{{ tool.name }}</span>
-                    <span :class="['risk-badge', `risk-${tool.riskLevel.toLowerCase()}`]">{{ tool.riskLevel }}</span>
+                    <span :class="['risk-badge', `risk-${(tool.riskLevel || 'l0').toLowerCase()}`]">{{ tool.riskLevel || 'L0' }}</span>
                 </div>
                 <p class="tool-desc">{{ tool.description }}</p>
                 <div class="tool-meta">

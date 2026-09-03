@@ -61,7 +61,7 @@
                 <div class="memory-header">
                     <span :class="['type-badge', `type-${item.type}`]">{{ typeLabel(item.type) }}</span>
                     <span class="memory-score" v-if="'score' in item">相关度: {{ (item as any).score.toFixed(2) }}</span>
-                    <span class="memory-importance">重要性: {{ item.type === 'memory' ? (item as any).importance : '-' }}/10</span>
+                    <span class="memory-importance">重要性: {{ item.type === 'memory' ? normalizeImportance((item as any).importance) : '-' }}/10</span>
                 </div>
                 <p class="memory-content">{{ 'content' in item ? item.content : (item as any).entry?.content }}</p>
                 <div class="memory-footer">
@@ -108,6 +108,12 @@ function typeLabel(type: string): string {
         SCHEDULE: '日程', TEMPORARY: '临时信息', EVENT: '重要事件',
     }
     return labels[type] || type
+}
+
+function normalizeImportance(value: number | undefined | null): number {
+    if (value === undefined || value === null) return 0
+    if (value <= 10) return Math.round(value)
+    return Math.round((value / 100) * 10)
 }
 
 function formatDate(dateStr: string): string {

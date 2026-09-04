@@ -8,15 +8,25 @@ package com.mcp.engine.trace;
  */
 public enum SessionEventType {
 
+    REQUEST_RECEIVED,
+
     USER_MESSAGE,
 
     CONTEXT_CLASSIFICATION,
 
+    PLAN_CREATED,
+
     AGENT_SELECTION,
+
+    CONTEXT_BUILT,
 
     CONTEXT_INJECTION,
 
     SYSTEM_PROMPT,
+
+    AGENT_STARTED,
+
+    AGENT_ITERATION,
 
     TOOL_DECISION,
 
@@ -24,15 +34,29 @@ public enum SessionEventType {
 
     TOOL_RESULT,
 
+    PIPELINE_STEP,
+
+    MEMORY_READ,
+
+    MEMORY_WRITE,
+
     MEMORY_INJECTION,
+
+    POLICY_DECISION,
 
     SUBAGENT_SCHEDULE,
 
     LLM_RESPONSE,
 
+    LLM_CALL,
+
     COMPRESSION,
 
+    ARTIFACT_CREATED,
+
     CONTRACT_VIOLATION,
+
+    EXECUTION_COMPLETED,
 
     FINAL_RESPONSE
 }

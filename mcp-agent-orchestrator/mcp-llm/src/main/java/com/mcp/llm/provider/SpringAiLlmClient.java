@@ -586,7 +586,7 @@ public class SpringAiLlmClient implements LlmClient {
                 log.info("[LLM-DIAG] Node3-LLMRawResponse: toolCall name={}, id={}, arguments={}",
                         tc.name(), tc.id(), tc.arguments());
                 Map<String, Object> arguments = parseArguments(tc.arguments());
-                toolCalls.add(new LlmToolResponse.ToolCall(tc.name(), arguments));
+                toolCalls.add(new LlmToolResponse.ToolCall(tc.id(), tc.name(), arguments));
             }
         }
 
@@ -667,7 +667,7 @@ public class SpringAiLlmClient implements LlmClient {
             if (bestFallbackTool != null) {
                 java.util.Map<String, Object> defaultArgs = extractQueryFromText(content);
                 if (defaultArgs != null) {
-                    parsed.add(new LlmToolResponse.ToolCall(bestFallbackTool, defaultArgs));
+                    parsed.add(new LlmToolResponse.ToolCall("text-"+java.util.UUID.randomUUID().toString(), bestFallbackTool, defaultArgs));
                     log.info("[LLM-DIAG] Node4-TextFallback: forced tool call from text mention: tool={}, args={}",
                             bestFallbackTool, defaultArgs.keySet());
                 }
@@ -699,7 +699,7 @@ public class SpringAiLlmClient implements LlmClient {
                 if (toolNameExists(explicitName, toolDefinitions)) {
                     String key = explicitName + ":" + argsMap.keySet().toString();
                     if (seenKeys.add(key)) {
-                        parsed.add(new LlmToolResponse.ToolCall(explicitName, argsMap));
+                        parsed.add(new LlmToolResponse.ToolCall("text-"+java.util.UUID.randomUUID().toString(), explicitName, argsMap));
                         log.info("[LLM-DIAG] Node4-TextFallback: parsed via explicit name: tool={}, params={}",
                                 explicitName, argsMap.keySet());
                     }
@@ -715,7 +715,7 @@ public class SpringAiLlmClient implements LlmClient {
                     Map<String, Object> argsMap = (Map<String, Object>) singleValue;
                     String key = singleKey + ":" + argsMap.keySet().toString();
                     if (seenKeys.add(key)) {
-                        parsed.add(new LlmToolResponse.ToolCall(singleKey, argsMap));
+                        parsed.add(new LlmToolResponse.ToolCall("text-"+java.util.UUID.randomUUID().toString(), singleKey, argsMap));
                         log.info("[LLM-DIAG] Node4-TextFallback: parsed via tool-name mapping: tool={}, params={}",
                                 singleKey, argsMap.keySet());
                     }
@@ -727,7 +727,7 @@ public class SpringAiLlmClient implements LlmClient {
             if (bestMatchTool != null) {
                 String key = bestMatchTool + ":" + jsonMap.keySet().toString();
                 if (seenKeys.add(key)) {
-                    parsed.add(new LlmToolResponse.ToolCall(bestMatchTool, jsonMap));
+                    parsed.add(new LlmToolResponse.ToolCall("text-"+java.util.UUID.randomUUID().toString(), bestMatchTool, jsonMap));
                     log.info("[LLM-DIAG] Node4-TextFallback: parsed text-based tool call: tool={}, params={}",
                             bestMatchTool, jsonMap.keySet());
                 }

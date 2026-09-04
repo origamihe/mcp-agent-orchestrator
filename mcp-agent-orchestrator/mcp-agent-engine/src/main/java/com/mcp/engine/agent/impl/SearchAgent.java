@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcp.engine.agent.Agent;
 import com.mcp.engine.agent.LLMRequest;
 import com.mcp.engine.agent.card.AgentCard;
+import com.mcp.engine.policy.PolicyEngine;
 import com.mcp.engine.runtime.AgentRuntime;
 import com.mcp.engine.trace.SessionTrace;
 import com.mcp.engine.trace.SessionTraceHolder;
@@ -16,6 +17,7 @@ import com.mcp.tools.model.SearchDocument;
 import com.mcp.tools.model.SearchResult;
 import com.mcp.tools.model.ToolDefinition;
 import com.mcp.tools.model.ToolExecutionRequest;
+import com.mcp.tools.model.ToolExecutionResult;
 import com.mcp.tools.model.ToolResult;
 import com.mcp.tools.registry.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -42,21 +44,26 @@ public class SearchAgent implements Agent {
     private final ToolRegistry toolRegistry;
     private final AgentRuntime agentRuntime;
     private final ToolExecutor toolExecutor;
+    private final PolicyEngine policyEngine;
     private final ResearchSynthesizer researchSynthesizer;
 
     public SearchAgent(LlmClient llmClient,
                        ToolRegistry toolRegistry,
                        AgentRuntime agentRuntime,
                        ToolExecutor toolExecutor,
+                       PolicyEngine policyEngine,
                        ResearchSynthesizer researchSynthesizer) {
         this.llmClient = llmClient;
         this.toolRegistry = toolRegistry;
         this.agentRuntime = agentRuntime;
         this.toolExecutor = toolExecutor;
+        this.policyEngine = policyEngine;
         this.researchSynthesizer = researchSynthesizer;
     }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private volatile LLMRequest currentRequest;
 
     private static final int DEFAULT_MAX_TOOL_ROUNDS = 5;
 
@@ -96,6 +103,7 @@ public class SearchAgent implements Agent {
 
     @Override
     public Mono<String> execute(LLMRequest request) {
+        this.currentRequest = request;
         log.info("[SearchAgent] Executing: session={}, userMessage={}",
                 request.getSessionId(),
                 request.getUserMessage() != null
@@ -386,7 +394,7 @@ public class SearchAgent implements Agent {
                                     for (var entry : results) {
                                         LlmToolResponse.ToolCall tc = entry.getKey();
                                         ToolResultEntry resultEntry = entry.getValue();
-                                        String callId = UUID.randomUUID().toString().substring(0, 8);
+                                        String callId = tc.getId();
                                         assistantToolCalls.add(Map.of(
                                                 "id", callId,
                                                 "type", "function",
@@ -739,54 +747,60 @@ public class SearchAgent implements Agent {
         }
     }
 
-    private Mono<Object> executeSingleTool(LlmToolResponse.ToolCall toolCall) {
+    private Mono<ToolExecutionResult> executeSingleTool(LlmToolResponse.ToolCall toolCall) {
         // ===== 诊断节点5：ToolExecutor 是否真正进入执行 =====
         log.info("[LLM-DIAG] Node5-ToolExecutor: ENTERING tool execution - toolName={}, arguments={}, toolExecutor={}",
                 toolCall.getName(), toolCall.getArguments(),
                 toolExecutor != null ? toolExecutor.getClass().getSimpleName() : "null");
         if (toolExecutor == null) {
             log.error("[LLM-DIAG] Node5-CRITICAL: toolExecutor is NULL! Cannot execute tool: {}", toolCall.getName());
-            return Mono.just("{\"success\":false,\"tool\":\"" + toolCall.getName() + "\",\"error\":\"toolExecutor is null\"}");
+            return Mono.just(ToolExecutionResult.executionError(toolCall.getId(), toolCall.getName(),
+                    com.mcp.tools.model.ToolError.internal("toolExecutor is null"), java.time.Duration.ZERO));
         }
 
         ToolExecutionRequest request = new ToolExecutionRequest();
         request.setToolName(toolCall.getName());
         request.setArguments(new HashMap<>(toolCall.getArguments()));
-        return toolExecutor.execute(request)
-                .defaultIfEmpty("工具执行失败，未获取到结果。")
-                .onErrorResume(error -> {
-                    log.warn("[SearchAgent] Tool execution error: {} - {}",
-                            toolCall.getName(), error.getMessage());
-                    return Mono.just("{\"success\":false,\"tool\":\""
-                            + toolCall.getName() + "\",\"error\":\""
-                            + (error.getMessage() != null
-                                ? error.getMessage().replace("\"", "'")
-                                : "unknown error")
-                            + "\"}");
+        request.setRequestId(toolCall.getId());
+
+        return toolRegistry.getTool(toolCall.getName())
+                .map(toolDef -> {
+                    PolicyEngine.PolicyDecision decision =
+                            policyEngine.evaluate(null, getId(), toolDef, null,
+                                    currentRequest != null ? currentRequest.getExecutionPlan() : null);
+                    return decision;
+                })
+                .defaultIfEmpty(PolicyEngine.PolicyDecision.ALLOW)
+                .flatMap(decision -> {
+                    if (decision == PolicyEngine.PolicyDecision.DENY) {
+                        log.warn("[SearchAgent] PolicyEngine DENY: tool={}", toolCall.getName());
+                        SessionTrace t = SessionTraceHolder.currentOrNull();
+                        if (t != null) {
+                            t.recordPolicyDecision(toolCall.getName(), "DENY", "PolicyEngine denied tool execution");
+                        }
+                        return Mono.just(ToolExecutionResult.denied(
+                                toolCall.getId(), toolCall.getName(), "PolicyEngine denied tool execution"));
+                    }
+                    return toolExecutor.execute(request)
+                            .onErrorResume(error -> {
+                                log.warn("[SearchAgent] Tool execution error: {} - {}",
+                                        toolCall.getName(), error.getMessage());
+                                return Mono.just(ToolExecutionResult.executionError(
+                                        toolCall.getId(), toolCall.getName(),
+                                        com.mcp.tools.model.ToolError.internal(
+                                                error.getMessage() != null ? error.getMessage() : "unknown error"),
+                                        java.time.Duration.ZERO));
+                            });
                 });
     }
 
-    private String toToolResultJson(LlmToolResponse.ToolCall toolCall, Object toolResult) {
-        if (toolResult instanceof ToolResult tr) {
-            return tr.toJson();
-        }
-        try {
-            String content = toolResult != null ? toolResult.toString() : "空结果";
-            boolean success = !isToolFailure(content);
-            Map<String, Object> structured = new LinkedHashMap<>();
-            structured.put("success", success);
-            structured.put("tool", toolCall.getName());
-            structured.put("content", content);
-            String json = objectMapper.writeValueAsString(structured);
-            log.debug("[SearchAgent] toToolResultJson for {}: wrapper={}, rawContent={}",
-                    toolCall.getName(),
-                    json.length() > 300 ? json.substring(0, 300) + "..." : json,
-                    content.length() > 200 ? content.substring(0, 200) + "..." : content);
-            return json;
-        } catch (Exception e) {
+    private String toToolResultJson(LlmToolResponse.ToolCall toolCall, ToolExecutionResult toolResult) {
+        if (toolResult == null) {
             return "{\"success\":false,\"tool\":\"" + toolCall.getName()
-                    + "\",\"error\":\"serialization failed\"}";
+                    + "\",\"toolCallId\":\"" + toolCall.getId()
+                    + "\",\"error\":\"toolResult is null\"}";
         }
+        return toolResult.toJson();
     }
 
     private boolean isToolFailure(String content) {
@@ -852,22 +866,11 @@ public class SearchAgent implements Agent {
         if (filteredTools.isEmpty()) {
             log.error("[LLM-DIAG] Node2-CRITICAL: After filtering by AgentCard.toolNames={}, "
                     + "NO tools remain! Check if tool names in AgentCard match registry. "
-                    + "Registry has: {}", allowedToolNames,
+                    + "Registry has: {}. "
+                    + "SearchAgent will run without tools — no fallback to all/similar tools.",
+                    allowedToolNames,
                     allTools.stream().map(ToolDefinition::getName).toList());
-            // ===== P0-2 兜底：当过滤后为空时，使用所有搜索相关工具 =====
-            List<String> searchKeywords = List.of("search", "research", "fetcher", "scrape", "crawl");
-            for (ToolDefinition td : allTools) {
-                String nameLower = td.getName().toLowerCase();
-                boolean isSearchRelated = searchKeywords.stream().anyMatch(nameLower::contains);
-                if (isSearchRelated) {
-                    filteredTools.add(td);
-                    log.warn("[LLM-DIAG] Node2-FALLBACK: adding search-related tool {} to filtered list", td.getName());
-                }
-            }
-            if (filteredTools.isEmpty()) {
-                log.error("[LLM-DIAG] Node2-FATAL: No search-related tools found in registry, "
-                        + "SearchAgent will have NO tools to use!");
-            }
+            return List.of();
         }
 
         List<Map<String, Object>> tools = new ArrayList<>();

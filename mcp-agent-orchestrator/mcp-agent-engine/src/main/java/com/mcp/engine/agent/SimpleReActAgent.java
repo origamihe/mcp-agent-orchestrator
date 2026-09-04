@@ -3,12 +3,14 @@ package com.mcp.engine.agent;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcp.engine.agent.card.AgentCard;
+import com.mcp.engine.policy.PolicyEngine;
 import com.mcp.llm.client.ChatMessage;
 import com.mcp.llm.client.LlmClient;
 import com.mcp.llm.client.LlmToolResponse;
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.ToolDefinition;
 import com.mcp.tools.model.ToolExecutionRequest;
+import com.mcp.tools.model.ToolExecutionResult;
 import com.mcp.tools.model.ToolResult;
 import com.mcp.tools.registry.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -26,17 +28,21 @@ public class SimpleReActAgent implements Agent {
     private final LlmClient llmClient;
     private final ToolRegistry toolRegistry;
     private final ToolExecutor toolExecutor;
+    private final PolicyEngine policyEngine;
 
     public SimpleReActAgent(LlmClient llmClient,
                             ToolRegistry toolRegistry,
-                            ToolExecutor toolExecutor) {
+                            ToolExecutor toolExecutor,
+                            PolicyEngine policyEngine) {
         this.llmClient = llmClient;
         this.toolRegistry = toolRegistry;
         this.toolExecutor = toolExecutor;
+        this.policyEngine = policyEngine;
     }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ThreadLocal<ExecutionTracker> currentTracker = new ThreadLocal<>();
+    private volatile LLMRequest currentRequest;
 
     private static final int DEFAULT_MAX_TOOL_ROUNDS = 5;
 
@@ -87,6 +93,7 @@ public class SimpleReActAgent implements Agent {
 
     @Override
     public Mono<String> execute(LLMRequest request) {
+        this.currentRequest = request;
         ExecutionTracker tracker = request.getVariables() != null
                 ? (ExecutionTracker) request.getVariables().get("executionTracker")
                 : null;
@@ -193,7 +200,7 @@ public class SimpleReActAgent implements Agent {
                                     for (var entry : results) {
                                         LlmToolResponse.ToolCall tc = entry.getKey();
                                         String resultStr = entry.getValue();
-                                        String callId = UUID.randomUUID().toString().substring(0, 8);
+                                        String callId = tc.getId();
                                         assistantToolCalls.add(Map.of(
                                                 "id", callId,
                                                 "type", "function",
@@ -241,17 +248,34 @@ public class SimpleReActAgent implements Agent {
                 });
     }
 
-    private Mono<Object> executeSingleTool(LlmToolResponse.ToolCall toolCall) {
+    private Mono<ToolExecutionResult> executeSingleTool(LlmToolResponse.ToolCall toolCall) {
         long startTime = System.currentTimeMillis();
         ToolExecutionRequest request = new ToolExecutionRequest();
         request.setToolName(toolCall.getName());
         request.setArguments(new HashMap<>(toolCall.getArguments()));
-        return toolExecutor.execute(request).defaultIfEmpty("工具执行失败，未获取到结果。")
-                .doOnSuccess(result -> recordObservation(toolCall, result, startTime))
-                .doOnError(error -> recordObservationError(toolCall, error, startTime));
+        request.setRequestId(toolCall.getId());
+
+        return toolRegistry.getTool(toolCall.getName())
+                .map(toolDef -> {
+                    PolicyEngine.PolicyDecision decision =
+                            policyEngine.evaluate(null, getId(), toolDef, null,
+                                    currentRequest != null ? currentRequest.getExecutionPlan() : null);
+                    return decision;
+                })
+                .defaultIfEmpty(PolicyEngine.PolicyDecision.ALLOW)
+                .flatMap(decision -> {
+                    if (decision == PolicyEngine.PolicyDecision.DENY) {
+                        log.warn("[SimpleReActAgent] PolicyEngine DENY: tool={}", toolCall.getName());
+                        return Mono.just(ToolExecutionResult.denied(
+                                toolCall.getId(), toolCall.getName(), "PolicyEngine denied tool execution"));
+                    }
+                    return toolExecutor.execute(request)
+                            .doOnSuccess(result -> recordObservation(toolCall, result, startTime))
+                            .doOnError(error -> recordObservationError(toolCall, error, startTime));
+                });
     }
 
-    private void recordObservation(LlmToolResponse.ToolCall toolCall, Object result, long startTime) {
+    private void recordObservation(LlmToolResponse.ToolCall toolCall, ToolExecutionResult result, long startTime) {
         ExecutionTracker tracker = currentTracker.get();
         if (tracker == null) return;
         long duration = System.currentTimeMillis() - startTime;
@@ -259,7 +283,7 @@ public class SimpleReActAgent implements Agent {
         String summary = result != null ? truncateResult(result.toString()) : "";
         String error = success ? null : extractError(result);
         String args = canonicalArgs(toolCall.getArguments());
-        tracker.recordToolCall(toolCall.getName(), args, success, summary, error, duration);
+        tracker.recordToolCall(toolCall.getName(), args, success, summary, error, duration, toolCall.getId());
     }
 
     private void recordObservationError(LlmToolResponse.ToolCall toolCall, Throwable error, long startTime) {
@@ -268,7 +292,8 @@ public class SimpleReActAgent implements Agent {
         long duration = System.currentTimeMillis() - startTime;
         String args = canonicalArgs(toolCall.getArguments());
         tracker.recordToolCall(toolCall.getName(), args, false, "",
-                error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName(), duration);
+                error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName(), duration,
+                toolCall.getId());
     }
 
     private String truncateResult(String result) {
@@ -289,21 +314,13 @@ public class SimpleReActAgent implements Agent {
         return null;
     }
 
-    private String toToolResultJson(LlmToolResponse.ToolCall toolCall, Object toolResult) {
-        if (toolResult instanceof ToolResult tr) {
-            return tr.toJson();
+    private String toToolResultJson(LlmToolResponse.ToolCall toolCall, ToolExecutionResult toolResult) {
+        if (toolResult == null) {
+            return "{\"success\":false,\"tool\":\"" + toolCall.getName()
+                    + "\",\"toolCallId\":\"" + toolCall.getId()
+                    + "\",\"error\":\"toolResult is null\"}";
         }
-        try {
-            String content = toolResult != null ? toolResult.toString() : "空结果";
-            boolean success = !isToolFailure(content);
-            Map<String, Object> structured = new LinkedHashMap<>();
-            structured.put("success", success);
-            structured.put("tool", toolCall.getName());
-            structured.put("content", content);
-            return objectMapper.writeValueAsString(structured);
-        } catch (Exception e) {
-            return "{\"success\":false,\"tool\":\"" + toolCall.getName() + "\",\"error\":\"serialization failed\"}";
-        }
+        return toolResult.toJson();
     }
 
     private boolean isToolFailure(String content) {
@@ -375,8 +392,11 @@ public class SimpleReActAgent implements Agent {
                 allowedToolNames.size(), allTools.size(), filteredTools.size());
 
         if (filteredTools.isEmpty()) {
-            log.warn("[MultiTool] SimpleReActAgent: No tools matched after filtering! Falling back to all tools.");
-            filteredTools = allTools;
+            log.warn("[MultiTool] SimpleReActAgent: No authorized tools available for agent '{}'. "
+                    + "AgentCard.toolNames={} did not match any tool in registry ({} tools). "
+                    + "Agent will run without tools.",
+                    getId(), allowedToolNames, allTools.size());
+            return List.of();
         }
 
         List<Map<String, Object>> tools = new ArrayList<>();

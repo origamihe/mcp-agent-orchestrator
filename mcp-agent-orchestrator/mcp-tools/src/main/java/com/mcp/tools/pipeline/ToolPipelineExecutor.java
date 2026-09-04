@@ -2,15 +2,15 @@ package com.mcp.tools.pipeline;
 
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.ToolExecutionRequest;
-import lombok.RequiredArgsConstructor;
+import com.mcp.tools.model.ToolExecutionResult;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -26,14 +26,21 @@ import java.util.regex.Pattern;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ToolPipelineExecutor {
 
     private final ToolExecutor toolExecutor;
+    private final ToolPolicyChecker policyChecker;
+
+    @Autowired
+    public ToolPipelineExecutor(ToolExecutor toolExecutor,
+                                 @Autowired(required = false) ToolPolicyChecker policyChecker) {
+        this.toolExecutor = toolExecutor;
+        this.policyChecker = policyChecker;
+    }
 
     private static final Pattern REF_PATTERN = Pattern.compile("\\$\\{([^.}]+)(?:\\.([^}]+))?}");
 
-    private static final Object TOOL_FAILED_SENTINEL = new Object();
+    private static final ToolExecutionResult TOOL_FAILED_SENTINEL = new ToolExecutionResult("__sentinel__", "__failed__", null, null, null, null, null);
 
     /**
      * 执行管道，返回最终结果。
@@ -84,10 +91,33 @@ public class ToolPipelineExecutor {
         ToolExecutionRequest execRequest = new ToolExecutionRequest();
         execRequest.setToolName(step.getToolName());
         execRequest.setArguments(resolvedArgs);
-        execRequest.setRequestId(UUID.randomUUID().toString());
+        execRequest.setRequestId(step.getStepId());
 
         log.info("[Pipeline:{}] Step {}/{}: {} | args={}",
                 pipeline.getPipelineId(), index + 1, steps.size(), step.getToolName(), resolvedArgs.keySet());
+
+        if (policyChecker != null) {
+            ToolPolicyChecker.Decision decision = policyChecker.check(
+                    step.getToolName(), pipeline.getPipelineId(), step.getStepId(), pipeline.getExecutionContext());
+            if (decision == ToolPolicyChecker.Decision.DENY) {
+                log.warn("[Pipeline:{}] Step {} DENIED by policy: tool={}",
+                        pipeline.getPipelineId(), step.getStepId(), step.getToolName());
+                long stepElapsed = System.currentTimeMillis() - stepStart;
+                ToolPipelineResult.StepResult sr = ToolPipelineResult.StepResult.builder()
+                        .stepId(step.getStepId())
+                        .toolName(step.getToolName())
+                        .success(false)
+                        .error("PolicyEngine DENIED: " + step.getToolName())
+                        .elapsedMs(stepElapsed)
+                        .build();
+                stepResults.put(step.getStepId(), sr);
+                if (step.isFailFast()) {
+                    return Mono.error(new RuntimeException(
+                            "Pipeline step '" + step.getStepId() + "' denied by PolicyEngine"));
+                }
+                return executeSteps(pipeline, steps, stepResults, stepOutputs, index + 1);
+            }
+        }
 
         return toolExecutor.execute(execRequest)
                 .timeout(Duration.ofSeconds(step.getTimeoutSeconds()))
@@ -111,8 +141,8 @@ public class ToolPipelineExecutor {
                     }
                     return Mono.just(TOOL_FAILED_SENTINEL);
                 })
-                .flatMap(output -> {
-                    if (output == TOOL_FAILED_SENTINEL) {
+                .flatMap(toolResult -> {
+                    if (toolResult == TOOL_FAILED_SENTINEL) {
                         log.info("[Pipeline:{}] Step {} skipped (non-failFast), continuing to next",
                                 pipeline.getPipelineId(), step.getStepId());
                         if (index + 1 < steps.size()) {
@@ -122,20 +152,22 @@ public class ToolPipelineExecutor {
                     }
 
                     long stepElapsed = System.currentTimeMillis() - stepStart;
-                    Object extracted = extractOutput(output, step.getExtractField());
+                    Object rawData = toolResult.data();
+                    Object extracted = extractOutput(rawData, step.getExtractField());
                     stepOutputs.put(step.getStepId(), extracted);
 
                     ToolPipelineResult.StepResult sr = ToolPipelineResult.StepResult.builder()
                             .stepId(step.getStepId())
                             .toolName(step.getToolName())
-                            .success(true)
+                            .success(toolResult.isSuccess())
                             .output(extracted)
                             .elapsedMs(stepElapsed)
                             .build();
                     stepResults.put(step.getStepId(), sr);
 
-                    log.info("[Pipeline:{}] Step {} completed in {}ms: output={}",
+                    log.info("[Pipeline:{}] Step {} completed in {}ms: status={}, output={}",
                             pipeline.getPipelineId(), step.getStepId(), stepElapsed,
+                            toolResult.status(),
                             extracted instanceof String ? ((String) extracted).substring(0, Math.min(((String) extracted).length(), 80)) : extracted);
 
                     return executeSteps(pipeline, steps, stepResults, stepOutputs, index + 1);

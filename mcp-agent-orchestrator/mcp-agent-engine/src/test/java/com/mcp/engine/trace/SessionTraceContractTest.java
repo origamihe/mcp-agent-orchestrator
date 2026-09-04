@@ -208,7 +208,7 @@ class SessionTraceContractTest {
         SessionTrace ended = SessionTraceHolder.end();
         assertFalse(SessionTraceHolder.isActive());
         assertNotNull(ended);
-        assertEquals(2, ended.getEventCount()); // USER_MESSAGE + FINAL_RESPONSE (from close)
+        assertEquals(3, ended.getEventCount()); // USER_MESSAGE + EXECUTION_COMPLETED + FINAL_RESPONSE (from close)
     }
 
     @Test

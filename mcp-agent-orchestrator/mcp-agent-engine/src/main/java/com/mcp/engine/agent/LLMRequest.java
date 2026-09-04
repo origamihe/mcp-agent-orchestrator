@@ -1,5 +1,6 @@
 package com.mcp.engine.agent;
 
+import com.mcp.engine.execution.ExecutionPlan;
 import lombok.Builder;
 import lombok.Data;
 
@@ -50,6 +51,9 @@ public class LLMRequest {
 
     /** 模型配置ID（可选，用于多模型切换） */
     private String modelConfigId;
+
+    /** 执行计划（P1 核心：Agent 通过此字段获取 ToolPolicy / MemoryPolicy / TimeoutPolicy） */
+    private ExecutionPlan executionPlan;
 
     /** 扩展变量 */
     @Builder.Default

@@ -2,6 +2,7 @@ package com.mcp.tools.pipeline;
 
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.ToolExecutionRequest;
+import com.mcp.tools.model.ToolExecutionResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -32,7 +33,7 @@ class ToolPipelineTest {
 
     @BeforeEach
     void setUp() {
-        pipelineExecutor = new ToolPipelineExecutor(toolExecutor);
+        pipelineExecutor = new ToolPipelineExecutor(toolExecutor, null);
     }
 
     @Nested
@@ -117,7 +118,7 @@ class ToolPipelineTest {
         @Test
         @DisplayName("单步管道执行成功")
         void shouldExecuteSingleStepPipeline() {
-            when(toolExecutor.execute(any())).thenReturn(Mono.just("step1 output"));
+            when(toolExecutor.execute(any())).thenReturn(Mono.just(ToolExecutionResult.success("step1", "test_tool", "step1 output", java.time.Duration.ZERO)));
 
             ToolPipeline pipeline = ToolPipeline.builder()
                     .pipelineId("test-single")
@@ -147,8 +148,8 @@ class ToolPipelineTest {
         @DisplayName("多步管道顺序执行并传递引用")
         void shouldExecuteMultiStepPipelineWithReferences() {
             when(toolExecutor.execute(any())).thenReturn(
-                    Mono.just(Map.of("data", "result from A")),
-                    Mono.just("result from B"));
+                    Mono.just(ToolExecutionResult.success("stepA", "tool_a", Map.of("data", "result from A"), java.time.Duration.ZERO)),
+                    Mono.just(ToolExecutionResult.success("stepB", "tool_b", "result from B", java.time.Duration.ZERO)));
 
             ToolPipeline pipeline = ToolPipeline.builder()
                     .pipelineId("test-multi")
@@ -184,7 +185,7 @@ class ToolPipelineTest {
         @DisplayName("failFast=true 时步骤失败终止管道")
         void shouldStopOnFailFastFailure() {
             when(toolExecutor.execute(any()))
-                    .thenReturn(Mono.just("step1 ok"))
+                    .thenReturn(Mono.just(ToolExecutionResult.success("step1", "tool_a", "step1 ok", java.time.Duration.ZERO)))
                     .thenReturn(Mono.error(new RuntimeException("step2 failed")));
 
             ToolPipeline pipeline = ToolPipeline.builder()
@@ -214,9 +215,9 @@ class ToolPipelineTest {
         @DisplayName("failFast=false 时步骤失败继续执行")
         void shouldContinueOnNonFailFastFailure() {
             when(toolExecutor.execute(any()))
-                    .thenReturn(Mono.just("step1 ok"))
+                    .thenReturn(Mono.just(ToolExecutionResult.success("step1", "tool_a", "step1 ok", java.time.Duration.ZERO)))
                     .thenReturn(Mono.error(new RuntimeException("step2 failed")))
-                    .thenReturn(Mono.just("step3 ok"));
+                    .thenReturn(Mono.just(ToolExecutionResult.success("step3", "tool_c", "step3 ok", java.time.Duration.ZERO)));
 
             ToolPipeline pipeline = ToolPipeline.builder()
                     .pipelineId("test-non-failfast")

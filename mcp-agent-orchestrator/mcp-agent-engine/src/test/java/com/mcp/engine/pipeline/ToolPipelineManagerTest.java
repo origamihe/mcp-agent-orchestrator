@@ -7,6 +7,7 @@ import com.mcp.common.pipeline.PipelineStep;
 import com.mcp.common.pipeline.StepResult;
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.ToolExecutionRequest;
+import com.mcp.tools.model.ToolExecutionResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -53,7 +54,7 @@ class ToolPipelineManagerTest {
         final AtomicInteger callCount = new AtomicInteger(0);
 
         @Override
-        public Mono<Object> execute(ToolExecutionRequest request) {
+        public Mono<ToolExecutionResult> execute(ToolExecutionRequest request) {
             requests.add(request);
             callCount.incrementAndGet();
 
@@ -62,9 +63,9 @@ class ToolPipelineManagerTest {
                 return Mono.error(toolErrors.get(toolName));
             }
             if (toolOutputs.containsKey(toolName)) {
-                return Mono.just(toolOutputs.get(toolName));
+                return Mono.just(ToolExecutionResult.success(request.getRequestId(), toolName, toolOutputs.get(toolName), java.time.Duration.ZERO));
             }
-            return Mono.just(Map.of("tool", toolName, "args", request.getArguments()));
+            return Mono.just(ToolExecutionResult.success(request.getRequestId(), toolName, Map.of("tool", toolName, "args", request.getArguments()), java.time.Duration.ZERO));
         }
 
         void setOutput(String toolName, Object output) {

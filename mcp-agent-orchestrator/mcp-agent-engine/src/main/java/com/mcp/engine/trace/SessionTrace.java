@@ -168,6 +168,99 @@ public class SessionTrace implements AutoCloseable {
         ));
     }
 
+    public void recordRequestReceived(String requestSummary, int requestLength) {
+        record(SessionEventType.REQUEST_RECEIVED, Map.of(
+                "requestSummary", requestSummary,
+                "requestLength", requestLength
+        ));
+    }
+
+    public void recordPlanCreated(String planType, int stepCount, String planSummary) {
+        record(SessionEventType.PLAN_CREATED, Map.of(
+                "planType", planType,
+                "stepCount", stepCount,
+                "planSummary", planSummary != null ? planSummary : ""
+        ));
+    }
+
+    public void recordContextBuilt(int fileContextCount, int totalTokens, String budgetInfo) {
+        record(SessionEventType.CONTEXT_BUILT, Map.of(
+                "fileContextCount", fileContextCount,
+                "totalTokens", totalTokens,
+                "budgetInfo", budgetInfo != null ? budgetInfo : ""
+        ));
+    }
+
+    public void recordAgentStarted(String agentName, String agentType) {
+        record(SessionEventType.AGENT_STARTED, Map.of(
+                "agentName", agentName,
+                "agentType", agentType
+        ));
+    }
+
+    public void recordAgentIteration(int iteration, int toolCallCount, String summary) {
+        record(SessionEventType.AGENT_ITERATION, Map.of(
+                "iteration", iteration,
+                "toolCallCount", toolCallCount,
+                "summary", summary != null ? summary : ""
+        ));
+    }
+
+    public void recordPipelineStep(String pipelineId, String stepName, int stepIndex, boolean success) {
+        record(SessionEventType.PIPELINE_STEP, Map.of(
+                "pipelineId", pipelineId,
+                "stepName", stepName,
+                "stepIndex", stepIndex,
+                "success", success
+        ));
+    }
+
+    public void recordMemoryRead(String memoryType, int itemsRead) {
+        record(SessionEventType.MEMORY_READ, Map.of(
+                "memoryType", memoryType,
+                "itemsRead", itemsRead
+        ));
+    }
+
+    public void recordMemoryWrite(String memoryType, int itemsWritten) {
+        record(SessionEventType.MEMORY_WRITE, Map.of(
+                "memoryType", memoryType,
+                "itemsWritten", itemsWritten
+        ));
+    }
+
+    public void recordPolicyDecision(String capability, String decision, String reason) {
+        record(SessionEventType.POLICY_DECISION, Map.of(
+                "capability", capability,
+                "decision", decision,
+                "reason", reason != null ? reason : ""
+        ));
+    }
+
+    public void recordLlmCall(String modelName, int promptTokens, int responseTokens) {
+        record(SessionEventType.LLM_CALL, Map.of(
+                "modelName", modelName != null ? modelName : "unknown",
+                "promptTokens", promptTokens,
+                "responseTokens", responseTokens
+        ));
+    }
+
+    public void recordArtifactCreated(String artifactType, String path, int size) {
+        record(SessionEventType.ARTIFACT_CREATED, Map.of(
+                "artifactType", artifactType,
+                "path", path != null ? path : "",
+                "size", size
+        ));
+    }
+
+    public void recordExecutionCompleted(String status, long totalElapsedMs, int totalEvents) {
+        record(SessionEventType.EXECUTION_COMPLETED, Map.of(
+                "status", status,
+                "totalElapsedMs", totalElapsedMs,
+                "totalEvents", totalEvents
+        ));
+    }
+
     public List<SessionEvent> getEvents() {
         return store.getByTraceId(traceId);
     }
@@ -178,6 +271,9 @@ public class SessionTrace implements AutoCloseable {
 
     @Override
     public void close() {
+        recordExecutionCompleted("COMPLETED",
+                java.time.Duration.between(startTime, Instant.now()).toMillis(),
+                getEventCount());
         recordFinalResponse(-1, java.time.Duration.between(startTime, Instant.now()).toMillis());
     }
 }

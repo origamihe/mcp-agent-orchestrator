@@ -7,6 +7,8 @@ import com.mcp.core.context.PromptLayer;
 import com.mcp.core.context.PromptPolicy;
 import com.mcp.engine.agent.Agent;
 import com.mcp.engine.agent.LLMRequest;
+import com.mcp.engine.trace.SessionTrace;
+import com.mcp.engine.trace.SessionTraceHolder;
 import com.mcp.engine.trace.TraceCollector;
 import com.mcp.engine.trace.TraceRecord;
 import com.mcp.llm.client.LlmClient;
@@ -106,6 +108,10 @@ public class AgentRuntime {
      * @return LLM 响应
      */
     public Mono<String> run(String systemPrompt, String userPrompt) {
+        SessionTrace trace = SessionTraceHolder.currentOrNull();
+        if (trace != null) {
+            trace.recordLlmCall("default", systemPrompt != null ? systemPrompt.length() : 0, userPrompt != null ? userPrompt.length() : 0);
+        }
         return llmClient.generateWithSystemPrompt(systemPrompt, userPrompt);
     }
 
@@ -118,6 +124,12 @@ public class AgentRuntime {
      * @return LLM 响应
      */
     public Mono<String> runWithConfig(String modelConfigId, String systemPrompt, String userPrompt) {
+        SessionTrace trace = SessionTraceHolder.currentOrNull();
+        if (trace != null) {
+            trace.recordLlmCall(modelConfigId != null ? modelConfigId : "default",
+                    systemPrompt != null ? systemPrompt.length() : 0,
+                    userPrompt != null ? userPrompt.length() : 0);
+        }
         return llmClient.generateWithConfigAndSystem(modelConfigId, systemPrompt, userPrompt);
     }
 

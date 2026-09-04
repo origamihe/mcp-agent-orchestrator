@@ -30,12 +30,18 @@ public class LlmToolResponse {
     }
 
     public static class ToolCall {
+        private final String id;
         private final String name;
         private final Map<String, Object> arguments;
 
-        public ToolCall(String name, Map<String, Object> arguments) {
+        public ToolCall(String id, String name, Map<String, Object> arguments) {
+            this.id = id != null ? id : java.util.UUID.randomUUID().toString();
             this.name = name;
             this.arguments = arguments != null ? Map.copyOf(arguments) : Map.of();
+        }
+
+        public String getId() {
+            return id;
         }
 
         public String getName() {

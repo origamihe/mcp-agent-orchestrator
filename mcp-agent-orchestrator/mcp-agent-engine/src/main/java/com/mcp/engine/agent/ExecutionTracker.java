@@ -19,8 +19,14 @@ public class ExecutionTracker {
 
     public void recordToolCall(String toolName, String arguments, boolean success,
                                String resultSummary, String errorMessage, long durationMs) {
+        recordToolCall(toolName, arguments, success, resultSummary, errorMessage, durationMs, null);
+    }
+
+    public void recordToolCall(String toolName, String arguments, boolean success,
+                               String resultSummary, String errorMessage, long durationMs,
+                               String toolCallId) {
         observations.add(new ToolObservation(
-                toolName, arguments, success, resultSummary, errorMessage, durationMs));
+                toolName, arguments, success, resultSummary, errorMessage, durationMs, toolCallId));
     }
 
     public void addMatchedSkill(Long skillId) {
@@ -124,6 +130,7 @@ public class ExecutionTracker {
             boolean success,
             String resultSummary,
             String errorMessage,
-            long durationMs
+            long durationMs,
+            String toolCallId
     ) {}
 }

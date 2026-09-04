@@ -179,8 +179,9 @@ public class ToolPipelineManager {
         request.setArguments(resolvedArgs);
 
         return toolExecutor.execute(request)
-                .map(output -> {
+                .map(toolResult -> {
                     long duration = System.currentTimeMillis() - stepStart;
+                    Object output = toolResult.data();
                     StepResult sr = StepResult.success(step.getId(), step.getToolName(), output, duration);
                     results.add(sr);
                     context.put(step.getId(), output);
@@ -224,8 +225,9 @@ public class ToolPipelineManager {
         request.setArguments(resolvedArgs);
 
         return toolExecutor.execute(request)
-                .map(output -> {
+                .map(toolResult -> {
                     long duration = System.currentTimeMillis() - stepStart;
+                    Object output = toolResult.data();
                     StepResult sr = StepResult.success(step.getId(), step.getFallbackTool(), output, duration);
                     sr.setFallbackToolUsed(step.getFallbackTool());
                     results.add(sr);

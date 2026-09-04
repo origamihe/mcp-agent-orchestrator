@@ -6,6 +6,7 @@ import com.mcp.common.planner.PlanDAG;
 import com.mcp.common.planner.PlanNode;
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.ToolExecutionRequest;
+import com.mcp.tools.model.ToolExecutionResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -299,7 +300,7 @@ class PlanExecutorTest {
         }
 
         @Override
-        public Mono<Object> execute(ToolExecutionRequest request) {
+        public Mono<ToolExecutionResult> execute(ToolExecutionRequest request) {
             requests.add(request);
             callCount.incrementAndGet();
 
@@ -309,7 +310,7 @@ class PlanExecutorTest {
             }
             Object output = toolOutputs.getOrDefault(toolName,
                     Map.of("tool", toolName, "args", request.getArguments()));
-            return Mono.just(output);
+            return Mono.just(ToolExecutionResult.success(request.getRequestId(), toolName, output, java.time.Duration.ZERO));
         }
     }
 }

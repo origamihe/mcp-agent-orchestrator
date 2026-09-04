@@ -38,6 +38,7 @@ public record SessionEvent(
         String eventId,
         String sessionId,
         String traceId,
+        String parentEventId,
         SessionEventType eventType,
         Instant timestamp,
         int sequence,
@@ -53,6 +54,7 @@ public record SessionEvent(
         private String eventId = UUID.randomUUID().toString();
         private String sessionId;
         private String traceId;
+        private String parentEventId;
         private SessionEventType eventType;
         private Instant timestamp = Instant.now();
         private int sequence;
@@ -62,6 +64,7 @@ public record SessionEvent(
         public SessionEventBuilder eventId(String eventId) { this.eventId = eventId; return this; }
         public SessionEventBuilder sessionId(String sessionId) { this.sessionId = sessionId; return this; }
         public SessionEventBuilder traceId(String traceId) { this.traceId = traceId; return this; }
+        public SessionEventBuilder parentEventId(String parentEventId) { this.parentEventId = parentEventId; return this; }
         public SessionEventBuilder eventType(SessionEventType eventType) { this.eventType = eventType; return this; }
         public SessionEventBuilder timestamp(Instant timestamp) { this.timestamp = timestamp; return this; }
         public SessionEventBuilder sequence(int sequence) { this.sequence = sequence; return this; }
@@ -72,7 +75,7 @@ public record SessionEvent(
             if (sessionId == null) throw new IllegalStateException("sessionId is required");
             if (traceId == null) throw new IllegalStateException("traceId is required");
             if (eventType == null) throw new IllegalStateException("eventType is required");
-            return new SessionEvent(eventId, sessionId, traceId, eventType, timestamp, sequence, payload, elapsedMsSinceStart);
+            return new SessionEvent(eventId, sessionId, traceId, parentEventId, eventType, timestamp, sequence, payload, elapsedMsSinceStart);
         }
     }
 }

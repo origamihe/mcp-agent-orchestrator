@@ -1,7 +1,9 @@
 package com.mcp.tools.executor;
 
 import com.mcp.tools.model.ToolDefinition;
+import com.mcp.tools.model.ToolError;
 import com.mcp.tools.model.ToolExecutionRequest;
+import com.mcp.tools.model.ToolExecutionResult;
 import com.mcp.tools.registry.ToolRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,6 +13,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.time.Duration;
 import java.util.Map;
 
 @Slf4j
@@ -21,7 +24,7 @@ public class DefaultToolExecutor implements ToolExecutor {
     private final ToolRegistry toolRegistry;
 
     @Override
-    public Mono<Object> execute(ToolExecutionRequest request) {
+    public Mono<ToolExecutionResult> execute(ToolExecutionRequest request) {
         String toolName = request.getToolName();
         long startTime = System.currentTimeMillis();
 
@@ -29,7 +32,11 @@ public class DefaultToolExecutor implements ToolExecutor {
                 .switchIfEmpty(Mono.error(new RuntimeException("Tool not found: " + toolName)))
                 .flatMap(definition -> {
                     if (!definition.isEnabled()) {
-                        return Mono.error(new RuntimeException("Tool is disabled: " + toolName));
+                        long duration = System.currentTimeMillis() - startTime;
+                        return Mono.just(ToolExecutionResult.executionError(
+                                request.getRequestId(), toolName,
+                                ToolError.internal("Tool is disabled: " + toolName),
+                                Duration.ofMillis(duration)));
                     }
 
                     long timeoutMs = definition.getTimeoutMs();
@@ -53,17 +60,26 @@ public class DefaultToolExecutor implements ToolExecutor {
                         return method.invoke(target, args);
                     })
                     .subscribeOn(Schedulers.boundedElastic())
-                    .timeout(java.time.Duration.ofMillis(timeoutMs))
-                    .doOnSuccess(result -> {
+                    .timeout(Duration.ofMillis(timeoutMs))
+                    .map(result -> {
                         long duration = System.currentTimeMillis() - startTime;
                         toolRegistry.recordToolExecution(toolName, true, duration, null);
                         log.info("[ToolExecutor] Success: {} ({}ms)", toolName, duration);
+                        return ToolExecutionResult.success(
+                                request.getRequestId(), toolName, result, Duration.ofMillis(duration));
                     })
-                    .doOnError(error -> {
+                    .onErrorResume(error -> {
                         long duration = System.currentTimeMillis() - startTime;
                         String errMsg = error.getMessage() != null ? error.getMessage() : "Unknown error";
                         toolRegistry.recordToolExecution(toolName, false, duration, errMsg);
                         log.warn("[ToolExecutor] Failed: {} ({}ms, error: {})", toolName, duration, errMsg);
+                        if (error instanceof java.util.concurrent.TimeoutException) {
+                            return Mono.just(ToolExecutionResult.timeout(
+                                    request.getRequestId(), toolName, Duration.ofMillis(duration)));
+                        }
+                        return Mono.just(ToolExecutionResult.executionError(
+                                request.getRequestId(), toolName,
+                                ToolError.internal(errMsg), Duration.ofMillis(duration)));
                     });
                 });
     }

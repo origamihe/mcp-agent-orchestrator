@@ -16,6 +16,7 @@ import com.mcp.engine.agent.LLMRequest;
 import com.mcp.engine.agent.card.AgentCard;
 import com.mcp.engine.agent.registry.AgentRegistry;
 import com.mcp.engine.context.ContextBundle;
+import com.mcp.engine.context.ContextBudget;
 import com.mcp.engine.context.TokenBudget;
 import com.mcp.engine.context.ContextManager;
 import com.mcp.engine.context.ContextRequest;
@@ -28,6 +29,10 @@ import com.mcp.common.identity.UserRole;
 import com.mcp.common.identity.GroupContext;
 import com.mcp.core.context.BuildContext;
 import com.mcp.core.context.PromptPolicy;
+import com.mcp.engine.execution.ExecutionPlan;
+import com.mcp.engine.execution.ExecutionPlanner;
+import com.mcp.engine.execution.ExecutionState;
+import com.mcp.engine.policy.PolicyEngine;
 import com.mcp.engine.memory.MemoryLifecycleOrchestrator;
 import com.mcp.engine.memory.GroupConversationContextAssembler;
 import com.mcp.llm.client.ChatMessage;
@@ -135,6 +140,10 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     private final AgentRegistry agentRegistry;
 
     private final AgentRuntime agentRuntime;
+
+    private final ExecutionPlanner executionPlanner;
+
+    private final PolicyEngine policyEngine;
 
     private final PipelineRegistry pipelineRegistry;
 
@@ -269,6 +278,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     /**
      * 统一内部执行入口 — processRequestWithSystemPrompt / processRequestWithModel / processRequestWithIdentity 的共享核心逻辑。
      * 所有 wrapper 方法只需解析身份 + 获取 systemPrompt，然后委托到此方法。
+     *
+     * P1 重构：使用 ExecutionPlanner 替代 if/else 路由链，使用 ExecutionPlan 统一执行策略。
      */
     private Mono<String> internalProcess(RequestContext ctx, String resolvedSystemPrompt) {
         String request = ctx.getUserMessage();
@@ -295,6 +306,9 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
         SessionTraceHolder.start(sessionId, sessionEventStore);
         SessionTrace trace = SessionTraceHolder.current();
+        trace.recordRequestReceived(
+                request.length() > 100 ? request.substring(0, 100) + "..." : request,
+                request.length());
         trace.recordUserMessage(request, request.length());
         trace.recordContextClassification(requirement.name(),
                 "hasActiveDoc=" + workingCtx.hasActiveDocument() + ", isGame=" + state.isGameMode(),
@@ -328,33 +342,28 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     identity.groupId(), threadId, groupConvCtx.length());
         }
 
-        String currentTask = workingCtx.getCurrentTask();
-        Mono<String> result;
-        if (currentTask != null && currentTask.startsWith("SEARCH:")) {
-            log.info("[Orchestrator] Detected SEARCH task, routing to SearchAgent: session={}", sessionId);
-            trace.recordAgentSelection("SearchAgent", "SEARCH_TASK");
-            result = processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
-        } else if (currentTask != null && (currentTask.startsWith("DOCX_GENERATION:") || currentTask.startsWith("PPT_GENERATION:"))) {
-            log.info("[Orchestrator] Detected {} task, session={}",
-                    currentTask.startsWith("DOCX_GENERATION:") ? "DOCX_GENERATION" : "PPT_GENERATION", sessionId);
+        ExecutionPlan plan = executionPlanner.plan(ctx, requirement, workingCtx);
+        ExecutionState execState = new ExecutionState(plan.executionId());
+        execState.startRunning();
 
-            // E2: 尝试 Tool Pipeline 快速路径，减少 LLM 轮次
-            boolean isDocx = currentTask.startsWith("DOCX_GENERATION:");
-            String pipelineId = isDocx ? "search-and-generate-docx" : "search-and-generate-ppt";
-            ToolPipeline pipeline = pipelineRegistry.get(pipelineId);
-            if (pipeline != null) {
-                log.info("[Orchestrator] Pipeline route: {} → {} | session={}", currentTask, pipelineId, sessionId);
-                trace.recordAgentSelection("Pipeline", pipelineId);
-                result = processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline);
-            } else {
-                log.info("[Orchestrator] Routing to SearchAgent: session={}", sessionId);
-                trace.recordAgentSelection("SearchAgent", "DOCX_GENERATION_TASK");
-                result = processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
-            }
-        } else {
-            result = processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime, userRole, requirement, workingCtx);
-        }
+        trace.recordPlanCreated(plan.mode().name(), 0,
+                "agent=" + plan.agentId() + ", pipeline=" + plan.pipelineId());
+        log.info("[Orchestrator] ExecutionPlan: mode={}, agent={}, pipeline={}, context={}, session={}",
+                plan.mode(), plan.agentId(), plan.pipelineId(), requirement, sessionId);
+
+        ContextBudget ctxBudget = ContextBudget.fromExecutionPlan(plan);
+        trace.recordContextBuilt(0, ctxBudget.maxTokens(),
+                "tokenBudget=" + ctxBudget.maxTokens() + ", maxFiles=" + ctxBudget.maxFiles()
+                + ", maxBytes=" + ctxBudget.maxBytes() + ", maxLines=" + ctxBudget.maxLines());
+        log.info("[Orchestrator] ContextBudget: maxTokens={}, maxFiles={}, maxBytes={}, maxLines={}, timeout={} | session={}",
+                ctxBudget.maxTokens(), ctxBudget.maxFiles(), ctxBudget.maxBytes(),
+                ctxBudget.maxLines(), ctxBudget.timeout(), sessionId);
+
+        Mono<String> result = dispatchByPlan(ctx, resolvedSystemPrompt, startTime, userRole,
+                requirement, workingCtx, plan, execState, trace);
+
         return result.doFinally(signalType -> {
+            execState.markCompleted();
             SessionTrace t = SessionTraceHolder.currentOrNull();
             if (t != null) {
                 try {
@@ -370,6 +379,43 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 }
             }
         });
+    }
+
+    /**
+     * P1 新增：根据 ExecutionPlan 的 ExecutionMode 分发到对应的执行路径。
+     * 替代原来的 if (SEARCH:) / else if (DOCX_GENERATION:) / else 链。
+     */
+    private Mono<String> dispatchByPlan(RequestContext ctx, String resolvedSystemPrompt, long startTime,
+                                         UserRole userRole, ContextRequirement requirement,
+                                         WorkingContext workingCtx, ExecutionPlan plan,
+                                         ExecutionState execState, SessionTrace trace) {
+        return switch (plan.mode()) {
+            case AGENT -> {
+                trace.recordAgentSelection(plan.agentId(), "SEARCH_TASK");
+                trace.recordAgentStarted(plan.agentId(), "SEARCH_TASK");
+                yield processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState);
+            }
+            case PIPELINE -> {
+                String pipelineId = plan.pipelineId();
+                ToolPipeline pipeline = pipelineRegistry.get(pipelineId);
+                if (pipeline != null) {
+                    log.info("[Orchestrator] Pipeline route: {} → {} | session={}",
+                            ctx.getUserMessage(), pipelineId, ctx.getIdentity().sessionId());
+                    trace.recordAgentSelection("Pipeline", pipelineId);
+                    yield processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline, plan, execState);
+                } else {
+                    log.info("[Orchestrator] Pipeline not found, falling back to SearchAgent: session={}",
+                            ctx.getIdentity().sessionId());
+                    trace.recordAgentSelection(plan.agentId(), "DOCX_GENERATION_TASK");
+                    trace.recordAgentStarted(plan.agentId(), "DOCX_GENERATION_TASK");
+                    yield processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState);
+                }
+            }
+            case FAST_PATH -> processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime,
+                    userRole, requirement, workingCtx, plan, execState);
+            default -> processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime,
+                    userRole, requirement, workingCtx, plan, execState);
+        };
     }
 
     private static final Pattern WINDOWS_PATH_PATTERN = OrchestratorConstants.WINDOWS_PATH_PATTERN;
@@ -614,6 +660,10 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 identity.sessionId(), identity.userId(),
                 request != null ? request.length() : 0,
                 response != null ? response.length() : 0);
+        SessionTrace t = SessionTraceHolder.currentOrNull();
+        if (t != null) {
+            t.recordMemoryWrite("LIFECYCLE", 1);
+        }
         memoryLifecycleOrchestrator.processMemoryLifecycle(identity, conversation)
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
@@ -1853,24 +1903,26 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     private Mono<String> processContextAwareFastPath(
             RequestContext ctx, String resolvedSystemPrompt,
             long startTime, UserRole userRole,
-            ContextRequirement requirement, WorkingContext workingCtx) {
+            ContextRequirement requirement, WorkingContext workingCtx,
+            ExecutionPlan plan, ExecutionState execState) {
 
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String modelConfigId = ctx.getModelConfigId();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] FastPath: requirement={}, hasActiveDoc={}, isGame={}, source={}, message='{}'",
+        log.info("[Orchestrator] FastPath: requirement={}, hasActiveDoc={}, isGame={}, source={}, message='{}', toolPolicy={}, memoryPolicy={}",
                 requirement, workingCtx.hasActiveDocument(),
                 ctx.getSessionState() != null && ctx.getSessionState().isGameMode(),
-                workingCtx.getActiveContextSource(), request);
+                workingCtx.getActiveContextSource(), request,
+                plan.toolPolicy(), plan.memoryPolicy());
 
         return switch (requirement) {
             case NONE -> processFastPathNone(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
             case CONVERSATION -> processFastPathConversation(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
             case DOCUMENT -> processFastPathDocument(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
             case WORKSPACE -> processFastPathWorkspace(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
-            case SEARCH -> processFastPathSearch(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
+            case SEARCH -> processFastPathSearch(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx, plan);
         };
 
     }
@@ -1887,13 +1939,14 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
      */
     private Mono<String> processWithPipeline(
             RequestContext ctx, String resolvedSystemPrompt,
-            long startTime, WorkingContext workingCtx, ToolPipeline pipeline) {
+            long startTime, WorkingContext workingCtx, ToolPipeline pipeline,
+            ExecutionPlan plan, ExecutionState execState) {
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] Pipeline[{}] executing: {} steps | session={}",
-                pipeline.getPipelineId(), pipeline.getSteps().size(), sessionId);
+        log.info("[Orchestrator] Pipeline[{}] executing: {} steps | session={} | toolPolicy={}",
+                pipeline.getPipelineId(), pipeline.getSteps().size(), sessionId, plan.toolPolicy());
 
         ToolPipeline finalPipeline = ToolPipeline.builder()
                 .pipelineId(pipeline.getPipelineId())
@@ -1925,18 +1978,19 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     }
                     log.warn("[Orchestrator] Pipeline[{}] failed, falling back to SearchAgent: session={}",
                             pipeline.getPipelineId(), sessionId);
-                    return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
+                    return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState);
                 })
                 .onErrorResume(ex -> {
                     log.warn("[Orchestrator] Pipeline[{}] exception, falling back to SearchAgent: session={} | error={}",
                             pipeline.getPipelineId(), sessionId, ex.getMessage());
-                    return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx);
+                    return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState);
                 });
     }
 
     private Mono<String> processDocxGenerationWithSearchAgent(
             RequestContext ctx, String resolvedSystemPrompt,
-            long startTime, WorkingContext workingCtx) {
+            long startTime, WorkingContext workingCtx,
+            ExecutionPlan plan, ExecutionState execState) {
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String sessionId = identity.sessionId();
@@ -1947,8 +2001,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                 "[Orchestrator] SearchAgent not in registry, fallback keyword routing to: {} | session={}",
                                 agent.getName(), sessionId)))
                 .flatMap(searchAgent -> {
-                    log.info("[Orchestrator] Routing DOCX_GENERATION to agent: {} | session={}",
-                            searchAgent.getName(), sessionId);
+                    log.info("[Orchestrator] Routing DOCX_GENERATION to agent: {} | session={} | toolPolicy={}",
+                            searchAgent.getName(), sessionId, plan.toolPolicy());
 
                     LLMRequest llmRequest = LLMRequest.builder()
                             .sessionId(sessionId)
@@ -1957,6 +2011,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             .systemPrompt(resolvedSystemPrompt)
                             .userMessage(request)
                             .modelConfigId(ctx.getModelConfigId())
+                            .executionPlan(plan)
                             .build();
 
                     return searchAgent.execute(llmRequest)
@@ -1975,7 +2030,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             sessionId);
                     return processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime,
                             ctx.getUserProfile() != null ? ctx.getUserProfile().getRole() : null,
-                            ContextRequirement.DOCUMENT, workingCtx);
+                            ContextRequirement.DOCUMENT, workingCtx, plan, execState);
                 }));
     }
 
@@ -1991,6 +2046,10 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
         long memStart = System.currentTimeMillis();
         return memoryService.buildWorkingContext(identity, userRole)
+                .doOnSubscribe(s -> {
+                    SessionTrace t = SessionTraceHolder.currentOrNull();
+                    if (t != null) t.recordMemoryRead("WORKING_CONTEXT", 0);
+                })
                 .doOnSuccess(memCtx -> {
                     long memElapsed = System.currentTimeMillis() - memStart;
                     log.info("[DIAG-Perf] FastPath[NONE] memory loading: {}ms | memCtxLen={}",
@@ -2059,7 +2118,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
      */
     private Mono<String> processFastPathSearch(RequestContext ctx, String resolvedSystemPrompt,
                                                 long startTime, UserRole userRole,
-                                                WorkingContext workingCtx) {
+                                                WorkingContext workingCtx, ExecutionPlan plan) {
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String modelConfigId = ctx.getModelConfigId();
@@ -2097,6 +2156,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                 .systemPrompt(resolvedSystemPrompt)
                                 .userMessage(request)
                                 .modelConfigId(modelConfigId)
+                                .executionPlan(plan)
                                 .build();
 
                         long t0 = System.currentTimeMillis();

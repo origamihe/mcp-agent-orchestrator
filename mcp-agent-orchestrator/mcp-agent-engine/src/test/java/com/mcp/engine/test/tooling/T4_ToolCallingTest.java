@@ -86,10 +86,10 @@ class T4_ToolCallingTest {
                 }
                 """;
 
-        when(toolExecutor.execute(request)).thenReturn(Mono.just(resultJson));
+        when(toolExecutor.execute(request)).thenReturn(Mono.just(ToolExecutionResult.success("1", "web_search", resultJson, java.time.Duration.ZERO)));
 
         StepVerifier.create(toolExecutor.execute(request))
-                .expectNext(resultJson)
+                .expectNextMatches(r -> r.data().equals(resultJson))
                 .verifyComplete();
 
         verify(toolExecutor).execute(request);
@@ -171,10 +171,10 @@ class T4_ToolCallingTest {
         ));
 
         String result = "{\"success\": true, \"filePath\": \"UserService.java\", \"linesChanged\": 3}";
-        when(toolExecutor.execute(request)).thenReturn(Mono.just(result));
+        when(toolExecutor.execute(request)).thenReturn(Mono.just(ToolExecutionResult.success("1", "edit_file", result, java.time.Duration.ZERO)));
 
         StepVerifier.create(toolExecutor.execute(request))
-                .expectNext(result)
+                .expectNextMatches(r -> r.data().equals(result))
                 .verifyComplete();
     }
 
@@ -196,10 +196,10 @@ class T4_ToolCallingTest {
                     "pageCount": 5
                 }
                 """;
-        when(toolExecutor.execute(request)).thenReturn(Mono.just(result));
+        when(toolExecutor.execute(request)).thenReturn(Mono.just(ToolExecutionResult.success("1", "docx_generator", result, java.time.Duration.ZERO)));
 
         StepVerifier.create(toolExecutor.execute(request))
-                .expectNext(result)
+                .expectNextMatches(r -> r.data().equals(result))
                 .verifyComplete();
     }
 
@@ -228,10 +228,10 @@ class T4_ToolCallingTest {
                     "slideCount": 6
                 }
                 """;
-        when(toolExecutor.execute(request)).thenReturn(Mono.just(result));
+        when(toolExecutor.execute(request)).thenReturn(Mono.just(ToolExecutionResult.success("1", "ppt_generator", result, java.time.Duration.ZERO)));
 
         StepVerifier.create(toolExecutor.execute(request))
-                .expectNext(result)
+                .expectNextMatches(r -> r.data().equals(result))
                 .verifyComplete();
     }
 

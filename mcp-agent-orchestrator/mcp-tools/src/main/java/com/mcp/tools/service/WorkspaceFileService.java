@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -115,6 +116,7 @@ public class WorkspaceFileService {
      * 读取文件全部内容。
      */
     public String readAll(Path filePath) throws IOException {
+        checkNoSymlink(filePath);
         if (Files.size(filePath) > MAX_CONTENT_SIZE) {
             throw new IOException("File size exceeds limit: " + filePath);
         }
@@ -125,6 +127,7 @@ public class WorkspaceFileService {
      * 读取文件全部行（用于行级操作）。
      */
     public List<String> readAllLines(Path filePath) throws IOException {
+        checkNoSymlink(filePath);
         return Files.readAllLines(filePath, StandardCharsets.UTF_8);
     }
 
@@ -172,12 +175,13 @@ public class WorkspaceFileService {
      */
     public String createBackup(Path filePath) throws IOException {
         if (!Files.exists(filePath)) return null;
+        checkNoSymlink(filePath);
         String timestamp = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS")
                 .withZone(ZoneId.systemDefault())
                 .format(Instant.now());
         String backupName = filePath.getFileName().toString() + ".bak_" + timestamp;
         Path backupPath = filePath.resolveSibling(backupName);
-        Files.copy(filePath, backupPath);
+        Files.copy(filePath, backupPath, LinkOption.NOFOLLOW_LINKS);
         log.info("Backup created: {}", backupPath);
         return backupPath.toString();
     }
@@ -191,6 +195,9 @@ public class WorkspaceFileService {
         Path parentDir = filePath.getParent();
         if (parentDir != null) {
             Files.createDirectories(parentDir);
+        }
+        if (Files.exists(filePath)) {
+            checkNoSymlink(filePath);
         }
         Path tempFile = Files.createTempFile(parentDir, "mcp-tmp-", ".tmp");
         try {
@@ -219,7 +226,8 @@ public class WorkspaceFileService {
         if (backupPath == null) return;
         Path backup = Path.of(backupPath);
         if (Files.exists(backup)) {
-            Files.copy(backup, filePath, StandardCopyOption.REPLACE_EXISTING);
+            checkNoSymlink(backup);
+            Files.copy(backup, filePath, StandardCopyOption.REPLACE_EXISTING, LinkOption.NOFOLLOW_LINKS);
             log.info("Rolled back from backup: {}", backupPath);
         }
     }
@@ -228,6 +236,20 @@ public class WorkspaceFileService {
 
     public Path getWorkspaceRoot() {
         return workspaceRoot;
+    }
+
+    /**
+     * 检查路径是否为符号链接，防止符号链接绕过工作区边界。
+     * 在任何文件操作之前调用此方法。
+     *
+     * @throws SecurityException 如果路径是符号链接
+     */
+    private void checkNoSymlink(Path path) throws IOException {
+        if (Files.isSymbolicLink(path)) {
+            throw new SecurityException(
+                    "Symlinks are not allowed in workspace: '" + path
+                            + "' -> '" + Files.readSymbolicLink(path) + "'");
+        }
     }
 
     /**

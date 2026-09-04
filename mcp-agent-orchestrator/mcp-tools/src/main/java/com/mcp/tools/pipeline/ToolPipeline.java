@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 工具管道定义 — 将多个工具调用串联为确定性工作流。
@@ -42,4 +43,11 @@ public class ToolPipeline {
      */
     @Builder.Default
     private int timeoutSeconds = 300;
+
+    /**
+     * 执行上下文 — 由 Orchestrator 注入，传递给 PolicyEngine 用于策略评估。
+     * 使用 Map<String, Object> 避免 mcp-tools → mcp-agent-engine 的跨模块依赖。
+     */
+    @Builder.Default
+    private Map<String, Object> executionContext = Map.of();
 }

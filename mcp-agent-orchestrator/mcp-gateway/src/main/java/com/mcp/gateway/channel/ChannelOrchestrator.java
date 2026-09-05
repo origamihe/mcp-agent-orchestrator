@@ -529,6 +529,7 @@ public class ChannelOrchestrator {
                 .userMessage(userMessage)
                 .systemPrompt(systemPrompt)
                 .threadId(agentTask != null ? agentTask.getThreadId() : null)
+                .botUserId(adapter.getBotUserId())
                 .build();
 
         return agentFacade.call(ctx)
@@ -611,6 +612,7 @@ public class ChannelOrchestrator {
                 .userMessage(topic)
                 .systemPrompt(systemPrompt)
                 .threadId(agentTask != null ? agentTask.getThreadId() : null)
+                .botUserId(adapter.getBotUserId())
                 .build();
 
         return agentFacade.call(ctx)
@@ -711,6 +713,7 @@ public class ChannelOrchestrator {
                 .userMessage(pptPrompt)
                 .systemPrompt(adapter.getSystemPrompt())
                 .threadId(agentTask != null ? agentTask.getThreadId() : null)
+                .botUserId(adapter.getBotUserId())
                 .build();
 
         return agentFacade.call(ctx)

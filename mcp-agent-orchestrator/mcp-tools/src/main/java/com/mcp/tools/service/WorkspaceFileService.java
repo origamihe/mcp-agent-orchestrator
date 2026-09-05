@@ -24,6 +24,7 @@ import java.util.UUID;
 public class WorkspaceFileService {
 
     private final Path workspaceRoot;
+    private final Path workspaceRealPath;
     public static final int MAX_CONTENT_SIZE = 10 * 1024 * 1024; // 10 MB
 
     public WorkspaceFileService(@Value("${mcp.workspace.root:}") String workspaceRootPath) {
@@ -37,7 +38,16 @@ public class WorkspaceFileService {
         } catch (IOException e) {
             log.warn("Workspace root directory could not be created: {}", workspaceRoot);
         }
-        log.info("WorkspaceFileService initialized with root: {}", workspaceRoot);
+        this.workspaceRealPath = resolveRealPath(workspaceRoot);
+        log.info("WorkspaceFileService initialized with root: {} (real: {})", workspaceRoot, workspaceRealPath);
+    }
+
+    private static Path resolveRealPath(Path path) {
+        try {
+            return path.toRealPath();
+        } catch (IOException e) {
+            return path.toAbsolutePath().normalize();
+        }
     }
 
     // ==================== 路径解析与校验 ====================
@@ -59,11 +69,51 @@ public class WorkspaceFileService {
         }
 
         Path resolved = workspaceRoot.resolve(relativePath).toAbsolutePath().normalize();
-        if (!resolved.startsWith(workspaceRoot)) {
+        Path realResolved = toRealPathOrBestEffort(resolved);
+        if (!realResolved.startsWith(workspaceRealPath)) {
             throw new SecurityException(
-                    "Access denied: path '" + relativePath + "' is outside workspace root");
+                    "Access denied: path '" + relativePath + "' resolves outside workspace root");
         }
         return resolved;
+    }
+
+    /**
+     * 获取路径的真实路径（解析符号链接），
+     * 如果路径不存在，则逐级向上查找最近存在的祖先目录。
+     */
+    private Path toRealPathOrBestEffort(Path path) {
+        try {
+            if (Files.exists(path)) {
+                return path.toRealPath();
+            }
+            return resolveNearestExistingAncestor(path);
+        } catch (IOException e) {
+            return resolveNearestExistingAncestor(path);
+        }
+    }
+
+    /**
+     * 逐级向上查找最近存在的祖先目录，解析其真实路径后拼接剩余路径。
+     */
+    private Path resolveNearestExistingAncestor(Path path) {
+        Path current = path.toAbsolutePath().normalize();
+        Path remaining = null;
+        while (current != null) {
+            try {
+                if (Files.exists(current)) {
+                    Path realCurrent = current.toRealPath();
+                    if (remaining != null) {
+                        return realCurrent.resolve(remaining);
+                    }
+                    return realCurrent;
+                }
+            } catch (IOException e) {
+            }
+            Path fileName = current.getFileName();
+            remaining = (remaining == null) ? fileName : fileName.resolve(remaining);
+            current = current.getParent();
+        }
+        return path.toAbsolutePath().normalize();
     }
 
     /**

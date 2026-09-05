@@ -393,7 +393,9 @@ public class StorageManager {
                                 cleaned++;
                                 log.debug("[StorageManager] Cleaned temp file: {}", p);
                             }
-                        } catch (IOException ignored) {}
+                        } catch (IOException e) {
+                            log.warn("[StorageManager] Failed to clean temp file: {} | reason={}", p, e.getMessage());
+                        }
                     }
                 }
             }

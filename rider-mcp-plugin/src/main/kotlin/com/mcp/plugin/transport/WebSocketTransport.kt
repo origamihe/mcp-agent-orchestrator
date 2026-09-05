@@ -163,6 +163,7 @@ class WebSocketTransport(private val project: Project) : Transport {
         }
 
         override fun onBinary(webSocket: WebSocket, data: ByteBuffer, last: Boolean): CompletionStage<*>? {
+            logger.warn("[Transport] Received unexpected binary message (${data.remaining()} bytes), ignoring")
             webSocket.request(1)
             return null
         }

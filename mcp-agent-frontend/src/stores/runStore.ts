@@ -9,7 +9,7 @@ export const useRunStore = defineStore('run', () => {
     const isLoading = ref(false)
     const error = ref<string | null>(null)
 
-    async function fetchRuns(params?: { agentId?: string; status?: string; limit?: number; offset?: number }) {
+    async function fetchRuns(params?: { agentId?: string; sessionId?: string }) {
         isLoading.value = true
         error.value = null
         try {
@@ -33,14 +33,6 @@ export const useRunStore = defineStore('run', () => {
         }
     }
 
-    async function fetchRunTrace(id: string) {
-        try {
-            return await runsApi.fetchRunTrace(id)
-        } catch (e: any) {
-            error.value = e.message || '获取 Trace 失败'
-        }
-    }
-
     function clearCurrentRun() {
         currentRun.value = null
     }
@@ -52,7 +44,6 @@ export const useRunStore = defineStore('run', () => {
         error,
         fetchRuns,
         fetchRunById,
-        fetchRunTrace,
         clearCurrentRun,
     }
 })

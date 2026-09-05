@@ -29,11 +29,14 @@ class ToolPipelineTest {
     @Mock
     private ToolExecutor toolExecutor;
 
+    @Mock
+    private ToolPolicyChecker policyChecker;
+
     private ToolPipelineExecutor pipelineExecutor;
 
     @BeforeEach
     void setUp() {
-        pipelineExecutor = new ToolPipelineExecutor(toolExecutor, null);
+        pipelineExecutor = new ToolPipelineExecutor(toolExecutor, policyChecker);
     }
 
     @Nested

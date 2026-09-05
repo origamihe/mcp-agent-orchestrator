@@ -1,5 +1,6 @@
 package com.mcp.tools.pipeline;
 
+import com.mcp.tools.model.ToolExecutionResult;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -52,5 +53,10 @@ public class ToolPipelineResult {
         private Object output;
         private String error;
         private long elapsedMs;
+        /**
+         * 统一使用 ToolExecutionResult 作为核心结果数据。
+         * 当非 null 时，上层应优先使用此字段的 status() 方法判断执行结果。
+         */
+        private ToolExecutionResult toolExecutionResult;
     }
 }

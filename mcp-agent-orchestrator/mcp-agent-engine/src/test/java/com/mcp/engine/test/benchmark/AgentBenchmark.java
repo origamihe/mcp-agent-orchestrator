@@ -14,7 +14,6 @@ import com.mcp.core.domain.memory.MemoryType;
 import com.mcp.core.entity.MemoryPackageEntity;
 import com.mcp.core.repository.MemoryPackageRepository;
 import com.mcp.engine.agent.ExecutionTracker;
-import com.mcp.engine.context.TokenBudget;
 import com.mcp.engine.memory.MemoryConflictResolver;
 import com.mcp.engine.memory.MemoryConflictResolver.ConflictGroup;
 import com.mcp.engine.memory.MemoryEvaluator;
@@ -386,63 +385,6 @@ class AgentBenchmark {
             assertThat(conflicts).hasSize(1);
             assertThat(old.isActive()).isFalse();
             assertThat(recent.isActive()).isTrue();
-        }
-    }
-
-    @Nested
-    @DisplayName("TokenBudget 基准")
-    class TokenBudgetBenchmark {
-
-        @Test
-        @DisplayName("bench021: 标准预算分配")
-        void bench021_standardBudgetAllocation() {
-            TokenBudget budget = TokenBudget.builder()
-                    .totalBudget(10000)
-                    .systemPromptTokens(1000)
-                    .fileContextTokens(2000)
-                    .memoryTokens(1000)
-                    .historyTokens(3000)
-                    .toolResultTokens(2000)
-                    .build();
-
-            assertThat(budget.remaining()).isEqualTo(1000);
-            assertThat(budget.canFit(500)).isTrue();
-            assertThat(budget.canFit(2000)).isFalse();
-        }
-
-        @Test
-        @DisplayName("bench022: 预算耗尽")
-        void bench022_budgetExhausted() {
-            TokenBudget budget = TokenBudget.builder()
-                    .totalBudget(1000)
-                    .systemPromptTokens(400)
-                    .fileContextTokens(300)
-                    .memoryTokens(200)
-                    .historyTokens(100)
-                    .toolResultTokens(0)
-                    .build();
-
-            assertThat(budget.remaining()).isEqualTo(0);
-            assertThat(budget.canFit(1)).isFalse();
-        }
-
-        @Test
-        @DisplayName("bench023: CHAT 类型预算")
-        void bench023_chatTypeBudget() {
-            TokenBudget chatBudget = TokenBudget.forPlanType(
-                    com.mcp.engine.planner.EditPlan.PlanType.CHAT, 10000);
-
-            assertThat(chatBudget.getFileContextTokens()).isEqualTo(0);
-            assertThat(chatBudget.getToolResultTokens()).isGreaterThanOrEqualTo(0);
-        }
-
-        @Test
-        @DisplayName("bench024: CODE_EDIT 类型预算")
-        void bench024_codeEditTypeBudget() {
-            TokenBudget codeEditBudget = TokenBudget.forPlanType(
-                    com.mcp.engine.planner.EditPlan.PlanType.CODE_EDIT, 10000);
-
-            assertThat(codeEditBudget.getFileContextTokens()).isGreaterThan(0);
         }
     }
 

@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import type { ChatMessage } from '@/types/agent'
 import http from '@/api/client'
 
-export interface SessionInfo {
+export interface ChatSessionInfo {
     sessionId: string
     userId: string
     createdAt: string
@@ -13,7 +13,7 @@ export interface SessionInfo {
 
 export function useChatHistory() {
     const messages = ref<ChatMessage[]>([])
-    const sessions = ref<SessionInfo[]>([])
+    const sessions = ref<ChatSessionInfo[]>([])
     const isLoadingHistory = ref(false)
 
     function addMessage(role: ChatMessage['role'], content: string) {
@@ -42,7 +42,7 @@ export function useChatHistory() {
 
     async function fetchSessions() {
         try {
-            const res = await http.get('/mcp/chat-history/sessions') as unknown as SessionInfo[]
+            const res = await http.get('/mcp/chat-history/sessions') as unknown as ChatSessionInfo[]
             sessions.value = res ?? []
         } catch {
             console.error('获取历史会话列表失败')

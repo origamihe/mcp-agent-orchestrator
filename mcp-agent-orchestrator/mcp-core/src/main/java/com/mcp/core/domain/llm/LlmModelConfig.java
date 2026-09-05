@@ -13,19 +13,22 @@ public class LlmModelConfig {
     private final String modelName;
     private final Double temperature;
     private final Integer maxTokens;
+    private final Integer contextWindow;
     private final Map<String, Object> parameters;   // 扩展参数
     private final boolean enabled;
     private final LocalDateTime createdAt;
     private final LocalDateTime updatedAt;
 
     public LlmModelConfig(String configId, LlmProviderType provider, String modelName,
-                          Double temperature, Integer maxTokens, Map<String, Object> parameters,
+                          Double temperature, Integer maxTokens, Integer contextWindow,
+                          Map<String, Object> parameters,
                           boolean enabled, LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.configId = configId;
         this.provider = provider;
         this.modelName = modelName;
         this.temperature = temperature != null ? temperature : 0.7;
         this.maxTokens = maxTokens != null ? maxTokens : 2048;
+        this.contextWindow = contextWindow != null ? contextWindow : 128000;
         this.parameters = parameters != null ? Map.copyOf(parameters) : Map.of();
         this.enabled = enabled;
         this.createdAt = createdAt;
@@ -38,6 +41,7 @@ public class LlmModelConfig {
     public String getModelName() { return modelName; }
     public Double getTemperature() { return temperature; }
     public Integer getMaxTokens() { return maxTokens; }
+    public Integer getContextWindow() { return contextWindow; }
     public Map<String, Object> getParameters() { return parameters; }
     public boolean isEnabled() { return enabled; }
     public LocalDateTime getCreatedAt() { return createdAt; }
@@ -53,6 +57,7 @@ public class LlmModelConfig {
         private String modelName;
         private Double temperature;
         private Integer maxTokens;
+        private Integer contextWindow;
         private Map<String, Object> parameters;
         private boolean enabled = true;
         private LocalDateTime createdAt;
@@ -83,6 +88,11 @@ public class LlmModelConfig {
             return this;
         }
 
+        public Builder contextWindow(Integer contextWindow) {
+            this.contextWindow = contextWindow;
+            return this;
+        }
+
         public Builder parameters(Map<String, Object> parameters) {
             this.parameters = parameters != null ? Map.copyOf(parameters) : Map.of();
             return this;
@@ -95,7 +105,7 @@ public class LlmModelConfig {
 
         public LlmModelConfig build() {
             return new LlmModelConfig(configId, provider, modelName, temperature,
-                    maxTokens, parameters, enabled, createdAt, updatedAt);
+                    maxTokens, contextWindow, parameters, enabled, createdAt, updatedAt);
         }
     }
 }

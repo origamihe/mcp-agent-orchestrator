@@ -31,6 +31,10 @@ class ChatPanel(
         private const val HTML_CONTENT_TYPE = "text/html"
         private const val FONT_FAMILY = "SansSerif"
         private const val WELCOME_MESSAGE = "欢迎使用 MCP Agent！输入 Ctrl+Enter 发送消息。"
+
+        private const val ACTION_APPLY_DIFF = "apply_diff"
+        private const val ACTION_APPLY_FULL = "apply_full"
+        private const val ACTION_NOTIFY = "notify"
     }
 
     private val logger = Logger.getInstance(ChatPanel::class.java)
@@ -158,7 +162,7 @@ class ChatPanel(
                         appendAgent(msg.content ?: "")
                         msg.actions?.forEach { action ->
                             when (action["type"]) {
-                                "apply_diff" -> {
+                                ACTION_APPLY_DIFF -> {
                                     val filePath = action["filePath"] as? String ?: return@forEach
                                     val diff = action["diff"] as? String ?: return@forEach
                                     logger.warn("[ChatPanel] apply_diff via reply action — should use capability_call for full security audit")
@@ -170,13 +174,13 @@ class ChatPanel(
                                         capabilityAdapter.execute("apply_diff", mapOf("filePath" to filePath, "diff" to diff))
                                     }
                                 }
-                                "apply_full" -> {
+                                ACTION_APPLY_FULL -> {
                                     val filePath = action["filePath"] as? String ?: return@forEach
                                     val content = action["content"] as? String ?: return@forEach
                                     logger.warn("[ChatPanel] apply_full via reply action — should use capability_call for full security audit")
                                     capabilityAdapter.execute("apply_full_content", mapOf("filePath" to filePath, "content" to content))
                                 }
-                                "notify" -> {
+                                ACTION_NOTIFY -> {
                                     val title = action["title"] as? String ?: ""
                                     val body = action["body"] as? String ?: ""
                                     JOptionPane.showMessageDialog(this, body, title, JOptionPane.INFORMATION_MESSAGE)

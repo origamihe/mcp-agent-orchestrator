@@ -52,6 +52,7 @@ public class ChatAgent implements Agent {
                 .skills(List.of("chat", "qa", "roleplay", "translation", "summarization"))
                 .toolNames(List.of())
                 .version("1.0.0")
+                .promptName("chat-agent")
                 .build();
     }
 

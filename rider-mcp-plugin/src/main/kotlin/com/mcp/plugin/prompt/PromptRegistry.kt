@@ -4,9 +4,10 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.mcp.plugin.capability.CapabilityAdapter
 import com.mcp.plugin.event.IdeEventBus
 import com.mcp.plugin.event.OutgoingEnvelope
-import com.mcp.plugin.util.LanguageDetector
+import com.mcp.plugin.transport.Transport
 import com.mcp.plugin.transport.WebSocketTransport
 
 data class PromptDef(
@@ -80,31 +81,21 @@ class PromptRegistry : DefaultActionGroup("MCP Agent", true) {
                     val selectedCode = editor?.selectionModel?.selectedText?.takeIf { it.isNotBlank() }
                         ?: editor?.document?.text ?: ""
 
-                    val transport = project.getService(WebSocketTransport::class.java)
+                    val transport: Transport? = project.getService(WebSocketTransport::class.java)
                     val eventBus = project.getService(IdeEventBus::class.java)
+                    val capabilityAdapter = project.getService(CapabilityAdapter::class.java)
 
                     val fullPrompt = "${prompt.prompt}\n\n```\n$selectedCode\n```"
 
-                    transport.send(OutgoingEnvelope(
+                    transport?.send(OutgoingEnvelope(
                         type = "chat",
                         sessionId = transport.sessionId,
                         workspaceId = eventBus?.workspaceId,
                         content = fullPrompt,
-                        context = eventBus?.let { collectContext(project) }
+                        context = capabilityAdapter.execute("get_editor_state", emptyMap())
                     ))
                 }
             }
         }.toTypedArray()
-    }
-
-    private fun collectContext(project: com.intellij.openapi.project.Project): Map<String, Any?> {
-        val editor = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedTextEditor
-        val currentFile = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedFiles.firstOrNull()
-        return mapOf(
-            "currentFilePath" to (currentFile?.path),
-            "cursorLine" to (editor?.let { it.document.getLineNumber(it.caretModel.primaryCaret.offset) + 1 } ?: 0),
-            "selectedCode" to (editor?.selectionModel?.selectedText?.takeIf { it.isNotBlank() }),
-            "language" to (currentFile?.let { LanguageDetector.detect(it) })
-        )
     }
 }

@@ -230,7 +230,12 @@ class CapabilityAdapter(private val project: Project) {
         val path = params["path"] as? String ?: project.basePath ?: return mapOf("error" to "path required")
         return try {
             val changeListManager = ChangeListManager.getInstance(project)
+            val normalizedPath = PathValidator.normalizePath(path)
             val changes = changeListManager.allChanges
+                .filter { change ->
+                    val vf = change.afterRevision?.file ?: change.beforeRevision?.file
+                    vf?.path?.let { PathValidator.normalizePath(it).startsWith(normalizedPath) } ?: false
+                }
             val result = changes.map { change ->
                 val vf = change.afterRevision?.file
                     ?: change.beforeRevision?.file
@@ -247,14 +252,31 @@ class CapabilityAdapter(private val project: Project) {
 
     private fun getGitDiff(params: Map<String, Any?>): Map<String, Any?> {
         return try {
-            val changes = ChangeListManager.getInstance(project).allChanges
+            val changeListManager = ChangeListManager.getInstance(project)
+            val staged = params["staged"]
+
+            val changes = when {
+                staged is Boolean && staged -> {
+                    val defaultList = changeListManager.defaultChangeList
+                    changeListManager.changeLists
+                        .filter { it != defaultList }
+                        .flatMap { it.changes }
+                }
+                staged is Boolean && !staged -> {
+                    changeListManager.defaultChangeList.changes
+                }
+                else -> {
+                    changeListManager.allChanges
+                }
+            }
+
             val diffs = changes.map { change ->
                 mapOf(
                     "filePath" to (change.afterRevision?.file?.path ?: change.beforeRevision?.file?.path),
                     "status" to change.fileStatus.toString()
                 )
             }
-            mapOf("diffs" to diffs)
+            mapOf("diffs" to diffs, "staged" to (staged as? Boolean))
         } catch (e: Exception) {
             mapOf("error" to e.message)
         }
@@ -298,9 +320,17 @@ class CapabilityAdapter(private val project: Project) {
         val pattern = params["pattern"] as? String ?: return mapOf("error" to "pattern required")
         val basePath = project.basePath ?: return mapOf("error" to "no project")
         val dir = File(basePath)
+        val excludedDirs = listOf(".git", ".idea", "node_modules", "target", "__pycache__", ".svn", ".hg")
+        val sep = File.separator
         val results = mutableListOf<String>()
         dir.walkTopDown()
             .filter { it.isFile }
+            .filter { file ->
+                excludedDirs.none { excluded ->
+                    file.path.contains("$sep$excluded$sep") || file.path.endsWith("$sep$excluded")
+                }
+            }
+            .filter { !PathValidator.isSensitivePath(it.path) }
             .filter { it.name.contains(pattern, ignoreCase = true) }
             .take(20)
             .forEach { results.add(it.relativeTo(dir).path) }

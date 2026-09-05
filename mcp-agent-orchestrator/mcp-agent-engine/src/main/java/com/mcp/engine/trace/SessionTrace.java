@@ -261,6 +261,18 @@ public class SessionTrace implements AutoCloseable {
         ));
     }
 
+    public void recordStateTransition(String executionId, String from, String to,
+                                       int iteration, int pendingToolCalls, int completedToolResults) {
+        record(SessionEventType.STATE_TRANSITION, Map.of(
+                "executionId", executionId,
+                "from", from,
+                "to", to,
+                "iteration", iteration,
+                "pendingToolCalls", pendingToolCalls,
+                "completedToolResults", completedToolResults
+        ));
+    }
+
     public List<SessionEvent> getEvents() {
         return store.getByTraceId(traceId);
     }

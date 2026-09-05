@@ -2,6 +2,7 @@ package com.mcp.tools.model;
 
 import java.util.List;
 
+@Deprecated
 public record ToolResult(
         boolean success,
         String message,

@@ -5,13 +5,26 @@ import com.mcp.common.pipeline.PipelineResult;
 import com.mcp.common.pipeline.PipelineStatus;
 import com.mcp.common.pipeline.PipelineStep;
 import com.mcp.common.pipeline.StepResult;
+import com.mcp.engine.execution.ExecutionPlan;
+import com.mcp.engine.execution.ExecutionState;
+import com.mcp.engine.policy.PolicyEngine;
+import com.mcp.engine.test.fixtures.ExecutionPlanFixtures;
+import com.mcp.engine.test.fixtures.ExecutionStateFixtures;
 import com.mcp.tools.executor.ToolExecutor;
+import com.mcp.tools.model.ToolCategory;
+import com.mcp.tools.model.ToolDefinition;
 import com.mcp.tools.model.ToolExecutionRequest;
 import com.mcp.tools.model.ToolExecutionResult;
+import com.mcp.tools.pipeline.ToolPolicyChecker;
+import com.mcp.tools.registry.ToolRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
@@ -24,6 +37,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * P4 验证 — ToolPipelineManager 测试。
@@ -46,6 +62,9 @@ class ToolPipelineManagerTest {
 
     private ToolPipelineManager pipelineManager;
     private MockToolExecutor mockExecutor;
+    private PolicyEngine mockPolicyEngine;
+    private ExecutionPlan testPlan;
+    private ExecutionState testState;
 
     private static class MockToolExecutor implements ToolExecutor {
         final List<ToolExecutionRequest> requests = new ArrayList<>();
@@ -80,7 +99,18 @@ class ToolPipelineManagerTest {
     @BeforeEach
     void setUp() {
         mockExecutor = new MockToolExecutor();
-        pipelineManager = new ToolPipelineManager(mockExecutor);
+
+        ToolRegistry mockRegistry = mock(ToolRegistry.class);
+        when(mockRegistry.getTool(any())).thenReturn(Mono.just(
+                ToolDefinition.builder()
+                        .name("web_search")
+                        .category(ToolCategory.SEARCH)
+                        .build()));
+
+        mockPolicyEngine = new PolicyEngine(mockRegistry);
+        pipelineManager = new ToolPipelineManager(mockExecutor, mockPolicyEngine);
+        testPlan = ExecutionPlanFixtures.searchAllowed();
+        testState = ExecutionStateFixtures.minimal();
     }
 
     // ==================== 流水线注册 ====================
@@ -140,7 +170,7 @@ class ToolPipelineManagerTest {
                     .build();
             pipelineManager.registerPipeline(def);
 
-            PipelineResult result = pipelineManager.execute("single", Map.of("query", "test")).block();
+            PipelineResult result = pipelineManager.execute("single", Map.of("query", "test"), null, null).block();
 
             assertThat(result).isNotNull();
             assertThat(result.getStatus()).isEqualTo(PipelineStatus.COMPLETED);
@@ -163,7 +193,7 @@ class ToolPipelineManagerTest {
                     .build();
             pipelineManager.registerPipeline(def);
 
-            PipelineResult result = pipelineManager.execute("multi", Map.of()).block();
+            PipelineResult result = pipelineManager.execute("multi", Map.of(), null, null).block();
 
             assertThat(result).isNotNull();
             assertThat(result.getStatus()).isEqualTo(PipelineStatus.COMPLETED);
@@ -195,7 +225,7 @@ class ToolPipelineManagerTest {
                     .build();
             pipelineManager.registerPipeline(def);
 
-            PipelineResult result = pipelineManager.execute("dataflow", Map.of()).block();
+            PipelineResult result = pipelineManager.execute("dataflow", Map.of(), null, null).block();
 
             assertThat(result.getStatus()).isEqualTo(PipelineStatus.COMPLETED);
 
@@ -224,7 +254,7 @@ class ToolPipelineManagerTest {
                     .build();
             pipelineManager.registerPipeline(def);
 
-            PipelineResult result = pipelineManager.execute("merge", Map.of()).block();
+            PipelineResult result = pipelineManager.execute("merge", Map.of(), null, null).block();
 
             assertThat(result.getStatus()).isEqualTo(PipelineStatus.COMPLETED);
 
@@ -259,7 +289,7 @@ class ToolPipelineManagerTest {
                     .build();
             pipelineManager.registerPipeline(def);
 
-            PipelineResult result = pipelineManager.execute("fallback", Map.of()).block();
+            PipelineResult result = pipelineManager.execute("fallback", Map.of(), null, null).block();
 
             assertThat(result.getStatus()).isEqualTo(PipelineStatus.COMPLETED);
             assertThat(result.getStepResults().get(0).getFallbackToolUsed()).isEqualTo("stable_search");
@@ -282,7 +312,7 @@ class ToolPipelineManagerTest {
                     .build();
             pipelineManager.registerPipeline(def);
 
-            PipelineResult result = pipelineManager.execute("double-fail", Map.of()).block();
+            PipelineResult result = pipelineManager.execute("double-fail", Map.of(), null, null).block();
 
             assertThat(result.getStatus()).isEqualTo(PipelineStatus.FAILED);
             assertThat(result.getFailedSteps()).isGreaterThanOrEqualTo(1);
@@ -304,7 +334,7 @@ class ToolPipelineManagerTest {
                     .build();
             pipelineManager.registerPipeline(def);
 
-            PipelineResult result = pipelineManager.execute("empty", Map.of()).block();
+            PipelineResult result = pipelineManager.execute("empty", Map.of(), null, null).block();
 
             assertThat(result).isNotNull();
             assertThat(result.getStatus()).isEqualTo(PipelineStatus.COMPLETED);
@@ -321,7 +351,7 @@ class ToolPipelineManagerTest {
         @Test
         @DisplayName("不存在的流水线应返回错误")
         void shouldErrorForUnknownPipeline() {
-            assertThatThrownBy(() -> pipelineManager.execute("unknown", Map.of()).block())
+            assertThatThrownBy(() -> pipelineManager.execute("unknown", Map.of(), null, null).block())
                     .isInstanceOf(RuntimeException.class);
         }
 
@@ -338,7 +368,7 @@ class ToolPipelineManagerTest {
                     .build();
             pipelineManager.registerPipeline(def);
 
-            PipelineResult result = pipelineManager.execute("error", Map.of()).block();
+            PipelineResult result = pipelineManager.execute("error", Map.of(), null, null).block();
 
             assertThat(result.getStatus()).isEqualTo(PipelineStatus.FAILED);
         }
@@ -362,7 +392,7 @@ class ToolPipelineManagerTest {
                     .addStep(PipelineStep.builder().id("step1").toolName("tool_a").build())
                     .build();
             pipelineManager.registerPipeline(def);
-            pipelineManager.execute("notify", Map.of()).block();
+            pipelineManager.execute("notify", Map.of(), null, null).block();
 
             boolean notified = latch.await(3, TimeUnit.SECONDS);
             assertThat(notified).isTrue();

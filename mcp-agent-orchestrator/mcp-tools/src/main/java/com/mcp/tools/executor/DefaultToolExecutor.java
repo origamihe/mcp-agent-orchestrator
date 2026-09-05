@@ -14,6 +14,8 @@ import reactor.core.scheduler.Schedulers;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -22,20 +24,29 @@ import java.util.Map;
 public class DefaultToolExecutor implements ToolExecutor {
 
     private final ToolRegistry toolRegistry;
+    private final List<ToolExecutionListener> listeners = new ArrayList<>();
+
+    public void addListener(ToolExecutionListener listener) {
+        listeners.add(listener);
+    }
 
     @Override
     public Mono<ToolExecutionResult> execute(ToolExecutionRequest request) {
         String toolName = request.getToolName();
         long startTime = System.currentTimeMillis();
 
+        notifyListenersStart(request);
+
         return toolRegistry.getTool(toolName)
                 .switchIfEmpty(Mono.error(new RuntimeException("Tool not found: " + toolName)))
                 .flatMap(definition -> {
                     if (!definition.isEnabled()) {
                         long duration = System.currentTimeMillis() - startTime;
+                        String error = "Tool is disabled: " + toolName;
+                        notifyListenersFailure(request, error, duration);
                         return Mono.just(ToolExecutionResult.executionError(
                                 request.getRequestId(), toolName,
-                                ToolError.internal("Tool is disabled: " + toolName),
+                                ToolError.internal(error),
                                 Duration.ofMillis(duration)));
                     }
 
@@ -65,8 +76,20 @@ public class DefaultToolExecutor implements ToolExecutor {
                         long duration = System.currentTimeMillis() - startTime;
                         toolRegistry.recordToolExecution(toolName, true, duration, null);
                         log.info("[ToolExecutor] Success: {} ({}ms)", toolName, duration);
-                        return ToolExecutionResult.success(
-                                request.getRequestId(), toolName, result, Duration.ofMillis(duration));
+                        ToolExecutionResult execResult;
+                        if (result instanceof ToolExecutionResult ter) {
+                            execResult = new ToolExecutionResult(
+                                    request.getRequestId(), toolName,
+                                    ter.status(), ter.data(), ter.error(),
+                                    Duration.ofMillis(duration),
+                                    ter.metadata() != null ? ter.metadata() : Map.of()
+                            );
+                        } else {
+                            execResult = ToolExecutionResult.success(
+                                    request.getRequestId(), toolName, result, Duration.ofMillis(duration));
+                        }
+                        notifyListenersSuccess(request, execResult);
+                        return execResult;
                     })
                     .onErrorResume(error -> {
                         long duration = System.currentTimeMillis() - startTime;
@@ -74,14 +97,56 @@ public class DefaultToolExecutor implements ToolExecutor {
                         toolRegistry.recordToolExecution(toolName, false, duration, errMsg);
                         log.warn("[ToolExecutor] Failed: {} ({}ms, error: {})", toolName, duration, errMsg);
                         if (error instanceof java.util.concurrent.TimeoutException) {
+                            notifyListenersTimeout(request, duration);
                             return Mono.just(ToolExecutionResult.timeout(
                                     request.getRequestId(), toolName, Duration.ofMillis(duration)));
                         }
+                        notifyListenersFailure(request, errMsg, duration);
                         return Mono.just(ToolExecutionResult.executionError(
                                 request.getRequestId(), toolName,
                                 ToolError.internal(errMsg), Duration.ofMillis(duration)));
                     });
                 });
+    }
+
+    private void notifyListenersStart(ToolExecutionRequest request) {
+        for (ToolExecutionListener listener : listeners) {
+            try {
+                listener.onExecutionStart(request);
+            } catch (Exception e) {
+                log.warn("[ToolExecutor] Listener error on start: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void notifyListenersSuccess(ToolExecutionRequest request, ToolExecutionResult result) {
+        for (ToolExecutionListener listener : listeners) {
+            try {
+                listener.onExecutionSuccess(request, result);
+            } catch (Exception e) {
+                log.warn("[ToolExecutor] Listener error on success: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void notifyListenersFailure(ToolExecutionRequest request, String error, long elapsedMs) {
+        for (ToolExecutionListener listener : listeners) {
+            try {
+                listener.onExecutionFailure(request, error, elapsedMs);
+            } catch (Exception e) {
+                log.warn("[ToolExecutor] Listener error on failure: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void notifyListenersTimeout(ToolExecutionRequest request, long elapsedMs) {
+        for (ToolExecutionListener listener : listeners) {
+            try {
+                listener.onExecutionTimeout(request, elapsedMs);
+            } catch (Exception e) {
+                log.warn("[ToolExecutor] Listener error on timeout: {}", e.getMessage());
+            }
+        }
     }
 
     private Method getToolMethod(String toolName) {

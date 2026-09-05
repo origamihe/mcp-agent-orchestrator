@@ -24,7 +24,7 @@ val ALL_CAPABILITIES = listOf(
     CapabilityDef("get_git_diff", "获取 Git diff", mapOf("path" to "string", "staged" to "boolean")),
     CapabilityDef("open_file", "在编辑器中打开文件", mapOf("filePath" to "string", "line" to "int")),
     CapabilityDef("search_files", "在项目中搜索文件", mapOf("pattern" to "string")),
-    CapabilityDef("run_terminal", "执行终端命令", mapOf("command" to "string", "cwd" to "string")),
+    CapabilityDef("run_terminal", "执行终端命令", mapOf("command" to "string", "cwd" to "string", "_timeout" to "int", "_outputLimit" to "int")),
     CapabilityDef("apply_diff", "应用差异补丁到文件", mapOf("filePath" to "string", "diff" to "string")),
     CapabilityDef("apply_full_content", "覆盖文件完整内容", mapOf("filePath" to "string", "content" to "string"))
 )

@@ -38,6 +38,10 @@ public class AgentCard {
 
     private String version;
 
+    private String promptName;
+
+    private String modelName;
+
     public enum AgentType {
         CHAT,
         CODE,

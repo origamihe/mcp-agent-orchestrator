@@ -8,7 +8,7 @@ export const useSessionStore = defineStore('session', () => {
     const isLoading = ref(false)
     const error = ref<string | null>(null)
 
-    async function fetchSessions(params?: { agentId?: string; status?: string }) {
+    async function fetchSessions(params?: { userId?: string; agentId?: string }) {
         isLoading.value = true
         error.value = null
         try {

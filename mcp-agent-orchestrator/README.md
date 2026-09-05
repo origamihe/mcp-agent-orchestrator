@@ -9,6 +9,7 @@ MCP Agent Orchestrator — 基于 MCP (Model Context Protocol) 的多渠道 AI A
 - [Architecture Contract](./docs/Architecture-Contract.md) — 架构契约：核心组件的职责边界、生命周期规则、互操作契约
 - [MCP-Agent Workflow](./docs/MCP-Agent%20Workflow.md) — 架构审查工作流：所有 Pipeline 定义（Chat、Context-Aware FastPath、Artifact Recall、Streaming、Model Routing、Agent Collaboration、Document Generation 等）
 - [MCP-Agent Test Workflow](./docs/MCP-Agent%20Test%20Workflow.md) — 测试工作流：验证架构契约合规性的测试流程
+- [Anti-Pattern: Speculative Fix Loop](./docs/Anti-Pattern-Speculative-Fix-Loop.md) — 反模式文档：猜测性修复循环的定义、危害、正确工作流
 - [metrics-history](./docs/metrics-history.md) — 架构指标历史：Provider Count、Pipeline Count、Context Count 等指标追踪
 
 ## 技术栈
@@ -41,16 +42,14 @@ mcp-agent-orchestrator/
 │   └── 8 个 ContextProvider (Relationship, Workspace, Artifact, GroupConversation 等)
 ├── mcp-agent-engine/     # Agent 引擎
 │   ├── agent/            # Agent 实现 (ChatAgent, CodeAgent, SearchAgent, ResearchSynthesizer)
-│   ├── artifact/         # 文档召回 (KeywordRecallStrategy, EmbeddingRecallStrategy, HybridRetriever)
+│   ├── artifact/         # 文档召回 (KeywordRecallStrategy, EmbeddingRecallStrategy)
 │   ├── context/          # ContextRequirement, ContextBundle, TokenBudget
 │   ├── delivery/         # 投递渠道 (QQ, Webhook, Email)
 │   ├── loop/             # Agent 循环 (LoopStateMachine, AgentTaskScheduler)
 │   ├── memory/           # 记忆系统 (MemoryLifecycleOrchestrator, GroupConversationContextAssembler)
-│   ├── orchestrator/     # 编排器 (DefaultAgentOrchestrator, AgentCollaborationOrchestrator, MultiAgentOrchestrator)
-│   ├── planner/          # 规划器 (PlanExecutor, PlanDAGConverter)
+│   ├── orchestrator/     # 编排器 (DefaultAgentOrchestrator, MultiAgentOrchestrator)
 │   ├── reflection/       # 反思系统 (ReflectionManager, PromptEnricher, SkillLibraryService)
 │   ├── retry/            # 重试管理 (RetryManager)
-│   ├── routing/          # 模型路由 (ModelRouter, ModelFallbackChain)
 │   ├── runtime/          # Agent 运行时 (AgentRuntime, PromptAssemblyResult)
 │   ├── skill/            # 技能管线 (SkillPipeline, SkillComposer)
 │   ├── trace/            # 执行追踪 (SessionEventStore, ContractVerifier, ExecutionContract)
@@ -95,16 +94,13 @@ mcp-agent-orchestrator/
 
 - **Chat Pipeline**: User → determineContextRequirement → processContextAwareFastPath → LLM → Reply
 - **Context-Aware FastPath**: 按需加载上下文（NONE/CONVERSATION/DOCUMENT/WORKSPACE/SEARCH）
-- **Artifact Recall Pipeline**: 文档召回（KeywordRecallStrategy + EmbeddingRecallStrategy + HybridRetriever）
+- **Artifact Recall Pipeline**: 文档召回（KeywordRecallStrategy + EmbeddingRecallStrategy）
 - **Streaming Pipeline**: 逐 token 流式推送
-- **Model Routing + Fallback Pipeline**: 6 级任务复杂度分类 + 多模型 Fallback
-- **Agent Collaboration Pipeline**: 3 种链式协作（Search→Code→Chat / Code→Review→Chat / Search→Chat）
 - **Document Generation Pipeline**: PDF/XLSX/HTML/DOCX 文件生成
 - **Prompt A/B Testing Pipeline**: 变体选择 + 效果追踪
 - **Memory Pipeline**: 记忆生命周期管理
 - **Service Pipeline**: 多渠道投递（QQ/Webhook/Email）
 - **Skill Pipeline**: 技能组合与意图匹配
-- **Plan Executor**: PlanDAG → Pipeline 转换 + 执行
 
 ### 安全模型
 
@@ -128,7 +124,6 @@ mcp-agent-orchestrator/
 | RecallStrategy Count | 4 |
 | ContextRequirement Levels | 5 |
 | PromptPolicy Count | 7 |
-| ModelRouter Complexity Levels | 6 |
 | Test Count | 715 (PASS: 715, FAIL: 0) |
 
 ## 环境要求

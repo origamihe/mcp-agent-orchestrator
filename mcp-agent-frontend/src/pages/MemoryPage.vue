@@ -29,20 +29,6 @@
         <div v-if="showAddForm" class="add-form">
             <textarea v-model="newContent" placeholder="输入记忆内容..." rows="3"></textarea>
             <div class="add-form-row">
-                <select v-model="newType" class="filter-select">
-                    <option value="PROFILE">用户资料</option>
-                    <option value="IDENTITY">身份信息</option>
-                    <option value="PREFERENCE">喜好</option>
-                    <option value="HABIT">习惯</option>
-                    <option value="GOAL">长期目标</option>
-                    <option value="PROJECT">项目</option>
-                    <option value="FACT">事实</option>
-                    <option value="RELATION">人物关系</option>
-                    <option value="SKILL">技能</option>
-                    <option value="SCHEDULE">日程</option>
-                    <option value="TEMPORARY">临时信息</option>
-                    <option value="EVENT">重要事件</option>
-                </select>
                 <input v-model="newImportance" type="number" min="0" max="10" placeholder="重要性 (0-10)" class="filter-select" />
                 <button class="btn-save" @click="handleAddMemory" :disabled="!newContent.trim()">保存</button>
                 <button class="btn-cancel" @click="toggleAddForm">取消</button>
@@ -85,9 +71,16 @@ const filterType = ref<MemoryType | ''>('')
 const searchQuery = ref('')
 const showAddForm = ref(false)
 const newContent = ref('')
-const newType = ref<MemoryType>('PROFILE')
 const newImportance = ref(5)
 const searchResults = ref<MemorySearchResult[]>([])
+
+const filteredMemories = computed(() => {
+    let list = memoryStore.memories
+    if (filterType.value) {
+        list = list.filter((m) => m.type === filterType.value)
+    }
+    return list
+})
 
 const displayedItems = computed(() => {
     if (searchResults.value.length > 0) {
@@ -97,7 +90,7 @@ const displayedItems = computed(() => {
             type: 'memory' as const,
         })) as any[]
     }
-    return memoryStore.memories.map((m) => ({ ...m, type: 'memory' as const })) as any[]
+    return filteredMemories.value.map((m) => ({ ...m, type: 'memory' as const })) as any[]
 })
 
 function typeLabel(type: string): string {
@@ -134,14 +127,13 @@ function toggleAddForm() {
 async function handleAddMemory() {
     if (!newContent.value.trim()) return
     await memoryStore.createMemory({
-        type: newType.value,
         content: newContent.value.trim(),
         importance: newImportance.value,
     })
     toggleAddForm()
 }
 
-async function handleDelete(id: string) {
+async function handleDelete(id: number) {
     await memoryStore.deleteMemory(id)
 }
 
@@ -152,7 +144,6 @@ async function handleSearch() {
     }
     await memoryStore.searchMemories({
         query: searchQuery.value.trim(),
-        type: filterType.value || undefined,
         limit: 20,
     })
     searchResults.value = memoryStore.searchResults
@@ -160,7 +151,6 @@ async function handleSearch() {
 
 async function loadMemories() {
     await memoryStore.fetchMemories({
-        type: filterType.value || undefined,
         limit: 50,
     })
 }

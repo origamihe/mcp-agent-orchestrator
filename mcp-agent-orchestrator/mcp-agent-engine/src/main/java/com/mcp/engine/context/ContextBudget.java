@@ -5,7 +5,7 @@ import com.mcp.engine.execution.ExecutionPlan;
 import java.time.Duration;
 
 /**
- * 上下文预算 — P1 升级版，替代仅基于 Token 的 TokenBudget。
+ * 上下文预算 — P1 升级版，替代仅基于 Token 的 TokenBudget（已删除）。
  *
  * 新增维度：
  * - maxFiles: 最大文件数
@@ -15,8 +15,7 @@ import java.time.Duration;
  *
  * 设计原则：
  * - 多维预算，防止单一维度成为瓶颈
- * - 与 TokenBudget 保持兼容（通过 toTokenBudget() 转换）
- * - 支持按 PlanType 和 ModelContextWindow 分配
+ * - 支持按 ModelContextWindow 和 ExecutionPlan 分配
  */
 public record ContextBudget(
         int maxTokens,
@@ -67,15 +66,28 @@ public record ContextBudget(
         );
     }
 
-    public TokenBudget toTokenBudget() {
-        return TokenBudget.builder()
-                .totalBudget(maxTokens)
-                .build();
-    }
-
     public boolean canFit(int additionalTokens, int additionalFiles, long additionalBytes) {
         return additionalTokens <= maxTokens
                 && additionalFiles <= maxFiles
                 && additionalBytes <= maxBytes;
+    }
+
+    /**
+     * 估算文本的 token 数量。
+     * 中文字符按 1 token 计算，非中文字符按 4 字符 = 1 token 计算。
+     */
+    public static int estimateTokens(String text) {
+        if (text == null || text.isEmpty()) {
+            return 0;
+        }
+        int charCount = text.length();
+        int chineseChars = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (Character.UnicodeBlock.of(text.charAt(i)) == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS) {
+                chineseChars++;
+            }
+        }
+        int nonChineseChars = charCount - chineseChars;
+        return chineseChars + (nonChineseChars / 4);
     }
 }

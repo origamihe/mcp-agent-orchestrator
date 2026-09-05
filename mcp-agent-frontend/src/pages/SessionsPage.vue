@@ -22,7 +22,7 @@
         </div>
 
         <div v-if="sessionStore.isLoading" class="loading">加载中...</div>
-        <div v-else-if="sessionStore.sessions.length === 0" class="empty-state">
+        <div v-else-if="filteredSessions.length === 0" class="empty-state">
             <ChatBubbleLeftRightIcon class="empty-icon" />
             <p>暂无活跃会话</p>
         </div>
@@ -40,7 +40,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="session in sessionStore.sessions" :key="session.sessionId" class="clickable-row">
+                    <tr v-for="session in filteredSessions" :key="session.sessionId" class="clickable-row">
                         <td class="agent-cell">{{ session.agentName }}</td>
                         <td class="user-cell">{{ session.userId }}</td>
                         <td><span :class="['status-badge', `status-${session.status}`]">{{ statusLabel(session.status) }}</span></td>
@@ -56,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ChatBubbleLeftRightIcon } from '@heroicons/vue/24/outline'
 import { useSessionStore } from '@/stores/sessionStore'
 import { useAgentStore } from '@/stores/agentStore'
@@ -84,10 +84,17 @@ function formatDate(dateStr: string): string {
     })
 }
 
+const filteredSessions = computed(() => {
+    let list = sessionStore.sessions
+    if (filterStatus.value) {
+        list = list.filter((s) => s.status === filterStatus.value)
+    }
+    return list
+})
+
 async function loadSessions() {
     await sessionStore.fetchSessions({
         agentId: filterAgent.value || undefined,
-        status: filterStatus.value || undefined,
     })
 }
 

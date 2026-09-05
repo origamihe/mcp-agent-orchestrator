@@ -9,7 +9,7 @@ export const useMemoryStore = defineStore('memory', () => {
     const isLoading = ref(false)
     const error = ref<string | null>(null)
 
-    async function fetchMemories(params?: { type?: string; agentId?: string; limit?: number; offset?: number }) {
+    async function fetchMemories(params?: { sessionId?: string; userId?: string; limit?: number }) {
         isLoading.value = true
         error.value = null
         try {
@@ -32,7 +32,7 @@ export const useMemoryStore = defineStore('memory', () => {
         }
     }
 
-    async function deleteMemory(id: string) {
+    async function deleteMemory(id: number) {
         try {
             await memoryApi.deleteMemory(id)
             memories.value = memories.value.filter((m) => m.id !== id)

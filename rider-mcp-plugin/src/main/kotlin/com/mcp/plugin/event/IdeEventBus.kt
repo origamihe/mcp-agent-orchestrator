@@ -9,18 +9,16 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.mcp.plugin.transport.Transport
 import com.mcp.plugin.transport.WebSocketTransport
 import com.mcp.plugin.util.LanguageDetector
 import java.util.UUID
-import java.util.concurrent.ConcurrentLinkedQueue
 
 @Service(Service.Level.PROJECT)
 class IdeEventBus(private val project: Project) {
     private val logger = Logger.getInstance(IdeEventBus::class.java)
-    private val transport: WebSocketTransport? = project.getService(WebSocketTransport::class.java)
+    private val transport: Transport? = project.getService(WebSocketTransport::class.java)
     val workspaceId: String = "${project.name}-${UUID.randomUUID().toString().take(8)}"
-
-    private val listeners = ConcurrentLinkedQueue<(IdeEvent) -> Unit>()
 
     fun init() {
         val connection = project.messageBus.connect()
@@ -53,13 +51,8 @@ class IdeEventBus(private val project: Project) {
         logger.info("[IdeEventBus] Initialized, workspaceId=$workspaceId")
     }
 
-    fun onEvent(listener: (IdeEvent) -> Unit) {
-        listeners.add(listener)
-    }
-
     private fun fire(type: IdeEventType, payload: Map<String, Any?> = emptyMap()) {
         val event = IdeEvent(type = type, payload = payload)
-        listeners.forEach { it(event) }
 
         transport?.send(OutgoingEnvelope(
             type = "event",

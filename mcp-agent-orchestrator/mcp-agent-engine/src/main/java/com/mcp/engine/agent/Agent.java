@@ -29,6 +29,7 @@ public interface Agent {
                 .skills(List.of())
                 .toolNames(List.of())
                 .version("1.0.0")
+                .promptName(getId())
                 .build();
     }
 

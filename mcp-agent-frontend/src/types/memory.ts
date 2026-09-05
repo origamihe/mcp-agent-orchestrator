@@ -13,7 +13,7 @@ export type MemoryType =
     | 'EVENT'
 
 export interface MemoryEntry {
-    id: string
+    id: number
     type: MemoryType
     content: string
     importance: number
@@ -26,21 +26,17 @@ export interface MemoryEntry {
 }
 
 export interface MemoryCreateRequest {
-    type: MemoryType
+    sessionId?: string
+    userId?: string
     content: string
     importance?: number
-    agentId?: string
-    sessionId?: string
-    projectId?: string
     metadata?: Record<string, unknown>
 }
 
 export interface MemorySearchQuery {
     query: string
-    type?: MemoryType
-    agentId?: string
+    sessionId?: string
     limit?: number
-    offset?: number
 }
 
 export interface MemorySearchResult {

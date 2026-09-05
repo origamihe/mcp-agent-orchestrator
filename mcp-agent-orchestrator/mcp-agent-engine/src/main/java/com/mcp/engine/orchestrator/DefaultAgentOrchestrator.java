@@ -4,22 +4,17 @@ import com.mcp.engine.runtime.AgentRuntime;
 import com.mcp.engine.runtime.PromptAssemblyResult;
 import com.mcp.core.domain.prompt.PromptType;
 import com.mcp.core.domain.memory.SkillEntity;
-import com.mcp.core.domain.memory.FailureEntity;
 import com.mcp.core.service.ChatHistoryService;
 import com.mcp.core.service.LongTermMemoryService;
 import com.mcp.core.service.PersonaMemoryStore;
 import com.mcp.core.service.PromptService;
+import com.mcp.core.service.LlmConfigService;
 import com.mcp.engine.agent.Agent;
-import com.mcp.engine.agent.ExecutionContext;
 import com.mcp.engine.agent.ExecutionTracker;
 import com.mcp.engine.agent.LLMRequest;
 import com.mcp.engine.agent.card.AgentCard;
 import com.mcp.engine.agent.registry.AgentRegistry;
-import com.mcp.engine.context.ContextBundle;
 import com.mcp.engine.context.ContextBudget;
-import com.mcp.engine.context.TokenBudget;
-import com.mcp.engine.context.ContextManager;
-import com.mcp.engine.context.ContextRequest;
 import com.mcp.common.context.RequestContext;
 import com.mcp.common.identity.MemoryIdentity;
 import com.mcp.common.identity.IdentityResolver;
@@ -32,16 +27,14 @@ import com.mcp.core.context.PromptPolicy;
 import com.mcp.engine.execution.ExecutionPlan;
 import com.mcp.engine.execution.ExecutionPlanner;
 import com.mcp.engine.execution.ExecutionState;
+import com.mcp.engine.execution.FailurePolicy;
 import com.mcp.engine.policy.PolicyEngine;
 import com.mcp.engine.memory.MemoryLifecycleOrchestrator;
 import com.mcp.engine.memory.GroupConversationContextAssembler;
-import com.mcp.llm.client.ChatMessage;
-import com.mcp.llm.client.MessageType;
 import java.util.List;
+import java.util.Map;
 import com.mcp.engine.orchestrator.AgentOrchestrator;
 import com.mcp.engine.planner.EditPlan;
-import com.mcp.engine.planner.PlanContext;
-import com.mcp.engine.planner.Planner;
 import com.mcp.engine.reflection.FailureLibraryService;
 import com.mcp.engine.reflection.LearningBudgetManager;
 import com.mcp.engine.reflection.PromptEnricher;
@@ -50,6 +43,7 @@ import com.mcp.engine.reflection.SkillGraphService;
 import com.mcp.engine.reflection.SkillLibraryService;
 import com.mcp.engine.reflection.TaskEvaluator;
 import com.mcp.engine.evolution.StrategyEvolutionManager;
+import com.mcp.common.evolution.StrategyEvolutionContext.EvolutionRecommendation;
 import com.mcp.engine.sanitizer.ResponseSanitizer;
 import com.mcp.engine.trace.ContractVerifier;
 import com.mcp.engine.trace.SessionEventStore;
@@ -70,12 +64,7 @@ import com.mcp.common.artifact.GroupConversationContext;
 import com.mcp.engine.artifact.ArtifactService;
 import com.mcp.engine.artifact.ReferenceResolver;
 import com.mcp.tools.executor.ToolExecutor;
-import com.mcp.tools.model.ToolCapability;
-import com.mcp.tools.model.ToolExecutionRequest;
-import com.mcp.tools.model.ToolQuery;
-import com.mcp.tools.model.ToolScore;
 import com.mcp.tools.model.ToolDefinition;
-import com.mcp.tools.registry.CapabilityResolver;
 import com.mcp.tools.registry.ToolRegistry;
 import com.mcp.tools.pipeline.PipelineRegistry;
 import com.mcp.tools.pipeline.ToolPipeline;
@@ -113,10 +102,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     private final LongTermMemoryService memoryService;
     private final MemoryLifecycleOrchestrator memoryLifecycleOrchestrator;
     private final IdentityResolver identityResolver;
-    private final Planner planner;
-    private final ContextManager contextManager;
     private final ToolRegistry toolRegistry;
-    private final CapabilityResolver capabilityResolver;
     private final PromptEnricher promptEnricher;
     private final TaskEvaluator taskEvaluator;
     private final ReflectionAgent reflectionAgent;
@@ -142,6 +128,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     private final AgentRuntime agentRuntime;
 
     private final ExecutionPlanner executionPlanner;
+
+    private final LlmConfigService llmConfigService;
 
     private final PolicyEngine policyEngine;
 
@@ -186,6 +174,12 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             
             请一步一步思考并给出专业、清晰的回答。
             """.formatted(historySummary.isEmpty() ? "（无历史对话）" : historySummary, request);
+    }
+
+    private String truncateToBudget(String text, int maxChars) {
+        if (text == null || text.isEmpty()) return "";
+        if (text.length() <= maxChars) return text;
+        return text.substring(0, maxChars) + "...[truncated by MemoryPolicy]";
     }
 
     @Override
@@ -344,6 +338,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
         ExecutionPlan plan = executionPlanner.plan(ctx, requirement, workingCtx);
         ExecutionState execState = new ExecutionState(plan.executionId());
+        execState.setTrace(trace);
         execState.startRunning();
 
         trace.recordPlanCreated(plan.mode().name(), 0,
@@ -351,16 +346,31 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         log.info("[Orchestrator] ExecutionPlan: mode={}, agent={}, pipeline={}, context={}, session={}",
                 plan.mode(), plan.agentId(), plan.pipelineId(), requirement, sessionId);
 
-        ContextBudget ctxBudget = ContextBudget.fromExecutionPlan(plan);
+        ContractVerifier.ContractReport planContract = ContractVerifier.createDefault().verifyPlan(plan);
+        if (!planContract.allPassed()) {
+            log.warn("[Orchestrator] Plan contract violations: {}", planContract);
+            trace.recordContractViolation("plan", "valid", "invalid", planContract.toString());
+        }
+
+        ContextBudget planBudget = ContextBudget.fromExecutionPlan(plan);
+        int modelContextWindow = llmConfigService.getContextWindow(modelConfigId);
+        ContextBudget modelBudget = ContextBudget.forModel(modelContextWindow);
+        ContextBudget ctxBudget = new ContextBudget(
+                Math.min(planBudget.maxTokens(), modelBudget.maxTokens()),
+                Math.min(planBudget.maxFiles(), modelBudget.maxFiles()),
+                Math.min(planBudget.maxBytes(), modelBudget.maxBytes()),
+                Math.min(planBudget.maxLines(), modelBudget.maxLines()),
+                planBudget.timeout() != null ? planBudget.timeout() : modelBudget.timeout()
+        );
         trace.recordContextBuilt(0, ctxBudget.maxTokens(),
                 "tokenBudget=" + ctxBudget.maxTokens() + ", maxFiles=" + ctxBudget.maxFiles()
                 + ", maxBytes=" + ctxBudget.maxBytes() + ", maxLines=" + ctxBudget.maxLines());
-        log.info("[Orchestrator] ContextBudget: maxTokens={}, maxFiles={}, maxBytes={}, maxLines={}, timeout={} | session={}",
+        log.info("[Orchestrator] ContextBudget: maxTokens={}, maxFiles={}, maxBytes={}, maxLines={}, timeout={} | session={} | modelContextWindow={}",
                 ctxBudget.maxTokens(), ctxBudget.maxFiles(), ctxBudget.maxBytes(),
-                ctxBudget.maxLines(), ctxBudget.timeout(), sessionId);
+                ctxBudget.maxLines(), ctxBudget.timeout(), sessionId, modelContextWindow);
 
         Mono<String> result = dispatchByPlan(ctx, resolvedSystemPrompt, startTime, userRole,
-                requirement, workingCtx, plan, execState, trace);
+                requirement, workingCtx, plan, execState, trace, ctxBudget);
 
         return result.doFinally(signalType -> {
             execState.markCompleted();
@@ -378,7 +388,33 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     SessionTraceHolder.end();
                 }
             }
+
+            triggerEvolutionAnalysis(plan);
         });
+    }
+
+    private void triggerEvolutionAnalysis(ExecutionPlan plan) {
+        if (plan != null && plan.agentId() != null && !plan.agentId().isBlank()) {
+            evolutionManager.analyzeAndRecommend(plan.agentId())
+                    .subscribe(
+                            recommendations -> {
+                                if (!recommendations.isEmpty()) {
+                                    log.info("[Evolution] agent={} generated {} recommendations",
+                                            plan.agentId(), recommendations.size());
+                                    for (EvolutionRecommendation rec : recommendations) {
+                                        if (rec.getPriority() == EvolutionRecommendation.Priority.HIGH
+                                                && rec.getConfidence() >= 0.8) {
+                                            evolutionManager.applyRecommendation(plan.agentId(), rec);
+                                            log.info("[Evolution] Auto-applied recommendation: {} -> {}",
+                                                    rec.getDimension(), rec.getRecommendation());
+                                        }
+                                    }
+                                }
+                            },
+                            error -> log.warn("[Evolution] Analysis failed for agent={}: {}",
+                                    plan.agentId(), error.getMessage())
+                    );
+        }
     }
 
     /**
@@ -388,12 +424,13 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     private Mono<String> dispatchByPlan(RequestContext ctx, String resolvedSystemPrompt, long startTime,
                                          UserRole userRole, ContextRequirement requirement,
                                          WorkingContext workingCtx, ExecutionPlan plan,
-                                         ExecutionState execState, SessionTrace trace) {
+                                         ExecutionState execState, SessionTrace trace,
+                                         ContextBudget ctxBudget) {
         return switch (plan.mode()) {
             case AGENT -> {
                 trace.recordAgentSelection(plan.agentId(), "SEARCH_TASK");
                 trace.recordAgentStarted(plan.agentId(), "SEARCH_TASK");
-                yield processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState);
+                yield processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState, ctxBudget);
             }
             case PIPELINE -> {
                 String pipelineId = plan.pipelineId();
@@ -402,19 +439,19 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     log.info("[Orchestrator] Pipeline route: {} → {} | session={}",
                             ctx.getUserMessage(), pipelineId, ctx.getIdentity().sessionId());
                     trace.recordAgentSelection("Pipeline", pipelineId);
-                    yield processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline, plan, execState);
+                    yield processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline, plan, execState, ctxBudget);
                 } else {
                     log.info("[Orchestrator] Pipeline not found, falling back to SearchAgent: session={}",
                             ctx.getIdentity().sessionId());
                     trace.recordAgentSelection(plan.agentId(), "DOCX_GENERATION_TASK");
                     trace.recordAgentStarted(plan.agentId(), "DOCX_GENERATION_TASK");
-                    yield processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState);
+                    yield processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState, ctxBudget);
                 }
             }
             case FAST_PATH -> processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime,
-                    userRole, requirement, workingCtx, plan, execState);
+                    userRole, requirement, workingCtx, plan, execState, ctxBudget);
             default -> processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime,
-                    userRole, requirement, workingCtx, plan, execState);
+                    userRole, requirement, workingCtx, plan, execState, ctxBudget);
         };
     }
 
@@ -1167,7 +1204,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     }
 
     private int estimateTokens(String text) {
-        return TokenBudget.estimateTokens(text);
+        return ContextBudget.estimateTokens(text);
     }
 
     /**
@@ -1187,18 +1224,16 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
     /**
      * 搜索相关意图检测（classifyRequiredSkills 与 likelyNeedsToolsKeyword 共用）。
-     * P1修复：移除过于宽泛的关键词（了解、研究、事件、动态、资料、信息、find、lookup 等），
-     * 仅保留明确的搜索/检索动词，避免纯对话问题被误判为 SEARCH。
+     * P0修复：严格按契约仅保留明确的搜索/检索动词，移除内容描述词（最新、新闻、调研、热点、报道、资讯等）
+     * 和冗余/口语化表达（搜寻、搜集、收集、找一下、再搜、重新搜、搜一次等），
+     * 避免纯对话问题被误判为 SEARCH。
+     *
+     * @see Architecture-Contract.md 第560行：P1修复规范
      */
     private boolean isSearchRelated(String lower) {
         return lower.contains("搜索") || lower.contains("search") || lower.contains("查找")
-                || lower.contains("查询") || lower.contains("最新") || lower.contains("新闻")
-                || lower.contains("搜一下") || lower.contains("找一下")
-                || lower.contains("帮我搜") || lower.contains("帮我查") || lower.contains("帮我找")
-                || lower.contains("再搜") || lower.contains("重新搜") || lower.contains("搜一次")
-                || lower.contains("检索") || lower.contains("搜寻") || lower.contains("搜集")
-                || lower.contains("收集") || lower.contains("调研")
-                || lower.contains("热点") || lower.contains("报道") || lower.contains("资讯");
+                || lower.contains("查询") || lower.contains("检索")
+                || lower.contains("搜一下") || lower.contains("帮我搜") || lower.contains("帮我查");
     }
 
     @Override
@@ -1299,476 +1334,6 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         if (skillIds.size() >= 2) {
             skillGraphService.recordCoOccurrences(skillIds);
         }
-    }
-
-    private String buildEnrichedPromptWithBudget(String systemPrompt, String fileContext,
-                                                  String memoryContext, TokenBudget budget) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(systemPrompt);
-
-        int systemTokens = TokenBudget.estimateTokens(systemPrompt);
-        budget.setSystemPromptTokens(systemTokens);
-
-        if (memoryContext != null && !memoryContext.isEmpty()) {
-            int memoryTokens = TokenBudget.estimateTokens(memoryContext);
-            int memoryBudget = budget.getMemoryTokens();
-            if (memoryTokens > memoryBudget) {
-                sb.append("\n\n## 重要记忆（预算: ").append(memoryBudget).append(" tokens, 实际: ")
-                        .append(memoryTokens).append(" → 已截断）\n");
-                sb.append(truncateByTokens(memoryContext, memoryBudget));
-            } else {
-                sb.append("\n\n").append(memoryContext);
-            }
-        }
-
-        if (fileContext != null && !fileContext.isEmpty()) {
-            int fileTokens = TokenBudget.estimateTokens(fileContext);
-            int fileBudget = budget.getFileContextTokens();
-            if (fileTokens > fileBudget) {
-                sb.append("\n\n## 附加文件内容（预算: ").append(fileBudget).append(" tokens, 实际: ")
-                        .append(fileTokens).append(" → 已截断）\n");
-                sb.append(truncateByTokens(fileContext, fileBudget));
-            } else {
-                sb.append("\n\n## 附加文件内容\n").append(fileContext);
-            }
-        }
-
-        return sb.toString();
-    }
-
-    private void logBudgetUsage(TokenBudget budget, EditPlan.PlanType planType, String fullPrompt) {
-        int totalTokens = TokenBudget.estimateTokens(fullPrompt);
-        int remaining = budget.remaining();
-        double usagePercent = budget.getTotalBudget() > 0
-                ? (double) totalTokens / budget.getTotalBudget() * 100 : 0;
-
-        log.info("[Orchestrator] Context budget: planType={}, total={}, used={}, remaining={}, usage={}%",
-                planType, budget.getTotalBudget(), totalTokens, remaining,
-                String.format("%.1f", usagePercent));
-
-        if (totalTokens > budget.getTotalBudget()) {
-            log.warn("[Orchestrator] Context budget exceeded! total={}, used={}, overflow={}",
-                    budget.getTotalBudget(), totalTokens, totalTokens - budget.getTotalBudget());
-        }
-    }
-
-    private String truncateByTokens(String text, int maxTokens) {
-        int maxChars = maxTokens * 4;
-        if (text.length() <= maxChars) return text;
-        return text.substring(0, maxChars - 3) + "...";
-    }
-
-    // ==================== P1: Plan-Driven Execution Loop ====================
-
-    private record StepObservation(
-            com.mcp.engine.planner.PlanStep step,
-            boolean success,
-            String result,
-            String error,
-            long durationMs,
-            boolean fallbackAttempted,
-            String fallbackTool,
-            boolean fallbackSuccess
-    ) {
-        StepObservation(com.mcp.engine.planner.PlanStep step, boolean success,
-                        String result, String error, long durationMs) {
-            this(step, success, result, error, durationMs, false, null, false);
-        }
-    }
-
-    private Mono<String> executePlanLoop(EditPlan plan, String request, String systemPrompt,
-                                          String memoryContext, ExecutionTracker tracker,
-                                          String sessionId,
-                                          PromptEnricher.EnrichmentResult enrichment) {
-        List<com.mcp.engine.planner.PlanStep> steps = plan.getSteps();
-        if (steps == null || steps.isEmpty()) {
-            log.warn("[Orchestrator] Plan has no steps, falling back");
-            return Mono.just("计划中没有可执行的步骤。");
-        }
-
-        List<StepObservation> observations = new ArrayList<>();
-        ExecutionContext ctx = ExecutionContext.create(
-                sessionId,
-                plan.getIntent() != null ? plan.getIntent() : request,
-                plan,
-                MAX_PLAN_STEPS);
-        ctx.setCurrentHypothesis(plan.getReasoning());
-        log.info("[Orchestrator] ExecutionContext created: goal='{}', planType={}, steps={}",
-                ctx.getGoal(), plan.getPlanType(), steps.size());
-
-        List<SkillEntity> matchedSkills = enrichment != null ? enrichment.matchedSkills() : List.of();
-        return executeStep(0, new ArrayList<>(steps), observations, ctx, request,
-                        systemPrompt, memoryContext, tracker, plan, matchedSkills)
-                .doOnSuccess(response -> {
-                    log.info("[Orchestrator] Plan execution complete: {} steps, {} completed, {} failed",
-                            steps.size(), ctx.totalCompletedCount(), ctx.totalFailedCount());
-                    recordSkillExecutions(enrichment, tracker);
-                    triggerReflection(sessionId, null, request,
-                            ctx.buildReflectionSummary(),
-                            tracker.buildToolsUsedList(), response,
-                            tracker.buildErrorSummary(), tracker);
-                })
-                .doOnError(error -> {
-                    log.error("[Orchestrator] Plan execution failed: {}", error.getMessage(), error);
-                });
-    }
-
-    private Mono<String> executeStep(int index, List<com.mcp.engine.planner.PlanStep> steps,
-                                      List<StepObservation> observations,
-                                      ExecutionContext ctx,
-                                      String request, String systemPrompt, String memoryContext,
-                                      ExecutionTracker tracker, EditPlan plan,
-                                      List<SkillEntity> matchedSkills) {
-        if (index >= steps.size() || index >= MAX_PLAN_STEPS) {
-            log.info("[Orchestrator] All {} steps executed, generating final answer", observations.size());
-            return generateFinalAnswer(request, systemPrompt, observations, plan);
-        }
-
-        com.mcp.engine.planner.PlanStep step = steps.get(index);
-        long startTime = System.currentTimeMillis();
-
-        String effectiveToolName = resolveEffectiveToolName(step);
-        if (effectiveToolName == null) {
-            log.warn("[Orchestrator] Step {}/{}: No tool resolved for capability={}, toolName={}, skipping",
-                    index + 1, steps.size(), step.getCapability(), step.getToolName());
-            return executeStep(index + 1, steps, observations, ctx,
-                    request, systemPrompt, memoryContext, tracker, plan, matchedSkills);
-        }
-
-        log.info("[Orchestrator] Executing step {}/{}: {} ({})",
-                index + 1, steps.size(), effectiveToolName, step.getReason());
-
-        String keyArg = step.getArguments() != null && !step.getArguments().isEmpty()
-                ? step.getArguments().values().iterator().next().toString() : null;
-        if (ctx.hasAlreadyFailed(effectiveToolName, keyArg)) {
-            log.warn("[Orchestrator] Step {}/{}: {} already failed in this execution, skipping",
-                    index + 1, steps.size(), effectiveToolName);
-            ctx.addObservation("跳过已失败步骤: " + effectiveToolName + (keyArg != null ? "(" + keyArg + ")" : ""));
-            return executeStep(index + 1, steps, observations, ctx,
-                    request, systemPrompt, memoryContext, tracker, plan, matchedSkills);
-        }
-
-        Map<String, Object> mergedArgs = new java.util.HashMap<>(
-                step.getArguments() != null ? step.getArguments() : java.util.Collections.emptyMap());
-
-        var guidance = skillLibraryService.buildStepGuidance(matchedSkills, effectiveToolName);
-        if (guidance.isPresent()) {
-            var g = guidance.get();
-            log.info("[Orchestrator] Applying skill guidance: skill='{}' (成功率={}%) → tool='{}' params={}",
-                    g.skillName(), String.format("%.0f", g.successRate()), effectiveToolName,
-                    g.suggestedParams().keySet());
-
-            for (var entry : g.suggestedParams().entrySet()) {
-                mergedArgs.putIfAbsent(entry.getKey(), entry.getValue());
-            }
-
-            if (g.fallbackTool() != null && !g.fallbackTool().isBlank()) {
-                log.info("[Orchestrator] Skill fallback tool registered: {}", g.fallbackTool());
-            }
-        }
-
-        ToolExecutionRequest execRequest = new ToolExecutionRequest();
-        execRequest.setToolName(effectiveToolName);
-        execRequest.setArguments(mergedArgs);
-
-        return toolExecutor.execute(execRequest)
-                .flatMap(result -> {
-                    long duration = System.currentTimeMillis() - startTime;
-                    String resultStr = result != null ? result.toString() : "";
-                    StepObservation obs = new StepObservation(step, true, resultStr, null, duration);
-                    observations.add(obs);
-                    tracker.recordToolCall(effectiveToolName,
-                            toJson(step.getArguments()), true,
-                            truncate(resultStr, 200), null, duration);
-                    ctx.recordStepSuccess(step, truncate(resultStr, 200), duration);
-                    ctx.recordToolCall(effectiveToolName, step.getArguments(),
-                            true, truncate(resultStr, 200), null, duration);
-                    log.info("[Orchestrator] Step {}/{} success: {} ({}ms, {} chars)",
-                            index + 1, steps.size(), effectiveToolName, duration,
-                            resultStr.length());
-                    return Mono.just(obs);
-                })
-                .onErrorResume(error -> {
-                    long duration = System.currentTimeMillis() - startTime;
-                    String errMsg = error.getMessage() != null ? error.getMessage() : "Unknown error";
-                    log.warn("[Orchestrator] Step {}/{} failed: {} ({}ms, error: {}), attempting recovery",
-                            index + 1, steps.size(), effectiveToolName, duration, errMsg);
-
-                    ctx.recordStepFailure(step, errMsg, duration, 1);
-                    ctx.recordToolCall(effectiveToolName, step.getArguments(),
-                            false, null, errMsg, duration);
-
-                    return recoverFromFailure(step, effectiveToolName, mergedArgs, startTime, guidance, errMsg,
-                            index, steps.size(), tracker, observations);
-                })
-                .flatMap(obs -> executeStep(index + 1, steps, observations, ctx,
-                        request, systemPrompt, memoryContext, tracker, plan, matchedSkills));
-    }
-
-    private String resolveEffectiveToolName(com.mcp.engine.planner.PlanStep step) {
-        ToolCapability capability = step.getCapability();
-        String toolName = step.getToolName();
-
-        if (capability != null && (toolName == null || toolName.isBlank())) {
-            List<ToolScore> ranked = capabilityResolver.resolveRanked(ToolQuery.builder()
-                    .capability(capability)
-                    .enabled(true)
-                    .build());
-            if (!ranked.isEmpty()) {
-                ToolScore best = ranked.get(0);
-                log.info("[Orchestrator] Capability {} → best tool: {} (score={}, skillBonus={}, failurePenalty={})",
-                        capability, best.getToolName(),
-                        String.format("%.1f", best.getCompositeScore()),
-                        String.format("%.1f", best.getSkillBonus()),
-                        String.format("%.1f", best.getFailurePenalty()));
-                return best.getToolName();
-            }
-            log.warn("[Orchestrator] No tool found for capability: {}", capability);
-            return null;
-        }
-
-        return toolName;
-    }
-
-    private Mono<StepObservation> recoverFromFailure(
-            com.mcp.engine.planner.PlanStep step,
-            String effectiveToolName,
-            Map<String, Object> mergedArgs,
-            long startTime,
-            Optional<SkillLibraryService.SkillStepGuidance> guidance,
-            String errMsg,
-            int index, int totalSteps,
-            ExecutionTracker tracker,
-            List<StepObservation> observations) {
-
-        long duration = System.currentTimeMillis() - startTime;
-
-        if (guidance.isPresent() && guidance.get().fallbackTool() != null
-                && !guidance.get().fallbackTool().isBlank()) {
-            String fallbackTool = guidance.get().fallbackTool();
-            log.info("[Orchestrator] Recovery: executing fallback tool '{}' for failed step '{}'",
-                    fallbackTool, effectiveToolName);
-
-            ToolExecutionRequest fallbackRequest = new ToolExecutionRequest();
-            fallbackRequest.setToolName(fallbackTool);
-            fallbackRequest.setArguments(mergedArgs);
-
-            long fallbackStart = System.currentTimeMillis();
-            return toolExecutor.execute(fallbackRequest)
-                    .map(fallbackResult -> {
-                        long fallbackDuration = System.currentTimeMillis() - fallbackStart;
-                        String resultStr = fallbackResult != null ? fallbackResult.toString() : "";
-                        StepObservation obs = new StepObservation(step, true, resultStr, null,
-                                duration + fallbackDuration, true, fallbackTool, true);
-                        observations.add(obs);
-                        tracker.recordToolCall(fallbackTool,
-                                toJson(mergedArgs), true,
-                                truncate(resultStr, 200), null, fallbackDuration);
-                        log.info("[Orchestrator] Recovery: fallback tool '{}' succeeded ({}ms)",
-                                fallbackTool, fallbackDuration);
-                        return obs;
-                    })
-                    .onErrorResume(fallbackError -> {
-                        long fallbackDuration = System.currentTimeMillis() - fallbackStart;
-                        String fallbackErr = fallbackError.getMessage() != null
-                                ? fallbackError.getMessage() : "Unknown fallback error";
-                        log.warn("[Orchestrator] Recovery: fallback tool '{}' also failed: {}",
-                                fallbackTool, fallbackErr);
-
-                        return tryFailureLibraryRecovery(step, effectiveToolName, mergedArgs, startTime, errMsg,
-                                fallbackTool, fallbackErr, duration, tracker, observations);
-                    });
-        }
-
-        return tryFailureLibraryRecovery(step, effectiveToolName, mergedArgs, startTime, errMsg,
-                null, null, duration, tracker, observations);
-    }
-
-    private Mono<StepObservation> tryFailureLibraryRecovery(
-            com.mcp.engine.planner.PlanStep step,
-            String effectiveToolName,
-            Map<String, Object> mergedArgs,
-            long startTime,
-            String originalError,
-            String fallbackTool,
-            String fallbackError,
-            long duration,
-            ExecutionTracker tracker,
-            List<StepObservation> observations) {
-
-        List<FailureEntity> unresolvedFailures = failureLibraryService.getUnresolvedFailures();
-        if (unresolvedFailures.isEmpty()) {
-            return recordFinalFailure(step, effectiveToolName, mergedArgs, startTime, originalError,
-                    fallbackTool, fallbackError, duration, tracker, observations);
-        }
-
-        String errorToMatch = fallbackError != null ? fallbackError : originalError;
-        for (FailureEntity failure : unresolvedFailures) {
-            if (failure.getErrorSignature() != null
-                    && errorToMatch.toLowerCase().contains(failure.getErrorSignature().toLowerCase())) {
-
-                log.info("[Orchestrator] Recovery: FailureLibrary match found: pattern='{}', correct='{}'",
-                        failure.getTaskPattern(), failure.getCorrectApproach());
-
-                if (failure.getCorrectApproach() != null && !failure.getCorrectApproach().isBlank()) {
-                    log.info("[Orchestrator] Recovery: applying correct approach from FailureLibrary: {}",
-                            failure.getCorrectApproach());
-
-                    try {
-                        String correctJson = failure.getCorrectApproach();
-                        if (correctJson.contains("{")) {
-                            int start = correctJson.indexOf("{");
-                            int end = correctJson.lastIndexOf("}") + 1;
-                            String jsonPart = correctJson.substring(start, end);
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> correctionParams = objectMapper.readValue(
-                                    jsonPart, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-                            for (var entry : correctionParams.entrySet()) {
-                                mergedArgs.putIfAbsent(entry.getKey(), entry.getValue());
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.debug("[Orchestrator] Recovery: failed to parse correctApproach JSON: {}", e.getMessage());
-                    }
-
-                    long retryStart = System.currentTimeMillis();
-                    ToolExecutionRequest retryRequest = new ToolExecutionRequest();
-                    retryRequest.setToolName(effectiveToolName);
-                    retryRequest.setArguments(mergedArgs);
-
-                    return toolExecutor.execute(retryRequest)
-                            .map(retryResult -> {
-                                long retryDuration = System.currentTimeMillis() - retryStart;
-                                String resultStr = retryResult != null ? retryResult.toString() : "";
-                                StepObservation obs = new StepObservation(step, true, resultStr, null,
-                                        duration + retryDuration, true,
-                                        "_failure_correction", true);
-                                observations.add(obs);
-                                tracker.recordToolCall(effectiveToolName + "#retry",
-                                        toJson(mergedArgs), true,
-                                        truncate(resultStr, 200), null, retryDuration);
-                                log.info("[Orchestrator] Recovery: FailureLibrary correction succeeded ({}ms)",
-                                        retryDuration);
-                                return obs;
-                            })
-                            .onErrorResume(retryError -> {
-                                long retryDuration = System.currentTimeMillis() - retryStart;
-                                String retryErr = retryError.getMessage() != null
-                                        ? retryError.getMessage() : "Unknown retry error";
-                                log.warn("[Orchestrator] Recovery: FailureLibrary correction also failed: {}",
-                                        retryErr);
-                                return recordFinalFailure(step, effectiveToolName, mergedArgs, startTime, originalError,
-                                        fallbackTool, fallbackError, duration + retryDuration,
-                                        tracker, observations);
-                            });
-                }
-            }
-        }
-
-        return recordFinalFailure(step, effectiveToolName, mergedArgs, startTime, originalError,
-                fallbackTool, fallbackError, duration, tracker, observations);
-    }
-
-    private Mono<StepObservation> recordFinalFailure(
-            com.mcp.engine.planner.PlanStep step,
-            String effectiveToolName,
-            Map<String, Object> mergedArgs,
-            long startTime,
-            String originalError,
-            String fallbackTool,
-            String fallbackError,
-            long duration,
-            ExecutionTracker tracker,
-            List<StepObservation> observations) {
-
-        String finalError = fallbackError != null
-                ? "原始错误: " + originalError + " | 恢复错误: " + fallbackError
-                : originalError;
-
-        StepObservation obs = new StepObservation(step, false, "", finalError, duration,
-                fallbackTool != null, fallbackTool, false);
-        observations.add(obs);
-        tracker.recordToolCall(effectiveToolName,
-                toJson(mergedArgs), false,
-                "", finalError, duration);
-        log.warn("[Orchestrator] Recovery: all recovery attempts failed for step '{}': {}",
-                effectiveToolName, finalError);
-        return Mono.just(obs);
-    }
-
-    private Mono<String> generateFinalAnswer(String request, String systemPrompt,
-                                              List<StepObservation> observations,
-                                              EditPlan plan) {
-        StringBuilder obsContext = new StringBuilder(4096);
-        obsContext.append("## 任务：").append(plan.getIntent()).append("\n");
-        obsContext.append("规划推理：").append(plan.getReasoning()).append("\n\n");
-        obsContext.append("## 工具执行结果：\n\n");
-
-        long successCount = observations.stream().filter(StepObservation::success).count();
-        long failCount = observations.size() - successCount;
-
-        for (int i = 0; i < observations.size(); i++) {
-            StepObservation obs = observations.get(i);
-            obsContext.append("### 步骤 ").append(i + 1).append("：")
-                    .append(obs.step().getDisplayName()).append("\n");
-            obsContext.append("原因：").append(obs.step().getReason()).append("\n");
-            if (obs.fallbackAttempted()) {
-                obsContext.append("恢复：尝试了回退策略");
-                if (obs.fallbackTool() != null) {
-                    obsContext.append(" → ").append(obs.fallbackTool());
-                }
-                obsContext.append(" (").append(obs.fallbackSuccess() ? "成功" : "失败").append(")\n");
-            }
-            if (obs.success()) {
-                String truncated = obs.result().length() > 8000
-                        ? obs.result().substring(0, 8000) + "\n...(结果已截断)"
-                        : obs.result();
-                obsContext.append("结果：").append(truncated).append("\n\n");
-            } else {
-                obsContext.append("错误：").append(obs.error()).append("\n\n");
-            }
-        }
-
-        obsContext.append("## 统计\n");
-        obsContext.append("总步骤：").append(observations.size())
-                .append(" | 成功：").append(successCount)
-                .append(" | 失败：").append(failCount).append("\n\n");
-
-        return orchestratorPromptService.render(
-                "orchestrator_final_answer",
-                Map.of(
-                        "observations_context", obsContext.toString(),
-                        "user_request", request
-                ))
-                .flatMap(finalAnswerPrompt -> {
-                    String finalPrompt = systemPrompt + "\n\n" + finalAnswerPrompt;
-                    return orchestratorPromptService.render(
-                            "orchestrator_user_prompt_prefix",
-                            Map.of("user_message", request))
-                            .flatMap(finalUserPrompt -> {
-                                int finalPromptTokens = TokenBudget.estimateTokens(finalPrompt);
-                                int finalUserTokens = TokenBudget.estimateTokens(finalUserPrompt);
-                                log.info("[Orchestrator] Generating final answer: {} observations ({} success, {} fail), "
-                                                + "prompt tokens={} (system={} + answer={}), user tokens={}",
-                                        observations.size(), successCount, failCount,
-                                        finalPromptTokens + finalUserTokens,
-                                        finalPromptTokens, finalUserTokens);
-                                return agentRuntime.run(finalPrompt, finalUserPrompt);
-                            });
-                });
-    }
-
-    private String toJson(Map<String, Object> map) {
-        try {
-            return objectMapper.writeValueAsString(map);
-        } catch (Exception e) {
-            return "{}";
-        }
-    }
-
-    private String truncate(String text, int maxLen) {
-        if (text == null) return "";
-        return text.length() <= maxLen ? text : text.substring(0, maxLen - 3) + "...";
     }
 
     // ==================== P0: Context-Aware Loading Architecture ====================
@@ -1904,7 +1469,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             RequestContext ctx, String resolvedSystemPrompt,
             long startTime, UserRole userRole,
             ContextRequirement requirement, WorkingContext workingCtx,
-            ExecutionPlan plan, ExecutionState execState) {
+            ExecutionPlan plan, ExecutionState execState,
+            ContextBudget ctxBudget) {
 
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
@@ -1918,11 +1484,29 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 plan.toolPolicy(), plan.memoryPolicy());
 
         return switch (requirement) {
-            case NONE -> processFastPathNone(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
-            case CONVERSATION -> processFastPathConversation(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
-            case DOCUMENT -> processFastPathDocument(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
-            case WORKSPACE -> processFastPathWorkspace(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
-            case SEARCH -> processFastPathSearch(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx, plan);
+            case NONE -> processFastPathNone(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx, plan, execState);
+            case CONVERSATION -> processFastPathConversation(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx, plan, execState);
+            case DOCUMENT -> {
+                if (!plan.toolPolicy().allowFileRead()) {
+                    log.warn("[Orchestrator] FastPath[DOCUMENT] blocked by ToolPolicy: allowFileRead=false | session={}", sessionId);
+                    yield Mono.just("Document access is not allowed by current policy.");
+                }
+                yield processFastPathDocument(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx, plan, execState);
+            }
+            case WORKSPACE -> {
+                if (!plan.toolPolicy().allowFileRead()) {
+                    log.warn("[Orchestrator] FastPath[WORKSPACE] blocked by ToolPolicy: allowFileRead=false | session={}", sessionId);
+                    yield Mono.just("Workspace access is not allowed by current policy.");
+                }
+                yield processFastPathWorkspace(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx, plan, execState);
+            }
+            case SEARCH -> {
+                if (!plan.toolPolicy().allowSearch()) {
+                    log.warn("[Orchestrator] FastPath[SEARCH] blocked by ToolPolicy: allowSearch=false | session={}", sessionId);
+                    yield Mono.just("Search is not allowed by current policy.");
+                }
+                yield processFastPathSearch(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx, plan, execState);
+            }
         };
 
     }
@@ -1940,22 +1524,29 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     private Mono<String> processWithPipeline(
             RequestContext ctx, String resolvedSystemPrompt,
             long startTime, WorkingContext workingCtx, ToolPipeline pipeline,
-            ExecutionPlan plan, ExecutionState execState) {
+            ExecutionPlan plan, ExecutionState execState,
+            ContextBudget ctxBudget) {
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] Pipeline[{}] executing: {} steps | session={} | toolPolicy={}",
-                pipeline.getPipelineId(), pipeline.getSteps().size(), sessionId, plan.toolPolicy());
+        long timeoutSeconds = plan.timeoutPolicy().pipelineTimeout().getSeconds();
+        if (timeoutSeconds <= 0) {
+            timeoutSeconds = pipeline.getTimeoutSeconds();
+        }
+
+        log.info("[Orchestrator] Pipeline[{}] executing: {} steps | session={} | toolPolicy={} | timeoutPolicy={}",
+                pipeline.getPipelineId(), pipeline.getSteps().size(), sessionId, plan.toolPolicy(), plan.timeoutPolicy());
 
         ToolPipeline finalPipeline = ToolPipeline.builder()
                 .pipelineId(pipeline.getPipelineId())
                 .name(pipeline.getName())
                 .steps(pipeline.getSteps())
-                .timeoutSeconds(pipeline.getTimeoutSeconds())
+                .timeoutSeconds((int) timeoutSeconds)
+                .executionContext(Map.of("executionPlan", plan))
                 .build();
 
-        return pipelineExecutor.execute(finalPipeline)
+        return pipelineExecutor.execute(finalPipeline, execState)
                 .doOnSuccess(result -> {
                     long duration = System.currentTimeMillis() - startTime;
                     String outcome = result.isSuccess() ? "SUCCESS" : "FAILED";
@@ -1976,21 +1567,51 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                         return chatHistoryService.saveUserAndAssistantMessage(identity, request, response)
                                 .thenReturn(response);
                     }
-                    log.warn("[Orchestrator] Pipeline[{}] failed, falling back to SearchAgent: session={}",
-                            pipeline.getPipelineId(), sessionId);
-                    return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState);
+                    FailurePolicy.FailureType failureType = FailurePolicy.classifyFailure(
+                            new RuntimeException(result.getError() != null ? result.getError() : "pipeline failed"));
+                    FailurePolicy.Decision decision = FailurePolicy.evaluate(failureType, result.getError(), plan);
+
+                    log.warn("[Orchestrator] Pipeline[{}] failed, FailurePolicy decision={} | failureType={} | session={}",
+                            pipeline.getPipelineId(), decision, failureType, sessionId);
+
+                    return switch (decision) {
+                        case FALLBACK -> {
+                            execState.markFailed("Pipeline failed: " + result.getError(), "PIPELINE_FAILURE");
+                            yield processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState, ctxBudget);
+                        }
+                        case RETRY -> {
+                            log.info("[Orchestrator] Pipeline[{}] retrying... | session={}", pipeline.getPipelineId(), sessionId);
+                            yield processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline, plan, execState, ctxBudget);
+                        }
+                        default -> Mono.just("Pipeline execution failed: " + result.getError());
+                    };
                 })
                 .onErrorResume(ex -> {
-                    log.warn("[Orchestrator] Pipeline[{}] exception, falling back to SearchAgent: session={} | error={}",
-                            pipeline.getPipelineId(), sessionId, ex.getMessage());
-                    return processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState);
+                    FailurePolicy.FailureType failureType = FailurePolicy.classifyFailure(ex);
+                    FailurePolicy.Decision decision = FailurePolicy.evaluate(failureType, ex.getMessage(), plan);
+
+                    log.warn("[Orchestrator] Pipeline[{}] exception, FailurePolicy decision={} | failureType={} | session={}",
+                            pipeline.getPipelineId(), decision, failureType, sessionId);
+
+                    return switch (decision) {
+                        case FALLBACK -> {
+                            execState.markFailed("Pipeline exception: " + ex.getMessage(), "PIPELINE_EXCEPTION");
+                            yield processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState, ctxBudget);
+                        }
+                        case RETRY -> {
+                            log.info("[Orchestrator] Pipeline[{}] retrying after exception... | session={}", pipeline.getPipelineId(), sessionId);
+                            yield processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline, plan, execState, ctxBudget);
+                        }
+                        default -> Mono.error(ex);
+                    };
                 });
     }
 
     private Mono<String> processDocxGenerationWithSearchAgent(
             RequestContext ctx, String resolvedSystemPrompt,
             long startTime, WorkingContext workingCtx,
-            ExecutionPlan plan, ExecutionState execState) {
+            ExecutionPlan plan, ExecutionState execState,
+            ContextBudget ctxBudget) {
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String sessionId = identity.sessionId();
@@ -2012,9 +1633,10 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             .userMessage(request)
                             .modelConfigId(ctx.getModelConfigId())
                             .executionPlan(plan)
+                            .executionState(execState)
                             .build();
 
-                    return searchAgent.execute(llmRequest)
+                    return agentRuntime.execute(searchAgent, llmRequest)
                             .doOnSuccess(response -> {
                                 long duration = System.currentTimeMillis() - startTime;
                                 log.info("[Orchestrator] DOCX_GENERATION via SearchAgent success! Duration: {}ms | Session: {} | responseLen={}",
@@ -2030,34 +1652,45 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             sessionId);
                     return processContextAwareFastPath(ctx, resolvedSystemPrompt, startTime,
                             ctx.getUserProfile() != null ? ctx.getUserProfile().getRole() : null,
-                            ContextRequirement.DOCUMENT, workingCtx, plan, execState);
+                            ContextRequirement.DOCUMENT, workingCtx, plan, execState, ctxBudget);
                 }));
     }
 
     private Mono<String> processFastPathNone(RequestContext ctx, String resolvedSystemPrompt,
                                               long startTime, UserRole userRole,
-                                              WorkingContext workingCtx) {
+                                              WorkingContext workingCtx, ExecutionPlan plan,
+                                              ExecutionState execState) {
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String modelConfigId = ctx.getModelConfigId();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] FastPath[NONE]: lightweight chat for '{}'", request);
+        log.info("[Orchestrator] FastPath[NONE]: lightweight chat for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
+
+        boolean loadMemory = plan.memoryPolicy().readEnabled();
+        int maxMemoryTokens = plan.memoryPolicy().maxMemoryTokens();
+
+        Mono<String> memoryMono = loadMemory
+                ? memoryService.buildWorkingContext(identity, userRole)
+                        .doOnSubscribe(s -> {
+                            SessionTrace t = SessionTraceHolder.currentOrNull();
+                            if (t != null) t.recordMemoryRead("WORKING_CONTEXT", 0);
+                        })
+                        .doOnSuccess(memCtx -> {
+                            if (memCtx != null && !memCtx.isEmpty()) {
+                                SessionTrace t = SessionTraceHolder.currentOrNull();
+                                if (t != null) t.recordContextInjection("MEMORY", memCtx.length(), "FastPath[NONE] memory context");
+                            }
+                        })
+                        .map(mem -> truncateToBudget(mem, maxMemoryTokens))
+                : Mono.just("");
 
         long memStart = System.currentTimeMillis();
-        return memoryService.buildWorkingContext(identity, userRole)
-                .doOnSubscribe(s -> {
-                    SessionTrace t = SessionTraceHolder.currentOrNull();
-                    if (t != null) t.recordMemoryRead("WORKING_CONTEXT", 0);
-                })
+        return memoryMono
                 .doOnSuccess(memCtx -> {
                     long memElapsed = System.currentTimeMillis() - memStart;
-                    log.info("[DIAG-Perf] FastPath[NONE] memory loading: {}ms | memCtxLen={}",
-                            memElapsed, memCtx != null ? memCtx.length() : 0);
-                    if (memCtx != null && !memCtx.isEmpty()) {
-                        SessionTrace t = SessionTraceHolder.currentOrNull();
-                        if (t != null) t.recordContextInjection("MEMORY", memCtx.length(), "FastPath[NONE] memory context");
-                    }
+                    log.info("[DIAG-Perf] FastPath[NONE] memory loading: {}ms | memCtxLen={} | loadMemory={}",
+                            memElapsed, memCtx != null ? memCtx.length() : 0, loadMemory);
                 })
                 .flatMap(memoryContext -> {
                     BuildContext buildCtx = BuildContext.builder()
@@ -2079,9 +1712,9 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
                     String userPrompt = buildUserPrompt(request, "");
                     if (modelConfigId != null && !modelConfigId.isEmpty()) {
-                        return agentRuntime.runWithConfig(modelConfigId, fullPrompt, userPrompt);
+                        return agentRuntime.runWithConfig(modelConfigId, fullPrompt, userPrompt, plan);
                     }
-                    return agentRuntime.run(fullPrompt, userPrompt);
+                    return agentRuntime.run(fullPrompt, userPrompt, plan);
                 })
                 .map(responseSanitizer::sanitize)
                 .flatMap(response ->
@@ -2118,18 +1751,27 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
      */
     private Mono<String> processFastPathSearch(RequestContext ctx, String resolvedSystemPrompt,
                                                 long startTime, UserRole userRole,
-                                                WorkingContext workingCtx, ExecutionPlan plan) {
+                                                WorkingContext workingCtx, ExecutionPlan plan,
+                                                ExecutionState execState) {
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String modelConfigId = ctx.getModelConfigId();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] FastPath[SEARCH]: routing to SearchAgent for '{}'", request);
+        log.info("[Orchestrator] FastPath[SEARCH]: routing to SearchAgent for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
+
+        boolean loadMemory = plan.memoryPolicy().readEnabled();
+        int maxMemoryChars = plan.memoryPolicy().maxMemoryTokens();
 
         java.util.concurrent.atomic.AtomicLong llmDuration = new java.util.concurrent.atomic.AtomicLong();
 
+        Mono<String> memoryMono = loadMemory
+                ? memoryService.buildWorkingContext(identity, userRole)
+                        .map(mem -> truncateToBudget(mem, maxMemoryChars))
+                : Mono.just("");
+
         return Mono.zip(
-                memoryService.buildWorkingContext(identity, userRole),
+                memoryMono,
                 chatHistoryService.getHistorySummaryWithBudget(sessionId, 20, maxHistoryChars, maxPerMessageChars)
         ).flatMap(tuple -> {
             String memoryContext = tuple.getT1();
@@ -2157,16 +1799,17 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                 .userMessage(request)
                                 .modelConfigId(modelConfigId)
                                 .executionPlan(plan)
+                                .executionState(execState)
                                 .build();
 
                         long t0 = System.currentTimeMillis();
-                        return searchAgent.execute(llmRequest)
+                        return agentRuntime.execute(searchAgent, llmRequest)
                                 .doOnSuccess(r -> llmDuration.set(System.currentTimeMillis() - t0));
                     })
                     .switchIfEmpty(Mono.defer(() -> {
                         log.warn("[Orchestrator] No SearchAgent found for SEARCH, falling back to CONVERSATION: session={}",
                                 sessionId);
-                        return processFastPathConversation(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx);
+                        return processFastPathConversation(ctx, resolvedSystemPrompt, startTime, userRole, workingCtx, plan, execState);
                     }));
         })
         .map(responseSanitizer::sanitize)
@@ -2185,17 +1828,26 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
     private Mono<String> processFastPathConversation(RequestContext ctx, String resolvedSystemPrompt,
                                                       long startTime, UserRole userRole,
-                                                      WorkingContext workingCtx) {
+                                                      WorkingContext workingCtx, ExecutionPlan plan,
+                                                      ExecutionState execState) {
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String modelConfigId = ctx.getModelConfigId();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] FastPath[CONVERSATION]: with history for '{}'", request);
+        log.info("[Orchestrator] FastPath[CONVERSATION]: with history for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
+
+        boolean loadMemory = plan.memoryPolicy().readEnabled();
+        int maxMemoryChars = plan.memoryPolicy().maxMemoryTokens();
 
         long memStart = System.currentTimeMillis();
+        Mono<String> memoryMono = loadMemory
+                ? memoryService.buildWorkingContext(identity, userRole)
+                        .map(mem -> truncateToBudget(mem, maxMemoryChars))
+                : Mono.just("");
+
         return Mono.zip(
-                memoryService.buildWorkingContext(identity, userRole),
+                memoryMono,
                 chatHistoryService.getHistorySummaryWithBudget(sessionId, 20, maxHistoryChars, maxPerMessageChars)
         ).flatMap(tuple -> {
             String memoryContext = tuple.getT1();
@@ -2239,9 +1891,9 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             String userPrompt = buildUserPrompt(request, historyContext);
 
             if (modelConfigId != null && !modelConfigId.isEmpty()) {
-                return agentRuntime.runWithConfig(modelConfigId, fullPrompt, userPrompt);
+                return agentRuntime.runWithConfig(modelConfigId, fullPrompt, userPrompt, plan);
             }
-            return agentRuntime.run(fullPrompt, userPrompt);
+            return agentRuntime.run(fullPrompt, userPrompt, plan);
         })
         .map(responseSanitizer::sanitize)
         .flatMap(response ->
@@ -2259,19 +1911,28 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
     private Mono<String> processFastPathDocument(RequestContext ctx, String resolvedSystemPrompt,
                                                   long startTime, UserRole userRole,
-                                                  WorkingContext workingCtx) {
+                                                  WorkingContext workingCtx, ExecutionPlan plan,
+                                                  ExecutionState execState) {
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String modelConfigId = ctx.getModelConfigId();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] FastPath[DOCUMENT]: with artifact recall for '{}'", request);
+        log.info("[Orchestrator] FastPath[DOCUMENT]: with artifact recall for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
+
+        boolean loadMemory = plan.memoryPolicy().readEnabled();
+        int maxMemoryChars = plan.memoryPolicy().maxMemoryTokens();
 
         java.util.concurrent.atomic.AtomicLong llmDuration = new java.util.concurrent.atomic.AtomicLong();
 
         long memStart = System.currentTimeMillis();
+        Mono<String> memoryMono = loadMemory
+                ? memoryService.buildWorkingContext(identity, userRole)
+                        .map(mem -> truncateToBudget(mem, maxMemoryChars))
+                : Mono.just("");
+
         return Mono.zip(
-                memoryService.buildWorkingContext(identity, userRole),
+                memoryMono,
                 chatHistoryService.getHistorySummaryWithBudget(sessionId, 20, maxHistoryChars, maxPerMessageChars)
         ).flatMap(tuple -> {
             String memoryContext = tuple.getT1();
@@ -2354,9 +2015,9 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             long t3 = System.currentTimeMillis();
             Mono<String> llmCall;
             if (modelConfigId != null && !modelConfigId.isEmpty()) {
-                llmCall = agentRuntime.runWithConfig(modelConfigId, fullPrompt, userPrompt);
+                llmCall = agentRuntime.runWithConfig(modelConfigId, fullPrompt, userPrompt, plan);
             } else {
-                llmCall = agentRuntime.run(fullPrompt, userPrompt);
+                llmCall = agentRuntime.run(fullPrompt, userPrompt, plan);
             }
             return llmCall.doOnSuccess(r -> llmDuration.set(System.currentTimeMillis() - t3));
         })
@@ -2376,7 +2037,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
     private Mono<String> processFastPathWorkspace(RequestContext ctx, String resolvedSystemPrompt,
                                                    long startTime, UserRole userRole,
-                                                   WorkingContext workingCtx) {
+                                                   WorkingContext workingCtx, ExecutionPlan plan,
+                                                   ExecutionState execState) {
         String request = ctx.getUserMessage();
         MemoryIdentity identity = ctx.getIdentity();
         String modelConfigId = ctx.getModelConfigId();
@@ -2388,11 +2050,19 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
         String firstFilePath = extractFirstFilePath(request);
 
-        log.info("[Orchestrator] FastPath[WORKSPACE]: with workspace for '{}'", request);
+        log.info("[Orchestrator] FastPath[WORKSPACE]: with workspace for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
+
+        boolean loadMemory = plan.memoryPolicy().readEnabled();
+        int maxMemoryChars = plan.memoryPolicy().maxMemoryTokens();
 
         long memStart = System.currentTimeMillis();
+        Mono<String> memoryMono = loadMemory
+                ? memoryService.buildWorkingContext(identity, userRole)
+                        .map(mem -> truncateToBudget(mem, maxMemoryChars))
+                : Mono.just("");
+
         return Mono.zip(
-                memoryService.buildWorkingContext(identity, userRole),
+                memoryMono,
                 preloadFiles(request, workspace, sessionId),
                 chatHistoryService.getHistorySummaryWithBudget(sessionId, 20, maxHistoryChars, maxPerMessageChars),
                 Mono.just(workspace)
@@ -2465,9 +2135,9 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     totalSystemChars, totalSystemChars / 2);
 
             if (modelConfigId != null && !modelConfigId.isEmpty()) {
-                return agentRuntime.runWithConfig(modelConfigId, fullPrompt, userPrompt);
+                return agentRuntime.runWithConfig(modelConfigId, fullPrompt, userPrompt, plan);
             }
-            return agentRuntime.run(fullPrompt, userPrompt);
+            return agentRuntime.run(fullPrompt, userPrompt, plan);
         })
         .map(responseSanitizer::sanitize)
         .flatMap(response ->

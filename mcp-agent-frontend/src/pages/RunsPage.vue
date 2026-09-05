@@ -25,7 +25,7 @@
 
         <div v-if="runStore.isLoading" class="loading">加载中...</div>
 
-        <div v-else-if="runStore.runs.length === 0" class="empty-state">
+        <div v-else-if="filteredRuns.length === 0" class="empty-state">
             <ClockIcon class="empty-icon" />
             <p>暂无执行记录</p>
         </div>
@@ -45,7 +45,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="run in runStore.runs" :key="run.id" @click="viewDetail(run.id)" class="clickable-row">
+                    <tr v-for="run in filteredRuns" :key="run.id" @click="viewDetail(run.id)" class="clickable-row">
                         <td>{{ run.agentName }}</td>
                         <td class="intent-cell">{{ run.intent }}</td>
                         <td><span :class="['status-badge', `status-${run.status}`]">{{ statusLabel(run.status) }}</span></td>
@@ -62,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ClockIcon } from '@heroicons/vue/24/outline'
 import { useRunStore } from '@/stores/runStore'
@@ -100,11 +100,17 @@ function viewDetail(id: string) {
     router.push(`/runs/${id}`)
 }
 
+const filteredRuns = computed(() => {
+    let list = runStore.runs
+    if (filterStatus.value) {
+        list = list.filter((r) => r.status === filterStatus.value)
+    }
+    return list
+})
+
 async function loadRuns() {
     await runStore.fetchRuns({
         agentId: filterAgent.value || undefined,
-        status: filterStatus.value || undefined,
-        limit: 50,
     })
 }
 

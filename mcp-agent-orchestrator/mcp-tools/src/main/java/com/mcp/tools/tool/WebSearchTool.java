@@ -3,7 +3,8 @@ package com.mcp.tools.tool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcp.tools.annotation.McpTool;
-import com.mcp.tools.model.ToolResult;
+import com.mcp.tools.model.ToolExecutionResult;
+import com.mcp.tools.model.ToolError;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -45,9 +46,12 @@ public class WebSearchTool {
             description = "进行联网搜索，获取最新的信息、新闻、技术文档等。参数 query：搜索关键词",
             tags = {"search", "web", "internet"}
     )
-    public ToolResult webSearch(String query) {
+    public ToolExecutionResult webSearch(String query) {
         if (query == null || query.isBlank()) {
-            return ToolResult.failure("未提供搜索关键词", null, "web_search");
+            return ToolExecutionResult.businessError(
+                    null, "web_search",
+                    ToolError.internal("未提供搜索关键词"),
+                    java.time.Duration.ZERO);
         }
 
         CacheEntry cached = cache.get(query);
@@ -76,7 +80,7 @@ public class WebSearchTool {
             log.error("[WebSearch] Search budget exceeded: {}", e.getMessage());
         }
 
-        ToolResult result = buildStructuredResult(query, results);
+        ToolExecutionResult result = buildStructuredResult(query, results);
         cache.put(query, new CacheEntry(result, Instant.now().plusSeconds(CACHE_TTL_SECONDS)));
         return result;
     }
@@ -267,7 +271,7 @@ public class WebSearchTool {
         return new ArrayList<>(collected);
     }
 
-    private ToolResult buildStructuredResult(String query, Map<String, SourceResult> results) {
+    private ToolExecutionResult buildStructuredResult(String query, Map<String, SourceResult> results) {
         List<SourceStatus> sources = new ArrayList<>();
         List<String> allContent = new ArrayList<>();
 
@@ -279,19 +283,19 @@ public class WebSearchTool {
         }
 
         if (allContent.isEmpty()) {
-            return ToolResult.failure(
-                    "搜索失败：所有搜索渠道均不可用。建议检查网络连接或稍后重试。",
-                    query, "web_search");
+            return ToolExecutionResult.businessError(
+                    null, "web_search",
+                    ToolError.internal("搜索失败：所有搜索渠道均不可用。建议检查网络连接或稍后重试。"),
+                    java.time.Duration.ZERO);
         }
 
         boolean allOk = sources.stream().allMatch(s -> s.ok);
+        String resultData = buildResultData(query, sources, allContent);
         if (allOk) {
-            return ToolResult.success("搜索完成，共 " + allContent.size() + " 条结果", query, "web_search")
-                    .withData(buildResultData(query, sources, allContent));
+            return ToolExecutionResult.success(null, "web_search", resultData, java.time.Duration.ZERO);
         } else {
-            return ToolResult.failure(
-                    "部分搜索渠道不可用，仅返回可用结果", query, "web_search")
-                    .withData(buildResultData(query, sources, allContent));
+            return ToolExecutionResult.partialSuccess(null, "web_search", resultData,
+                    "部分搜索渠道不可用，仅返回可用结果", java.time.Duration.ZERO);
         }
     }
 
@@ -340,9 +344,7 @@ public class WebSearchTool {
 
     private record SourceStatus(String name, boolean ok, String error) {}
 
-    private enum SearchStatus { SUCCESS, PARTIAL_SUCCESS, FAILURE }
-
-    private record CacheEntry(ToolResult result, Instant expiresAt) {
+    private record CacheEntry(ToolExecutionResult result, Instant expiresAt) {
         boolean isExpired() { return Instant.now().isAfter(expiresAt); }
     }
 }

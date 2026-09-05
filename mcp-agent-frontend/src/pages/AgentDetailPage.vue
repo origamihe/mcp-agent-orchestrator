@@ -256,7 +256,8 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import * as agentsApi from '@/api/agents'
 import type { MemoryEntry } from '@/types/memory'
-import type { RunSummary } from '@/types/run'
+import type { RunInfo } from '@/types/run'
+import type { PromptInfo } from '@/types/agent'
 
 const route = useRoute()
 const agentStore = useAgentStore()
@@ -287,11 +288,11 @@ const toolsLoading = ref(false)
 const runsLoading = ref(false)
 const permLoading = ref(false)
 
-const prompt = ref<{ name: string; templateText: string } | null>(null)
+const prompt = ref<PromptInfo | null>(null)
 const promptTemplate = ref('')
 const agentMemories = ref<MemoryEntry[]>([])
 const agentTools = ref<any[]>([])
-const agentRuns = ref<RunSummary[]>([])
+const agentRuns = ref<RunInfo[]>([])
 const agentPermissions = ref<any>(null)
 
 const typeLabel = computed(() => {
@@ -359,7 +360,7 @@ async function loadPrompt() {
     promptLoading.value = true
     try {
         prompt.value = await agentsApi.fetchAgentPrompt(agentId.value)
-        promptTemplate.value = prompt.value.templateText
+        promptTemplate.value = prompt.value?.templateText ?? ''
     } catch {
         toast.error('加载 Prompt 失败')
     } finally {
@@ -384,8 +385,8 @@ async function savePrompt() {
 async function loadMemories() {
     memoryLoading.value = true
     try {
-        await memoryStore.fetchMemories({ agentId: agentId.value })
-        agentMemories.value = memoryStore.memories
+        await memoryStore.fetchMemories()
+        agentMemories.value = memoryStore.memories.filter((m) => m.agentId === agentId.value)
     } catch {
         toast.error('加载记忆失败')
     } finally {
@@ -416,7 +417,7 @@ async function loadRuns() {
     runsLoading.value = true
     try {
         await runStore.fetchRuns({ agentId: agentId.value })
-        agentRuns.value = runStore.runs as RunSummary[]
+        agentRuns.value = runStore.runs
     } catch {
         toast.error('加载执行历史失败')
     } finally {

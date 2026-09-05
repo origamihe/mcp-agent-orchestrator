@@ -56,6 +56,8 @@ public enum SessionEventType {
 
     CONTRACT_VIOLATION,
 
+    STATE_TRANSITION,
+
     EXECUTION_COMPLETED,
 
     FINAL_RESPONSE

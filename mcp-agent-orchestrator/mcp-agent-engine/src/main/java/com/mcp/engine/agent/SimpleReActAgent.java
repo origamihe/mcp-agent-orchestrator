@@ -2,7 +2,9 @@ package com.mcp.engine.agent;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mcp.common.identity.MemoryIdentity;
 import com.mcp.engine.agent.card.AgentCard;
+import com.mcp.engine.execution.ExecutionState;
 import com.mcp.engine.policy.PolicyEngine;
 import com.mcp.llm.client.ChatMessage;
 import com.mcp.llm.client.LlmClient;
@@ -11,8 +13,10 @@ import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.ToolDefinition;
 import com.mcp.tools.model.ToolExecutionRequest;
 import com.mcp.tools.model.ToolExecutionResult;
-import com.mcp.tools.model.ToolResult;
 import com.mcp.tools.registry.ToolRegistry;
+import com.mcp.tools.model.ToolScore;
+import com.mcp.tools.model.ToolQuery;
+import com.mcp.tools.registry.CapabilityResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -27,15 +31,18 @@ public class SimpleReActAgent implements Agent {
 
     private final LlmClient llmClient;
     private final ToolRegistry toolRegistry;
+    private final CapabilityResolver capabilityResolver;
     private final ToolExecutor toolExecutor;
     private final PolicyEngine policyEngine;
 
     public SimpleReActAgent(LlmClient llmClient,
                             ToolRegistry toolRegistry,
+                            CapabilityResolver capabilityResolver,
                             ToolExecutor toolExecutor,
                             PolicyEngine policyEngine) {
         this.llmClient = llmClient;
         this.toolRegistry = toolRegistry;
+        this.capabilityResolver = capabilityResolver;
         this.toolExecutor = toolExecutor;
         this.policyEngine = policyEngine;
     }
@@ -78,6 +85,7 @@ public class SimpleReActAgent implements Agent {
                         "read_conversation_history", "read_conversation_summary"
                 ))
                 .version("1.0.0")
+                .promptName("simple-react-agent")
                 .build();
     }
 
@@ -255,23 +263,45 @@ public class SimpleReActAgent implements Agent {
         request.setArguments(new HashMap<>(toolCall.getArguments()));
         request.setRequestId(toolCall.getId());
 
+        ExecutionState execState = currentRequest != null ? currentRequest.getExecutionState() : null;
+        if (execState != null) {
+            execState.waitingForTool(toolCall.getId());
+        }
+
         return toolRegistry.getTool(toolCall.getName())
                 .map(toolDef -> {
+                    MemoryIdentity identity = currentRequest != null
+                            ? new MemoryIdentity(null, currentRequest.getSessionId(),
+                                    currentRequest.getUserId(), null, null)
+                            : null;
                     PolicyEngine.PolicyDecision decision =
-                            policyEngine.evaluate(null, getId(), toolDef, null,
+                            policyEngine.evaluate(identity, getId(), toolDef, null,
                                     currentRequest != null ? currentRequest.getExecutionPlan() : null);
                     return decision;
                 })
-                .defaultIfEmpty(PolicyEngine.PolicyDecision.ALLOW)
+                .defaultIfEmpty(PolicyEngine.PolicyDecision.DENY)
                 .flatMap(decision -> {
                     if (decision == PolicyEngine.PolicyDecision.DENY) {
                         log.warn("[SimpleReActAgent] PolicyEngine DENY: tool={}", toolCall.getName());
+                        if (execState != null) {
+                            execState.toolCompleted(toolCall.getId());
+                        }
                         return Mono.just(ToolExecutionResult.denied(
                                 toolCall.getId(), toolCall.getName(), "PolicyEngine denied tool execution"));
                     }
                     return toolExecutor.execute(request)
-                            .doOnSuccess(result -> recordObservation(toolCall, result, startTime))
-                            .doOnError(error -> recordObservationError(toolCall, error, startTime));
+                            .doOnSuccess(result -> {
+                                if (execState != null) {
+                                    execState.toolCompleted(toolCall.getId());
+                                }
+                                recordObservation(toolCall, result, startTime);
+                            })
+                            .doOnError(error -> {
+                                if (execState != null) {
+                                    execState.toolCompleted(toolCall.getId());
+                                }
+                                recordObservationError(toolCall, error, startTime);
+                            });
                 });
     }
 
@@ -379,7 +409,11 @@ public class SimpleReActAgent implements Agent {
     }
 
     private List<Map<String, Object>> buildToolDefinitions() {
-        List<ToolDefinition> allTools = toolRegistry.getAllTools();
+        List<ToolScore> rankedTools = capabilityResolver.resolveRanked(
+                ToolQuery.builder().build());
+        List<ToolDefinition> allTools = rankedTools.stream()
+                .map(ToolScore::getTool)
+                .toList();
         List<String> allowedToolNames = getAgentCard().getToolNames();
 
         List<ToolDefinition> filteredTools = new ArrayList<>();
@@ -388,7 +422,7 @@ public class SimpleReActAgent implements Agent {
                 filteredTools.add(td);
             }
         }
-        log.info("[MultiTool] SimpleReActAgent: AgentCard.toolNames={}, registry={} tools, filtered={} tools",
+        log.info("[MultiTool] SimpleReActAgent: AgentCard.toolNames={}, registry={} tools (ranked by CapabilityResolver), filtered={} tools",
                 allowedToolNames.size(), allTools.size(), filteredTools.size());
 
         if (filteredTools.isEmpty()) {

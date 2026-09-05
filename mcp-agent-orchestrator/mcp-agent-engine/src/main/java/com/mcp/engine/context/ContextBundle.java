@@ -14,7 +14,7 @@ public class ContextBundle {
     private List<FileContext> fileContexts;
     private String memoryContext;
     private String historyContext;
-    private TokenBudget budget;
+    private ContextBudget budget;
 
     public String buildPrompt() {
         StringBuilder sb = new StringBuilder(4096);
@@ -38,7 +38,7 @@ public class ContextBundle {
     }
 
     public int totalTokens() {
-        return budget == null ? 0 : budget.getTotalBudget() - budget.remaining();
+        return budget == null ? 0 : budget.maxTokens();
     }
 
     public static ContextBundle empty() {
@@ -46,7 +46,7 @@ public class ContextBundle {
                 .fileContexts(new ArrayList<>())
                 .memoryContext("")
                 .historyContext("")
-                .budget(TokenBudget.defaultBudget())
+                .budget(ContextBudget.DEFAULT)
                 .build();
     }
 }

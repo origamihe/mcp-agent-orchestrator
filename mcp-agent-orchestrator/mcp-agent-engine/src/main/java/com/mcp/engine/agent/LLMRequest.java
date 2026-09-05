@@ -1,6 +1,7 @@
 package com.mcp.engine.agent;
 
 import com.mcp.engine.execution.ExecutionPlan;
+import com.mcp.engine.execution.ExecutionState;
 import lombok.Builder;
 import lombok.Data;
 
@@ -35,18 +36,18 @@ public class LLMRequest {
     /** 用户原始消息 */
     private String userMessage;
 
-    /** 温度参数 */
+    /** 温度参数（CONTRACTUAL: 当前未接入，由 LLM Config 直接控制） */
     @Builder.Default
     private Double temperature = 0.7;
 
-    /** 可用工具列表 */
+    /** 可用工具列表（CONTRACTUAL: 当前未接入，工具由 Agent 内部 buildToolDefinitions() 构建） */
     @Builder.Default
     private List<String> tools = List.of();
 
-    /** 记忆上下文（已渲染为文本） */
+    /** 记忆上下文（CONTRACTUAL: 当前未接入，记忆由 PromptComposer 分层注入） */
     private String memoryContext;
 
-    /** 工作空间上下文 */
+    /** 工作空间上下文（CONTRACTUAL: 当前未接入，工作空间由 WorkingContext 管理） */
     private String workspaceContext;
 
     /** 模型配置ID（可选，用于多模型切换） */
@@ -54,6 +55,9 @@ public class LLMRequest {
 
     /** 执行计划（P1 核心：Agent 通过此字段获取 ToolPolicy / MemoryPolicy / TimeoutPolicy） */
     private ExecutionPlan executionPlan;
+
+    /** 执行状态（P1 核心：Agent 通过此字段更新执行生命周期状态） */
+    private ExecutionState executionState;
 
     /** 扩展变量 */
     @Builder.Default

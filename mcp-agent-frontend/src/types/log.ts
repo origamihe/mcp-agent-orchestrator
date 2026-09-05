@@ -1,7 +1,7 @@
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'audit'
 
 export interface LogEntry {
-    id: string
+    id: number
     level: LogLevel
     module: string
     message: string

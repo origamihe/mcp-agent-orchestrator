@@ -5,8 +5,13 @@ import com.mcp.common.pipeline.PipelineResult;
 import com.mcp.common.pipeline.PipelineStatus;
 import com.mcp.common.pipeline.PipelineStep;
 import com.mcp.common.pipeline.StepResult;
+import com.mcp.engine.execution.ExecutionPlan;
+import com.mcp.engine.execution.ExecutionState;
+import com.mcp.engine.policy.PolicyEngine;
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.ToolExecutionRequest;
+import com.mcp.tools.model.ToolExecutionResult;
+import com.mcp.tools.pipeline.ToolPolicyChecker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -51,14 +56,16 @@ import java.util.function.Consumer;
 public class ToolPipelineManager {
 
     private final ToolExecutor toolExecutor;
+    private final PolicyEngine policyEngine;
     private final Map<String, PipelineDefinition> pipelines = new ConcurrentHashMap<>();
     private final List<PipelineResult> recentResults = new CopyOnWriteArrayList<>();
     private final List<Consumer<PipelineResult>> listeners = new CopyOnWriteArrayList<>();
 
     private static final int MAX_RECENT_RESULTS = 200;
 
-    public ToolPipelineManager(ToolExecutor toolExecutor) {
+    public ToolPipelineManager(ToolExecutor toolExecutor, PolicyEngine policyEngine) {
         this.toolExecutor = toolExecutor;
+        this.policyEngine = policyEngine;
     }
 
     // ==================== 流水线注册 ====================
@@ -88,20 +95,24 @@ public class ToolPipelineManager {
      *
      * @param pipelineId   流水线 ID
      * @param initialInput 初始输入参数（传递给第一个步骤）
+     * @param execPlan     执行计划（用于 PolicyEngine 评估）
+     * @param execState    执行状态（用于追踪工具调用）
      * @return 流水线执行结果
      */
-    public Mono<PipelineResult> execute(String pipelineId, Map<String, Object> initialInput) {
+    public Mono<PipelineResult> execute(String pipelineId, Map<String, Object> initialInput,
+                                         ExecutionPlan execPlan, ExecutionState execState) {
         PipelineDefinition def = pipelines.get(pipelineId);
         if (def == null) {
             return Mono.error(new IllegalArgumentException("Pipeline not found: " + pipelineId));
         }
-        return execute(def, initialInput);
+        return execute(def, initialInput, execPlan, execState);
     }
 
     /**
      * 执行流水线定义。
      */
-    public Mono<PipelineResult> execute(PipelineDefinition def, Map<String, Object> initialInput) {
+    public Mono<PipelineResult> execute(PipelineDefinition def, Map<String, Object> initialInput,
+                                         ExecutionPlan execPlan, ExecutionState execState) {
         Instant startTime = Instant.now();
         List<StepResult> stepResults = new ArrayList<>();
         Map<String, Object> context = new LinkedHashMap<>(initialInput != null ? initialInput : Map.of());
@@ -115,7 +126,7 @@ public class ToolPipelineManager {
             return Mono.just(emptyResult);
         }
 
-        return executeSteps(steps, context, stepResults, def.isParallelizeIndependent())
+        return executeSteps(steps, context, stepResults, def.isParallelizeIndependent(), execPlan, execState)
                 .then(Mono.fromCallable(() -> {
                     PipelineResult result = PipelineResult.success(def.getId(), def.getName(), stepResults);
                     result.setStartedAt(startTime);
@@ -139,7 +150,8 @@ public class ToolPipelineManager {
      * 递归执行步骤，处理依赖关系。
      */
     private Mono<Void> executeSteps(List<PipelineStep> allSteps, Map<String, Object> context,
-                                     List<StepResult> results, boolean parallelizeIndependent) {
+                                     List<StepResult> results, boolean parallelizeIndependent,
+                                     ExecutionPlan execPlan, ExecutionState execState) {
         if (allSteps.isEmpty()) return Mono.empty();
 
         List<PipelineStep> ready = findReadySteps(allSteps, results);
@@ -155,21 +167,22 @@ public class ToolPipelineManager {
 
         if (parallelizeIndependent && ready.size() > 1) {
             return Flux.fromIterable(ready)
-                    .flatMap(step -> executeStep(step, context, results))
+                    .flatMap(step -> executeStep(step, context, results, execPlan, execState))
                     .then()
-                    .then(Mono.defer(() -> executeSteps(remaining, context, results, parallelizeIndependent)));
+                    .then(Mono.defer(() -> executeSteps(remaining, context, results, parallelizeIndependent, execPlan, execState)));
         }
 
         return Flux.fromIterable(ready)
-                .concatMap(step -> executeStep(step, context, results))
+                .concatMap(step -> executeStep(step, context, results, execPlan, execState))
                 .then()
-                .then(Mono.defer(() -> executeSteps(remaining, context, results, parallelizeIndependent)));
+                .then(Mono.defer(() -> executeSteps(remaining, context, results, parallelizeIndependent, execPlan, execState)));
     }
 
     /**
      * 执行单个步骤。
      */
-    private Mono<Void> executeStep(PipelineStep step, Map<String, Object> context, List<StepResult> results) {
+    private Mono<Void> executeStep(PipelineStep step, Map<String, Object> context, List<StepResult> results,
+                                    ExecutionPlan execPlan, ExecutionState execState) {
         long stepStart = System.currentTimeMillis();
 
         Map<String, Object> resolvedArgs = resolveArguments(step, context, results);
@@ -178,6 +191,24 @@ public class ToolPipelineManager {
         request.setToolName(step.getToolName());
         request.setArguments(resolvedArgs);
 
+        if (execPlan != null) {
+            ToolPolicyChecker.Decision decision = policyEngine.check(
+                    step.getToolName(), null, step.getId(),
+                    Map.of("executionPlan", execPlan));
+            if (decision == ToolPolicyChecker.Decision.DENY) {
+                long duration = System.currentTimeMillis() - stepStart;
+                StepResult sr = StepResult.failure(step.getId(), step.getToolName(),
+                        "PolicyEngine DENIED: " + step.getToolName(), duration);
+                results.add(sr);
+                log.warn("[ToolPipeline] Step {} DENIED by PolicyEngine: tool={}", step.getId(), step.getToolName());
+                return Mono.error(new RuntimeException("Pipeline step '" + step.getId() + "' denied by PolicyEngine"));
+            }
+        }
+
+        if (execState != null) {
+            execState.waitingForTool(step.getId());
+        }
+
         return toolExecutor.execute(request)
                 .map(toolResult -> {
                     long duration = System.currentTimeMillis() - stepStart;
@@ -185,6 +216,10 @@ public class ToolPipelineManager {
                     StepResult sr = StepResult.success(step.getId(), step.getToolName(), output, duration);
                     results.add(sr);
                     context.put(step.getId(), output);
+
+                    if (execState != null) {
+                        execState.toolCompleted(step.getId());
+                    }
 
                     if (output instanceof Map) {
                         @SuppressWarnings("unchecked")
@@ -199,10 +234,13 @@ public class ToolPipelineManager {
                     return sr;
                 })
                 .onErrorResume(error -> {
+                    if (execState != null) {
+                        execState.toolCompleted(step.getId());
+                    }
                     if (step.getFallbackTool() != null && !step.getFallbackTool().isBlank()) {
                         log.warn("[ToolPipeline] Step failed, trying fallback: {} -> {}: {}",
                                 step.getToolName(), step.getFallbackTool(), error.getMessage());
-                        return executeFallback(step, context, stepStart, results);
+                        return executeFallback(step, context, stepStart, results, execState);
                     }
                     long duration = System.currentTimeMillis() - stepStart;
                     StepResult sr = StepResult.failure(step.getId(), step.getToolName(), error.getMessage(), duration);
@@ -217,12 +255,16 @@ public class ToolPipelineManager {
      * 执行备选工具。
      */
     private Mono<StepResult> executeFallback(PipelineStep step, Map<String, Object> context,
-                                              long stepStart, List<StepResult> results) {
+                                              long stepStart, List<StepResult> results, ExecutionState execState) {
         Map<String, Object> resolvedArgs = resolveArguments(step, context, results);
 
         ToolExecutionRequest request = new ToolExecutionRequest();
         request.setToolName(step.getFallbackTool());
         request.setArguments(resolvedArgs);
+
+        if (execState != null) {
+            execState.waitingForTool(step.getId() + "_fallback");
+        }
 
         return toolExecutor.execute(request)
                 .map(toolResult -> {
@@ -232,11 +274,19 @@ public class ToolPipelineManager {
                     sr.setFallbackToolUsed(step.getFallbackTool());
                     results.add(sr);
                     context.put(step.getId(), output);
+
+                    if (execState != null) {
+                        execState.toolCompleted(step.getId() + "_fallback");
+                    }
+
                     log.info("[ToolPipeline] Fallback succeeded: {} -> {} ({}ms)",
                             step.getId(), step.getFallbackTool(), duration);
                     return sr;
                 })
                 .onErrorResume(fbError -> {
+                    if (execState != null) {
+                        execState.toolCompleted(step.getId() + "_fallback");
+                    }
                     long duration = System.currentTimeMillis() - stepStart;
                     String errMsg = "Primary(" + step.getToolName() + ") and fallback(" + step.getFallbackTool()
                             + ") both failed: " + fbError.getMessage();

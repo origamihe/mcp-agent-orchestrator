@@ -148,6 +148,26 @@ public class LlmConfigService {
     }
 
     /**
+     * 同步获取模型上下文窗口大小（优先从缓存）。
+     * 用于 ContextBudget.forModel() 等非响应式上下文。
+     *
+     * @param configId 模型配置 ID，为 null 时使用默认配置
+     * @return 模型上下文窗口大小（token 数）
+     */
+    public int getContextWindow(String configId) {
+        if (configId != null) {
+            LlmModelConfig cached = configCache.get(configId);
+            if (cached != null) {
+                return cached.getContextWindow();
+            }
+        }
+        if (defaultConfig != null) {
+            return defaultConfig.getContextWindow();
+        }
+        return 128000;
+    }
+
+    /**
      * 兜底默认配置（数据库无配置时使用）
      * 当前默认：Ollama 本地 qwen3:8b
      */
@@ -158,6 +178,7 @@ public class LlmConfigService {
                 .modelName("qwen3:8b")
                 .temperature(0.7)
                 .maxTokens(4096)
+                .contextWindow(128000)
                 .enabled(true)
                 .build();
     }

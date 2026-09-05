@@ -5,7 +5,7 @@ export async function fetchLogs(query?: LogQuery): Promise<LogPageResponse> {
     return http.get('/api/logs', { params: query }) as unknown as LogPageResponse
 }
 
-export async function fetchLogById(id: string): Promise<LogEntry> {
+export async function fetchLogById(id: number): Promise<LogEntry> {
     return http.get(`/api/logs/${id}`) as unknown as LogEntry
 }
 

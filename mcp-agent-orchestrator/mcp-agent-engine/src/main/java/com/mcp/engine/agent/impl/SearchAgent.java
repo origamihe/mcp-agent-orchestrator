@@ -2,9 +2,11 @@ package com.mcp.engine.agent.impl;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mcp.common.identity.MemoryIdentity;
 import com.mcp.engine.agent.Agent;
 import com.mcp.engine.agent.LLMRequest;
 import com.mcp.engine.agent.card.AgentCard;
+import com.mcp.engine.execution.ExecutionState;
 import com.mcp.engine.policy.PolicyEngine;
 import com.mcp.engine.runtime.AgentRuntime;
 import com.mcp.engine.trace.SessionTrace;
@@ -18,7 +20,6 @@ import com.mcp.tools.model.SearchResult;
 import com.mcp.tools.model.ToolDefinition;
 import com.mcp.tools.model.ToolExecutionRequest;
 import com.mcp.tools.model.ToolExecutionResult;
-import com.mcp.tools.model.ToolResult;
 import com.mcp.tools.registry.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -88,6 +89,7 @@ public class SearchAgent implements Agent {
                         "data-aggregation", "fact-checking", "cross-analysis"))
                 .toolNames(List.of("deep_research", "multi_search", "fetch_webpage", "web_search"))
                 .version("2.1.0")
+                .promptName("search-agent")
                 .build();
     }
 
@@ -758,6 +760,11 @@ public class SearchAgent implements Agent {
                     com.mcp.tools.model.ToolError.internal("toolExecutor is null"), java.time.Duration.ZERO));
         }
 
+        ExecutionState execState = currentRequest != null ? currentRequest.getExecutionState() : null;
+        if (execState != null) {
+            execState.waitingForTool(toolCall.getId());
+        }
+
         ToolExecutionRequest request = new ToolExecutionRequest();
         request.setToolName(toolCall.getName());
         request.setArguments(new HashMap<>(toolCall.getArguments()));
@@ -765,15 +772,22 @@ public class SearchAgent implements Agent {
 
         return toolRegistry.getTool(toolCall.getName())
                 .map(toolDef -> {
+                    MemoryIdentity identity = currentRequest != null
+                            ? new MemoryIdentity(null, currentRequest.getSessionId(),
+                                    currentRequest.getUserId(), null, null)
+                            : null;
                     PolicyEngine.PolicyDecision decision =
-                            policyEngine.evaluate(null, getId(), toolDef, null,
+                            policyEngine.evaluate(identity, getId(), toolDef, null,
                                     currentRequest != null ? currentRequest.getExecutionPlan() : null);
                     return decision;
                 })
-                .defaultIfEmpty(PolicyEngine.PolicyDecision.ALLOW)
+                .defaultIfEmpty(PolicyEngine.PolicyDecision.DENY)
                 .flatMap(decision -> {
                     if (decision == PolicyEngine.PolicyDecision.DENY) {
                         log.warn("[SearchAgent] PolicyEngine DENY: tool={}", toolCall.getName());
+                        if (execState != null) {
+                            execState.toolCompleted(toolCall.getId());
+                        }
                         SessionTrace t = SessionTraceHolder.currentOrNull();
                         if (t != null) {
                             t.recordPolicyDecision(toolCall.getName(), "DENY", "PolicyEngine denied tool execution");
@@ -782,9 +796,17 @@ public class SearchAgent implements Agent {
                                 toolCall.getId(), toolCall.getName(), "PolicyEngine denied tool execution"));
                     }
                     return toolExecutor.execute(request)
+                            .doOnSuccess(result -> {
+                                if (execState != null) {
+                                    execState.toolCompleted(toolCall.getId());
+                                }
+                            })
                             .onErrorResume(error -> {
                                 log.warn("[SearchAgent] Tool execution error: {} - {}",
                                         toolCall.getName(), error.getMessage());
+                                if (execState != null) {
+                                    execState.toolCompleted(toolCall.getId());
+                                }
                                 return Mono.just(ToolExecutionResult.executionError(
                                         toolCall.getId(), toolCall.getName(),
                                         com.mcp.tools.model.ToolError.internal(

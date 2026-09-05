@@ -52,6 +52,7 @@ public class CodeAgent implements Agent {
                 .skills(List.of("code-generation", "code-review", "code-analysis", "refactoring"))
                 .toolNames(List.of("read_file", "write_file", "edit_file", "search_code"))
                 .version("1.0.0")
+                .promptName("code-agent")
                 .build();
     }
 

@@ -21,15 +21,6 @@ export interface KnowledgeDocument {
     createdAt: string
 }
 
-export interface KnowledgeChunk {
-    id: string
-    documentId: string
-    content: string
-    embedding?: number[]
-    metadata?: Record<string, unknown>
-    index: number
-}
-
 export interface RetrievalStats {
     totalDocuments: number
     totalChunks: number

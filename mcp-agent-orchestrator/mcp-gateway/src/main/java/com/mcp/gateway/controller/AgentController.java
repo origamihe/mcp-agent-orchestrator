@@ -2,6 +2,8 @@ package com.mcp.gateway.controller;
 
 import com.mcp.core.repository.LlmConfigRepository;
 import com.mcp.core.repository.PromptTemplateRepository;
+import com.mcp.core.domain.prompt.PromptType;
+import com.mcp.core.entity.PromptTemplateEntity;
 import com.mcp.core.service.ChatHistoryService;
 import com.mcp.core.service.RunService;
 import com.mcp.engine.agent.card.AgentCard;
@@ -131,10 +133,19 @@ public class AgentController {
     /** 获取 Agent 关联的 Prompt 模板 */
     @GetMapping("/{id}/prompt")
     public ResponseEntity<?> getAgentPrompt(@PathVariable String id) {
-        if (agentRegistry.getCard(id).isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-        return ResponseEntity.ok(promptTemplateRepository.findAll());
+        return agentRegistry.getCard(id)
+                .map(card -> {
+                    String promptName = card.getPromptName();
+                    if (promptName == null || promptName.isBlank()) {
+                        return ResponseEntity.ok(promptTemplateRepository.findAll());
+                    }
+                    var prompts = promptTemplateRepository.findByName(promptName);
+                    if (prompts.isEmpty()) {
+                        return ResponseEntity.notFound().build();
+                    }
+                    return ResponseEntity.ok(prompts.get(0));
+                })
+                .orElse(ResponseEntity.notFound().build());
     }
 
     /** 获取 Agent 关联的 Tool 列表 */
@@ -202,6 +213,8 @@ public class AgentController {
                     config.put("description", card.getDescription());
                     config.put("inputSchema", card.getInputSchema());
                     config.put("outputSchema", card.getOutputSchema());
+                    config.put("promptName", card.getPromptName());
+                    config.put("modelName", card.getModelName());
                     return ResponseEntity.ok(config);
                 })
                 .orElse(ResponseEntity.notFound().build());
@@ -211,22 +224,105 @@ public class AgentController {
     @PutMapping("/{id}/config")
     public ResponseEntity<Map<String, Object>> updateAgentConfig(
             @PathVariable String id, @RequestBody Map<String, Object> config) {
-        if (agentRegistry.getCard(id).isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-        log.info("Agent {} config updated: {}", id, config);
-        return ResponseEntity.ok(config);
+        return agentRegistry.getCard(id)
+                .map(card -> {
+                    if (config.containsKey("agentName")) {
+                        card.setAgentName((String) config.get("agentName"));
+                    }
+                    if (config.containsKey("description")) {
+                        card.setDescription((String) config.get("description"));
+                    }
+                    if (config.containsKey("version")) {
+                        card.setVersion((String) config.get("version"));
+                    }
+                    if (config.containsKey("supportsStreaming")) {
+                        card.setSupportsStreaming((Boolean) config.get("supportsStreaming"));
+                    }
+                    if (config.containsKey("maxConcurrentTasks")) {
+                        Object maxTasks = config.get("maxConcurrentTasks");
+                        if (maxTasks instanceof Integer) {
+                            card.setMaxConcurrentTasks((Integer) maxTasks);
+                        } else if (maxTasks instanceof Number) {
+                            card.setMaxConcurrentTasks(((Number) maxTasks).intValue());
+                        }
+                    }
+                    @SuppressWarnings("unchecked")
+                    List<String> skills = (List<String>) config.get("skills");
+                    if (skills != null) {
+                        card.setSkills(skills);
+                    }
+                    @SuppressWarnings("unchecked")
+                    List<String> toolNames = (List<String>) config.get("toolNames");
+                    if (toolNames != null) {
+                        card.setToolNames(toolNames);
+                    }
+                    if (config.containsKey("promptName")) {
+                        card.setPromptName((String) config.get("promptName"));
+                    }
+                    if (config.containsKey("modelName")) {
+                        card.setModelName((String) config.get("modelName"));
+                    }
+
+                    log.info("Agent {} config updated: name={}, type={}, skills={}",
+                            id, card.getAgentName(), card.getAgentType(), card.getSkills());
+
+                    Map<String, Object> result = new java.util.LinkedHashMap<>();
+                    result.put("agentId", card.getAgentId());
+                    result.put("agentName", card.getAgentName());
+                    result.put("agentType", card.getAgentType().name());
+                    result.put("skills", card.getSkills());
+                    result.put("toolNames", card.getToolNames());
+                    result.put("supportsStreaming", card.isSupportsStreaming());
+                    result.put("maxConcurrentTasks", card.getMaxConcurrentTasks());
+                    result.put("version", card.getVersion());
+                    result.put("description", card.getDescription());
+                    result.put("promptName", card.getPromptName());
+                    result.put("modelName", card.getModelName());
+                    return ResponseEntity.ok(result);
+                })
+                .orElse(ResponseEntity.notFound().build());
     }
 
     /** 更新 Agent Prompt */
     @PutMapping("/{id}/prompt")
     public ResponseEntity<Map<String, Object>> updateAgentPrompt(
             @PathVariable String id, @RequestBody Map<String, Object> prompt) {
-        if (agentRegistry.getCard(id).isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-        log.info("Agent {} prompt updated: {}", id, prompt);
-        return ResponseEntity.ok(prompt);
+        return agentRegistry.getCard(id)
+                .map(card -> {
+                    String promptName = card.getPromptName();
+                    if (promptName == null || promptName.isBlank()) {
+                        return ResponseEntity.badRequest()
+                                .body(Map.of("error", "Agent 未配置 promptName，无法更新 Prompt"));
+                    }
+                    String templateText = (String) prompt.get("templateText");
+                    if (templateText == null || templateText.isBlank()) {
+                        return ResponseEntity.badRequest()
+                                .body(Map.of("error", "templateText 参数不能为空"));
+                    }
+
+                    var existingPrompts = promptTemplateRepository.findByName(promptName);
+                    if (!existingPrompts.isEmpty()) {
+                        PromptTemplateEntity entity = existingPrompts.get(0);
+                        entity.setTemplateText(templateText);
+                        entity.setVersion(entity.getVersion() + 1);
+                        promptTemplateRepository.save(entity);
+                        log.info("Agent {} prompt updated: name={}, version={}", id, promptName, entity.getVersion());
+                    } else {
+                        PromptTemplateEntity entity = new PromptTemplateEntity();
+                        entity.setName(promptName);
+                        entity.setVariant("default");
+                        entity.setVersion(1);
+                        entity.setType(PromptType.AGENT_SPECIFIC);
+                        entity.setTemplateText(templateText);
+                        entity.setDescription("Auto-created for agent " + id);
+                        entity.setWeight(1.0);
+                        entity.setEnabled(true);
+                        promptTemplateRepository.save(entity);
+                        log.info("Agent {} prompt created: name={}", id, promptName);
+                    }
+                    return ResponseEntity.ok(prompt);
+                })
+                .orElse(ResponseEntity.notFound().build());
     }
 
     /** 获取 Agent 权限 */
@@ -247,10 +343,30 @@ public class AgentController {
     @PutMapping("/{id}/permissions")
     public ResponseEntity<Map<String, Object>> updateAgentPermissions(
             @PathVariable String id, @RequestBody Map<String, Object> permissions) {
-        if (agentRegistry.getCard(id).isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-        log.info("Agent {} permissions updated: {}", id, permissions);
-        return ResponseEntity.ok(permissions);
+        return agentRegistry.getCard(id)
+                .map(card -> {
+                    @SuppressWarnings("unchecked")
+                    List<String> allowedTools = (List<String>) permissions.get("allowedTools");
+                    if (allowedTools != null) {
+                        card.setToolNames(allowedTools);
+                    }
+
+                    Object maxTasks = permissions.get("maxConcurrentTasks");
+                    if (maxTasks instanceof Integer) {
+                        card.setMaxConcurrentTasks((Integer) maxTasks);
+                    } else if (maxTasks instanceof Number) {
+                        card.setMaxConcurrentTasks(((Number) maxTasks).intValue());
+                    }
+
+                    log.info("Agent {} permissions updated: tools={}, maxTasks={}",
+                            id, card.getToolNames(), card.getMaxConcurrentTasks());
+
+                    Map<String, Object> result = new java.util.LinkedHashMap<>();
+                    result.put("agentId", card.getAgentId());
+                    result.put("allowedTools", card.getToolNames());
+                    result.put("maxConcurrentTasks", card.getMaxConcurrentTasks());
+                    return ResponseEntity.ok(result);
+                })
+                .orElse(ResponseEntity.notFound().build());
     }
 }

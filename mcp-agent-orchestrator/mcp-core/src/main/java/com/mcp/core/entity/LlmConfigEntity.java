@@ -38,6 +38,9 @@ public class LlmConfigEntity {
     @Column
     private Integer maxTokens = 2048;
 
+    @Column
+    private Integer contextWindow = 128000;
+
     @Column(columnDefinition = "jsonb")
     private String parameters;  // JSON 字符串存储扩展参数
 

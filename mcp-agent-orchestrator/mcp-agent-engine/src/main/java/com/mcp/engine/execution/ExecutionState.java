@@ -1,11 +1,14 @@
 package com.mcp.engine.execution;
 
 import com.mcp.common.execution.ExecutionStatus;
+import com.mcp.common.execution.ToolExecutionCallback;
+import com.mcp.engine.trace.SessionTrace;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -27,7 +30,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * - 支持 ContextSnapshot 快照
  * - 支持 FailureState 结构化失败信息
  */
-public class ExecutionState {
+public class ExecutionState implements ToolExecutionCallback {
 
     private final String executionId;
     private volatile ExecutionStatus status;
@@ -39,6 +42,7 @@ public class ExecutionState {
     private volatile FailureState failure;
     private final Instant startedAt;
     private volatile Instant updatedAt;
+    private volatile SessionTrace trace;
 
     public ExecutionState(String executionId) {
         this.executionId = executionId;
@@ -51,9 +55,18 @@ public class ExecutionState {
         this.updatedAt = Instant.now();
     }
 
+    public void setTrace(SessionTrace trace) {
+        this.trace = trace;
+    }
+
     public synchronized void transitionTo(ExecutionStatus newStatus) {
+        ExecutionStatus oldStatus = this.status;
         this.status = newStatus;
         this.updatedAt = Instant.now();
+        if (trace != null) {
+            trace.recordStateTransition(executionId, oldStatus.name(), newStatus.name(),
+                    iteration, pendingToolCalls.size(), completedToolResults.size());
+        }
     }
 
     public synchronized void startPlanning() {
@@ -98,6 +111,16 @@ public class ExecutionState {
         transitionTo(ExecutionStatus.TIMEOUT);
     }
 
+    @Override
+    public void onToolStart(String toolCallId) {
+        waitingForTool(toolCallId);
+    }
+
+    @Override
+    public void onToolComplete(String toolCallId, boolean success) {
+        toolCompleted(toolCallId);
+    }
+
     public synchronized void setContextSnapshot(String snapshot) {
         this.contextSnapshot = snapshot;
         this.updatedAt = Instant.now();
@@ -139,6 +162,7 @@ public class ExecutionState {
         private final List<String> completedSteps = new CopyOnWriteArrayList<>();
         private final List<String> failedSteps = new CopyOnWriteArrayList<>();
         private final List<String> agentLocalHistory = new CopyOnWriteArrayList<>();
+        private final List<ToolCallRecord> toolHistory = new CopyOnWriteArrayList<>();
         private volatile int currentStepIndex;
 
         public void setGoal(String goal) { this.goal = goal; }
@@ -150,6 +174,24 @@ public class ExecutionState {
         public void recordStepSuccess(String step) { completedSteps.add(step); currentStepIndex++; }
         public void recordStepFailure(String step) { failedSteps.add(step); }
         public void addToHistory(String entry) { agentLocalHistory.add(entry); }
+
+        public void recordToolCall(String toolName, Map<String, Object> arguments,
+                                    boolean success, String result, String error, long durationMs) {
+            toolHistory.add(new ToolCallRecord(toolName, arguments, success, result, error, durationMs));
+        }
+
+        public boolean hasAlreadyFailed(String toolName, String keyArgument) {
+            return failedSteps.stream().anyMatch(f -> f.contains(toolName))
+                    || toolHistory.stream().anyMatch(r ->
+                    !r.success && r.toolName != null && r.toolName.equals(toolName)
+                            && (keyArgument == null || containsKeyArgument(r.arguments, keyArgument)));
+        }
+
+        private boolean containsKeyArgument(Map<String, Object> arguments, String keyArgument) {
+            if (arguments == null || keyArgument == null) return false;
+            return arguments.values().stream()
+                    .anyMatch(v -> v != null && v.toString().contains(keyArgument));
+        }
 
         public List<String> getCompletedSteps() { return Collections.unmodifiableList(completedSteps); }
         public List<String> getFailedSteps() { return Collections.unmodifiableList(failedSteps); }
@@ -171,4 +213,13 @@ public class ExecutionState {
             return sb.toString();
         }
     }
+
+    public record ToolCallRecord(
+            String toolName,
+            Map<String, Object> arguments,
+            boolean success,
+            String result,
+            String error,
+            long durationMs
+    ) {}
 }

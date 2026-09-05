@@ -7,6 +7,7 @@ import com.mcp.core.context.PromptLayer;
 import com.mcp.core.context.PromptPolicy;
 import com.mcp.engine.agent.Agent;
 import com.mcp.engine.agent.LLMRequest;
+import com.mcp.engine.execution.ExecutionPlan;
 import com.mcp.engine.trace.SessionTrace;
 import com.mcp.engine.trace.SessionTraceHolder;
 import com.mcp.engine.trace.TraceCollector;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -116,6 +118,25 @@ public class AgentRuntime {
     }
 
     /**
+     * 使用默认模型配置执行 LLM 调用，并应用 ExecutionPlan 的 TimeoutPolicy。
+     *
+     * @param systemPrompt 组装好的 System Prompt
+     * @param userPrompt   用户消息
+     * @param plan         执行计划（用于消费 TimeoutPolicy）
+     * @return LLM 响应
+     */
+    public Mono<String> run(String systemPrompt, String userPrompt, ExecutionPlan plan) {
+        Mono<String> execution = run(systemPrompt, userPrompt);
+        if (plan != null) {
+            Duration timeout = plan.timeoutPolicy().executionTimeout();
+            if (timeout != null) {
+                execution = execution.timeout(timeout);
+            }
+        }
+        return execution;
+    }
+
+    /**
      * 使用指定模型配置执行 LLM 调用。
      *
      * @param modelConfigId 模型配置 ID
@@ -131,6 +152,26 @@ public class AgentRuntime {
                     userPrompt != null ? userPrompt.length() : 0);
         }
         return llmClient.generateWithConfigAndSystem(modelConfigId, systemPrompt, userPrompt);
+    }
+
+    /**
+     * 使用指定模型配置执行 LLM 调用，并应用 ExecutionPlan 的 TimeoutPolicy。
+     *
+     * @param modelConfigId 模型配置 ID
+     * @param systemPrompt  组装好的 System Prompt
+     * @param userPrompt    用户消息
+     * @param plan          执行计划（用于消费 TimeoutPolicy）
+     * @return LLM 响应
+     */
+    public Mono<String> runWithConfig(String modelConfigId, String systemPrompt, String userPrompt, ExecutionPlan plan) {
+        Mono<String> execution = runWithConfig(modelConfigId, systemPrompt, userPrompt);
+        if (plan != null) {
+            Duration timeout = plan.timeoutPolicy().executionTimeout();
+            if (timeout != null) {
+                execution = execution.timeout(timeout);
+            }
+        }
+        return execution;
     }
 
     /**
@@ -167,7 +208,16 @@ public class AgentRuntime {
      * @return LLM 响应
      */
     public Mono<String> execute(Agent agent, LLMRequest request) {
-        return agent.execute(request);
+        Mono<String> execution = agent.execute(request);
+
+        if (request.getExecutionPlan() != null) {
+            Duration timeout = request.getExecutionPlan().timeoutPolicy().executionTimeout();
+            if (timeout != null) {
+                execution = execution.timeout(timeout);
+            }
+        }
+
+        return execution;
     }
 
     /**

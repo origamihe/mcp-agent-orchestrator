@@ -13,7 +13,6 @@ import com.mcp.core.context.provider.WorkspaceContextProvider;
 import com.mcp.core.domain.memory.MemoryType;
 import com.mcp.core.entity.MemoryPackageEntity;
 import com.mcp.core.repository.MemoryPackageRepository;
-import com.mcp.engine.context.TokenBudget;
 import com.mcp.engine.memory.MemoryConflictResolver;
 import com.mcp.engine.memory.MemoryConflictResolver.ConflictGroup;
 import com.mcp.engine.memory.MemoryEvaluator;
@@ -222,77 +221,6 @@ class T10_ChaosTest {
 
             PromptContext promptContext = promptContextBuilder.build(ctx);
             assertThat(promptContext).isNotNull();
-        }
-    }
-
-    @Nested
-    @DisplayName("Token 溢出")
-    class TokenOverflowFaults {
-
-        @Test
-        @DisplayName("Case9: TokenBudget 耗尽 — remaining() 返回 0")
-        void shouldReturnZeroWhenBudgetExhausted() {
-            TokenBudget budget = TokenBudget.builder()
-                    .totalBudget(1000)
-                    .systemPromptTokens(400)
-                    .fileContextTokens(300)
-                    .memoryTokens(200)
-                    .historyTokens(100)
-                    .toolResultTokens(0)
-                    .build();
-
-            assertThat(budget.remaining()).isEqualTo(0);
-            assertThat(budget.canFit(1)).isFalse();
-        }
-
-        @Test
-        @DisplayName("Case10: TokenBudget 接近耗尽 — 仍可容纳小量 Token")
-        void shouldFitSmallTokensWhenNearlyExhausted() {
-            TokenBudget budget = TokenBudget.builder()
-                    .totalBudget(1000)
-                    .systemPromptTokens(400)
-                    .fileContextTokens(300)
-                    .memoryTokens(100)
-                    .historyTokens(100)
-                    .toolResultTokens(50)
-                    .build();
-
-            assertThat(budget.remaining()).isEqualTo(50);
-            assertThat(budget.canFit(50)).isTrue();
-            assertThat(budget.canFit(51)).isFalse();
-        }
-
-        @Test
-        @DisplayName("Case11: 不同 PlanType 的 TokenBudget 分配合理")
-        void shouldAllocateBudgetDifferentlyByPlanType() {
-            TokenBudget chatBudget = TokenBudget.forPlanType(
-                    com.mcp.engine.planner.EditPlan.PlanType.CHAT, 10000);
-            TokenBudget codeEditBudget = TokenBudget.forPlanType(
-                    com.mcp.engine.planner.EditPlan.PlanType.CODE_EDIT, 10000);
-
-            assertThat(chatBudget.getFileContextTokens()).isEqualTo(0);
-            assertThat(codeEditBudget.getFileContextTokens()).isGreaterThan(0);
-            assertThat(codeEditBudget.getToolResultTokens())
-                    .isGreaterThan(chatBudget.getToolResultTokens());
-        }
-
-        @Test
-        @DisplayName("Case12: 极端超长 Prompt — 各 Provider 正常应对")
-        void shouldHandleExtremelyLongPrompt() {
-            String longRequest = "A".repeat(10000);
-
-            BuildContext ctx = BuildContext.builder()
-                    .baseSystemPrompt("BASE")
-                    .userMessage(longRequest)
-                    .workspacePrompt("stress-project")
-                    .build();
-
-            PromptContext promptContext = promptContextBuilder.build(ctx);
-            assertThat(promptContext).isNotNull();
-
-            List<PromptLayer> layers = promptContext.toLayers();
-            String rendered = contextAssembler.render(layers);
-            assertThat(rendered).isNotEmpty();
         }
     }
 

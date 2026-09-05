@@ -1,5 +1,8 @@
 package com.mcp.engine.trace;
 
+import com.mcp.engine.execution.ExecutionPlan;
+import lombok.extern.slf4j.Slf4j;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -51,6 +54,41 @@ public class ContractVerifier {
             } else {
                 failed++;
             }
+        }
+
+        return new ContractReport(passed, failed, results);
+    }
+
+    public ContractReport verifyPlan(ExecutionPlan plan) {
+        List<ExecutionContract.ContractResult> results = new ArrayList<>();
+        int passed = 0;
+        int failed = 0;
+
+        if (plan != null && plan.executionId() != null && !plan.executionId().isBlank()) {
+            passed++;
+            results.add(new ExecutionContract.ContractResult(true, "plan.executionId", "OK"));
+        } else {
+            failed++;
+            results.add(new ExecutionContract.ContractResult(false, "plan.executionId",
+                    "ExecutionPlan missing executionId"));
+        }
+
+        if (plan != null && plan.agentId() != null && !plan.agentId().isBlank()) {
+            passed++;
+            results.add(new ExecutionContract.ContractResult(true, "plan.agentId", "OK"));
+        } else {
+            failed++;
+            results.add(new ExecutionContract.ContractResult(false, "plan.agentId",
+                    "ExecutionPlan missing agentId"));
+        }
+
+        if (plan != null && plan.mode() != null) {
+            passed++;
+            results.add(new ExecutionContract.ContractResult(true, "plan.mode", "OK"));
+        } else {
+            failed++;
+            results.add(new ExecutionContract.ContractResult(false, "plan.mode",
+                    "ExecutionPlan missing mode"));
         }
 
         return new ContractReport(passed, failed, results);

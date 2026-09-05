@@ -38,7 +38,7 @@ export const useLogStore = defineStore('log', () => {
         }
     }
 
-    async function fetchLogById(id: string): Promise<LogEntry | null> {
+    async function fetchLogById(id: number): Promise<LogEntry | null> {
         try {
             return await logsApi.fetchLogById(id)
         } catch (e: any) {

@@ -7,6 +7,7 @@ import com.intellij.openapi.startup.ProjectActivity
 import com.mcp.plugin.event.IdeEventBus
 import com.mcp.plugin.event.IdeEventType
 import com.mcp.plugin.event.OutgoingEnvelope
+import com.mcp.plugin.transport.Transport
 import com.mcp.plugin.transport.WebSocketTransport
 
 class McpPlugin : ProjectActivity {
@@ -15,31 +16,29 @@ class McpPlugin : ProjectActivity {
         eventBus.init()
 
         ProjectManager.getInstance().addProjectManagerListener(
-            ProjectCloseListener(),
-            project
+            project,
+            ProjectCloseListener()
         )
 
-        val transport = project.getService(WebSocketTransport::class.java)
-        if (transport.isConnected) {
-            transport.send(OutgoingEnvelope(
-                type = "event",
-                sessionId = transport.sessionId,
-                workspaceId = eventBus.workspaceId,
-                event = com.mcp.plugin.event.IdeEvent(
-                    type = IdeEventType.PROJECT_OPENED,
-                    payload = mapOf(
-                        "projectName" to project.name,
-                        "projectPath" to (project.basePath ?: "")
-                    )
+        val transport: Transport? = project.getService(WebSocketTransport::class.java)
+        transport?.send(OutgoingEnvelope(
+            type = "event",
+            sessionId = transport.sessionId,
+            workspaceId = eventBus.workspaceId,
+            event = com.mcp.plugin.event.IdeEvent(
+                type = IdeEventType.PROJECT_OPENED,
+                payload = mapOf(
+                    "projectName" to project.name,
+                    "projectPath" to (project.basePath ?: "")
                 )
-            ))
-        }
+            )
+        ))
     }
 }
 
 class ProjectCloseListener : ProjectManagerListener {
     override fun projectClosed(project: Project) {
-        val transport = project.getService(WebSocketTransport::class.java)
-        transport.disconnect()
+        val transport: Transport? = project.getService(WebSocketTransport::class.java)
+        transport?.disconnect()
     }
 }

@@ -2,7 +2,7 @@
     <div class="page">
         <div class="page-header">
             <h2>安全策略</h2>
-            <span class="subtitle">Capability Policy 矩阵 — 按能力维度配置安全策略</span>
+            <span class="subtitle">Capability Policy 矩阵 — 按能力维度配置风险等级与沙箱策略</span>
         </div>
 
         <div v-if="policyStore.isLoading" class="loading">加载中...</div>
@@ -13,58 +13,35 @@
         <div class="policy-grid" v-else>
             <div
                 v-for="policy in policyStore.policies"
-                :key="policy.id"
-                :class="['policy-card', { expanded: expandedPolicy === policy.id }]"
-                @click="togglePolicy(policy.id)"
+                :key="policy.capability"
+                :class="['policy-card', { expanded: expandedPolicy === policy.capability }]"
+                @click="togglePolicy(policy.capability)"
             >
                 <div class="policy-header">
                     <div class="policy-capability">
                         <span class="capability-name">{{ policy.capability }}</span>
                         <span :class="['risk-badge', `risk-${policy.riskLevel.toLowerCase()}`]">{{ policy.riskLevel }}</span>
                     </div>
-                    <span class="expand-icon">{{ expandedPolicy === policy.id ? '−' : '+' }}</span>
+                    <span class="expand-icon">{{ expandedPolicy === policy.capability ? '−' : '+' }}</span>
                 </div>
 
                 <div class="policy-summary">
-                    <span :class="['summary-chip', policy.workspaceRequired ? 'active' : '']">
-                        {{ policy.workspaceRequired ? '需要 Workspace' : '无需 Workspace' }}
-                    </span>
-                    <span :class="['summary-chip', policy.confirmationRequired ? 'active' : '']">
-                        {{ policy.confirmationRequired ? '需要确认' : '无需确认' }}
-                    </span>
                     <span :class="['summary-chip', policy.sandboxEnabled ? 'active' : '']">
                         {{ policy.sandboxEnabled ? 'Sandbox' : '无 Sandbox' }}
                     </span>
+                    <span :class="['summary-chip', policy.blocked ? 'danger' : '']">
+                        {{ policy.blocked ? '已阻止' : '已放行' }}
+                    </span>
                 </div>
 
-                <div v-if="expandedPolicy === policy.id" class="policy-detail">
+                <div v-if="expandedPolicy === policy.capability" class="policy-detail">
                     <div class="detail-section">
                         <h5>Sandbox</h5>
-                        <p>类型: {{ policy.sandboxType }} | 网络: {{ policy.networkEnabled ? '允许' : '禁止' }}</p>
+                        <p>类型: {{ policy.sandboxType }} | 状态: {{ policy.sandboxEnabled ? '已启用' : '未启用' }}</p>
                     </div>
                     <div class="detail-section">
-                        <h5>Timeout</h5>
-                        <p>{{ policy.timeout }}ms</p>
-                    </div>
-                    <div class="detail-section">
-                        <h5>Allowed Agents</h5>
-                        <div class="agent-chips">
-                            <span v-for="agent in policy.allowedAgents" :key="agent" class="agent-chip">{{ agent }}</span>
-                            <span v-if="policy.allowedAgents.length === 0" class="empty-hint">全部 Agent</span>
-                        </div>
-                    </div>
-                    <div class="detail-section" v-if="policy.environmentRestrictions.length">
-                        <h5>Environment Restrictions</h5>
-                        <div class="agent-chips">
-                            <span v-for="env in policy.environmentRestrictions" :key="env" class="restrict-chip">{{ env }}</span>
-                        </div>
-                    </div>
-                    <div class="detail-section">
-                        <h5>Audit</h5>
-                        <p>{{ policy.auditEnabled ? '已启用审计' : '未启用审计' }}</p>
-                    </div>
-                    <div class="detail-section">
-                        <span class="update-time">最后更新: {{ formatDate(policy.updatedAt) }}</span>
+                        <h5>阻断状态</h5>
+                        <p>{{ policy.blocked ? '该能力已被完全阻断' : '该能力未被阻断' }}</p>
                     </div>
                 </div>
             </div>
@@ -80,19 +57,11 @@ import { usePolicyStore } from '@/stores/policyStore'
 const policyStore = usePolicyStore()
 const expandedPolicy = ref<string | null>(null)
 
-function togglePolicy(id: string) {
-    expandedPolicy.value = expandedPolicy.value === id ? null : id
+function togglePolicy(capability: string) {
+    expandedPolicy.value = expandedPolicy.value === capability ? null : capability
     if (expandedPolicy.value) {
-        const policy = policyStore.policies.find((p) => p.id === id)
-        if (policy) {
-            policyStore.fetchPolicyByCapability(policy.capability)
-        }
+        policyStore.fetchPolicyByCapability(capability)
     }
-}
-
-function formatDate(dateStr: string): string {
-    if (!dateStr) return ''
-    return new Date(dateStr).toLocaleString('zh-CN')
 }
 
 onMounted(() => {

@@ -118,7 +118,7 @@ function statusLabel(status: RunStatus): string {
 onMounted(async () => {
     dashboardStore.fetchOverview()
     agentStore.fetchAgents()
-    runStore.fetchRuns({ limit: 5 })
+    runStore.fetchRuns()
 })
 </script>
 

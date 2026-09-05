@@ -2,9 +2,12 @@ package com.mcp.engine.policy;
 
 import com.mcp.common.identity.MemoryIdentity;
 import com.mcp.engine.execution.ExecutionPlan;
+import com.mcp.engine.trace.SessionTrace;
+import com.mcp.engine.trace.SessionTraceHolder;
 import com.mcp.tools.model.ToolCategory;
 import com.mcp.tools.model.ToolDefinition;
 import com.mcp.tools.pipeline.ToolPolicyChecker;
+import com.mcp.tools.registry.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -31,8 +34,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class PolicyEngine implements ToolPolicyChecker {
 
     private final Map<String, PolicyChecker> checkers = new ConcurrentHashMap<>();
+    private final ToolRegistry toolRegistry;
 
-    public PolicyEngine() {
+    public PolicyEngine(ToolRegistry toolRegistry) {
+        this.toolRegistry = toolRegistry;
         registerChecker("sandbox", new SandboxPolicyChecker());
         registerChecker("permission", new PermissionPolicyChecker());
     }
@@ -50,16 +55,30 @@ public class PolicyEngine implements ToolPolicyChecker {
             if (decision == PolicyDecision.DENY) {
                 log.warn("[PolicyEngine] DENY: checker={}, capability={}, identity={}",
                         checker.getClass().getSimpleName(), capability != null ? capability.getName() : "null", identity.userId());
+                recordPolicyTrace(capability, decision, checker.getClass().getSimpleName());
                 return PolicyDecision.DENY;
             }
             if (decision == PolicyDecision.REQUIRE_CONFIRMATION) {
                 log.info("[PolicyEngine] REQUIRE_CONFIRMATION: checker={}, capability={}",
                         checker.getClass().getSimpleName(), capability != null ? capability.getName() : "null");
+                recordPolicyTrace(capability, decision, checker.getClass().getSimpleName());
                 return PolicyDecision.REQUIRE_CONFIRMATION;
             }
         }
 
+        recordPolicyTrace(capability, PolicyDecision.ALLOW, "all_checkers");
         return PolicyDecision.ALLOW;
+    }
+
+    private void recordPolicyTrace(ToolDefinition capability, PolicyDecision decision, String checker) {
+        SessionTrace trace = SessionTraceHolder.currentOrNull();
+        if (trace != null) {
+            trace.recordPolicyDecision(
+                    capability != null ? capability.getName() : "unknown",
+                    decision.name(),
+                    "checker=" + checker
+            );
+        }
     }
 
     public enum PolicyDecision {
@@ -118,8 +137,97 @@ public class PolicyEngine implements ToolPolicyChecker {
 
     @Override
     public ToolPolicyChecker.Decision check(String toolName, String pipelineId, String stepId) {
-        log.debug("[PolicyEngine] Pipeline policy check: tool={}, pipeline={}, step={}",
+        log.warn("[PolicyEngine] Policy check called without ExecutionContext - DENY: tool={}, pipeline={}, step={}",
                 toolName, pipelineId, stepId);
-        return ToolPolicyChecker.Decision.ALLOW;
+        return ToolPolicyChecker.Decision.DENY;
+    }
+
+    @Override
+    public ToolPolicyChecker.Decision check(String toolName, String pipelineId, String stepId,
+                                             Map<String, Object> executionContext) {
+        log.debug("[PolicyEngine] Pipeline policy check: tool={}, pipeline={}, step={}, contextKeys={}",
+                toolName, pipelineId, stepId, executionContext != null ? executionContext.keySet() : "null");
+
+        if (executionContext == null || executionContext.isEmpty()) {
+            log.warn("[PolicyEngine] No ExecutionContext provided - DENY: tool={}, pipeline={}, step={}",
+                    toolName, pipelineId, stepId);
+            return ToolPolicyChecker.Decision.DENY;
+        }
+
+        ExecutionPlan plan = (ExecutionPlan) executionContext.get("executionPlan");
+        if (plan == null) {
+            log.warn("[PolicyEngine] No ExecutionPlan in context - DENY: tool={}, pipeline={}, step={}",
+                    toolName, pipelineId, stepId);
+            return ToolPolicyChecker.Decision.DENY;
+        }
+
+        PolicyDecision decision = evaluateWithPlan(plan, toolName);
+
+        ToolPolicyChecker.Decision result = switch (decision) {
+            case DENY -> ToolPolicyChecker.Decision.DENY;
+            case REQUIRE_CONFIRMATION -> ToolPolicyChecker.Decision.REQUIRE_CONFIRMATION;
+            default -> ToolPolicyChecker.Decision.ALLOW;
+        };
+
+        SessionTrace trace = SessionTraceHolder.currentOrNull();
+        if (trace != null) {
+            trace.recordPolicyDecision(toolName, result.name(),
+                    "pipeline=" + pipelineId + ", step=" + stepId);
+        }
+
+        return result;
+    }
+
+    private PolicyDecision evaluateWithPlan(ExecutionPlan plan, String toolName) {
+        ToolDefinition toolDef = toolRegistry.getTool(toolName).block();
+        return evaluateWithPlan(plan, toolDef);
+    }
+
+    private PolicyDecision evaluateWithPlan(ExecutionPlan plan, ToolDefinition toolDef) {
+        ExecutionPlan.ToolPolicy tp = plan.toolPolicy();
+        if (tp == null) {
+            log.warn("[PolicyEngine] No ToolPolicy defined - DENY: tool={}", toolDef != null ? toolDef.getName() : "null");
+            return PolicyDecision.DENY;
+        }
+
+        ToolCategory category = toolDef != null ? toolDef.getCategory() : null;
+        if (category == null) {
+            log.warn("[PolicyEngine] No ToolCategory defined for tool '{}' - DENY",
+                    toolDef != null ? toolDef.getName() : "null");
+            return PolicyDecision.DENY;
+        }
+
+        return switch (category) {
+            case SEARCH, WEB -> {
+                if (!tp.allowSearch()) {
+                    log.warn("[PolicyEngine] DENY: {} tool '{}' blocked by ToolPolicy.allowSearch=false",
+                            category, toolDef.getName());
+                    yield PolicyDecision.DENY;
+                }
+                yield PolicyDecision.ALLOW;
+            }
+            case WRITE, CODE, SYSTEM, FILE -> {
+                if (!tp.allowFileWrite()) {
+                    log.warn("[PolicyEngine] DENY: {} tool '{}' blocked by ToolPolicy.allowFileWrite=false",
+                            category, toolDef.getName());
+                    yield PolicyDecision.DENY;
+                }
+                if (!tp.allowCodeExecution()) {
+                    log.warn("[PolicyEngine] DENY: {} tool '{}' blocked by ToolPolicy.allowCodeExecution=false",
+                            category, toolDef.getName());
+                    yield PolicyDecision.DENY;
+                }
+                yield PolicyDecision.ALLOW;
+            }
+            case READ -> {
+                if (!tp.allowFileRead()) {
+                    log.warn("[PolicyEngine] DENY: {} tool '{}' blocked by ToolPolicy.allowFileRead=false",
+                            category, toolDef.getName());
+                    yield PolicyDecision.DENY;
+                }
+                yield PolicyDecision.ALLOW;
+            }
+            default -> PolicyDecision.ALLOW;
+        };
     }
 }

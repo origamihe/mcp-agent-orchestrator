@@ -87,7 +87,7 @@ public class ChannelOrchestrator {
         String userMessage = msg.getContent().trim();
         String sessionId = msg.getPlatformSessionId();
 
-        log.info("[Channel:{}] Processing message from {} (chat={}): {}",
+        log.debug("[Channel:{}] Processing message from {} (chat={}): {}",
                 channelType, msg.getSenderId(), msg.getChatId(), userMessage);
 
         // Step 2: 所有群聊消息异步记录到 GroupMemory
@@ -100,13 +100,13 @@ public class ChannelOrchestrator {
 
         return switch (decision.type()) {
             case IGNORE -> {
-                log.info("[Channel:{}] Decision=IGNORE: {} group={} user={}",
+                log.debug("[Channel:{}] Decision=IGNORE: {} group={} user={}",
                         channelType, decision.reason(), msg.getChatId(), msg.getSenderId());
                 yield Mono.empty();
             }
 
             case MERGE -> {
-                log.info("[Channel:{}] Decision=MERGE: {} group={} user={} thread={}",
+                log.debug("[Channel:{}] Decision=MERGE: {} group={} user={} thread={}",
                         channelType, decision.reason(), msg.getChatId(), msg.getSenderId(), decision.threadId());
                 yield Mono.empty();
             }
@@ -118,7 +118,7 @@ public class ChannelOrchestrator {
                         userMessage, decision.threadId(),
                         decision.priority(), decision.reason());
                 AgentTaskScheduler.ScheduleResult result = taskScheduler.submit(task);
-                log.info("[Channel:{}] Decision=QUEUE: {} group={} user={} taskId={} result={}",
+                log.debug("[Channel:{}] Decision=QUEUE: {} group={} user={} taskId={} result={}",
                         channelType, decision.reason(), msg.getChatId(), msg.getSenderId(),
                         task.getTaskId(), result);
                 yield Mono.empty();
@@ -131,7 +131,7 @@ public class ChannelOrchestrator {
                         userMessage, decision.threadId(),
                         decision.priority(), decision.reason());
                 AgentTaskScheduler.ScheduleResult result = taskScheduler.submit(task);
-                log.info("[Channel:{}] Decision=INTERRUPT: {} group={} user={} taskId={} result={}",
+                log.debug("[Channel:{}] Decision=INTERRUPT: {} group={} user={} taskId={} result={}",
                         channelType, decision.reason(), msg.getChatId(), msg.getSenderId(),
                         task.getTaskId(), result);
                 yield dispatchToAgent(msg, adapter, userMessage, sessionId, task);
@@ -144,7 +144,7 @@ public class ChannelOrchestrator {
                         userMessage, decision.threadId(),
                         decision.priority(), decision.reason());
                 taskScheduler.submit(task);
-                log.info("[Channel:{}] Decision=REPLY: {} group={} user={} thread={}",
+                log.debug("[Channel:{}] Decision=REPLY: {} group={} user={} thread={}",
                         channelType, decision.reason(), msg.getChatId(), msg.getSenderId(), decision.threadId());
                 yield dispatchToAgent(msg, adapter, userMessage, sessionId, task);
             }
@@ -202,7 +202,7 @@ public class ChannelOrchestrator {
                 null
         );
 
-        log.info("[Channel:{}] User: {} ({}) | Role: {} | Relation: {} | Session: {} | Workspace: {}",
+        log.debug("[Channel:{}] User: {} ({}) | Role: {} | Relation: {} | Session: {} | Workspace: {}",
                 adapter.getChannelType(),
                 userProfile.getDisplayName(),
                 msg.getSenderId(),
@@ -241,7 +241,7 @@ public class ChannelOrchestrator {
                     onTaskCompleted(agentTask, adapter);
                 })
                 .doOnError(e -> {
-                    log.error("[Channel:{}] Error: {}", adapter.getChannelType(), e.getMessage(), e);
+                    log.error("[Channel:{}] Error: session={} | errorType={} | message={}", adapter.getChannelType(), msg.getPlatformSessionId(), e.getClass().getSimpleName(), e.getMessage(), e);
                     onTaskFailed(agentTask, adapter, e.getMessage());
                 })
                 .onErrorResume(e -> {
@@ -301,7 +301,7 @@ public class ChannelOrchestrator {
             WorldState loaded = worldStateService.loadBySessionId(sessionId);
             if (!loaded.isEmpty()) {
                 state.setWorldState(loaded);
-                log.info("[WorldState] Loaded persisted world state for session {}", sessionId);
+                log.debug("[WorldState] Loaded persisted world state for session {}", sessionId);
             }
         } catch (Exception e) {
             log.warn("[WorldState] Failed to load world state for session {}: {}", sessionId, e.getMessage());
@@ -335,9 +335,9 @@ public class ChannelOrchestrator {
                 workspace.setWorkspaceId(workspaceId);
                 workspace.setName("workspace-" + workspaceId);
                 workspace.markDirty();
-                log.info("[Workspace] Created new workspace {}", workspaceId);
+                log.debug("[Workspace] Created new workspace {}", workspaceId);
             } else {
-                log.info("[Workspace] Loaded workspace {} (last active: {})",
+                log.debug("[Workspace] Loaded workspace {} (last active: {})",
                         workspaceId, workspace.getLastActiveAt());
             }
 
@@ -441,7 +441,7 @@ public class ChannelOrchestrator {
                                             RecallMode recallMode, AgentTask agentTask) {
         String systemPrompt = adapter.getSystemPrompt();
 
-        log.info("[Channel:{}] RECALL_HISTORY ({} mode) | Session: {}", adapter.getChannelType(), recallMode, sessionId);
+        log.debug("[Channel:{}] RECALL_HISTORY ({} mode) | Session: {}", adapter.getChannelType(), recallMode, sessionId);
 
         return agentFacade.callWithHistory(userMessage, sessionId, systemPrompt, recallMode)
                 .timeout(channelErrorHandler.getDefaultTimeout())
@@ -449,7 +449,7 @@ public class ChannelOrchestrator {
                         adapter.getChannelType(), msg, agentResponse, state))
                 .flatMap(adapter::sendReply)
                 .doOnSuccess(v -> {
-                    log.info("[Channel:{}] RECALL_HISTORY reply sent", adapter.getChannelType());
+                    log.debug("[Channel:{}] RECALL_HISTORY reply sent", adapter.getChannelType());
                     onTaskCompleted(agentTask, adapter);
                 })
                 .doOnError(e -> {
@@ -515,7 +515,7 @@ public class ChannelOrchestrator {
         workingCtx.setActiveContextSource(ActiveContextSource.SEARCH_RESULT);
         workingCtx.setCurrentTask("SEARCH: " + userMessage);
 
-        log.info("[Channel:{}] SEARCH: query='{}' | User: {} ({}) | Session: {}",
+        log.debug("[Channel:{}] SEARCH: query='{}' | User: {} ({}) | Session: {}",
                 adapter.getChannelType(), userMessage,
                 userProfile.getDisplayName(), msg.getSenderId(), sessionId);
 
@@ -598,7 +598,7 @@ public class ChannelOrchestrator {
         workingCtx.setActiveContextSource(ActiveContextSource.TASK);
         workingCtx.setCurrentTask("DOCX_GENERATION: " + topic);
 
-        log.info("[Channel:{}] DOCX generation: topic='{}' | User: {} ({}) | Session: {}",
+        log.debug("[Channel:{}] DOCX generation: topic='{}' | User: {} ({}) | Session: {}",
                 channelType, topic,
                 userProfile.getDisplayName(), msg.getSenderId(), sessionId);
 
@@ -621,7 +621,7 @@ public class ChannelOrchestrator {
                     try {
                         DocxGeneratorTool.DocxResult result = docxGeneratorTool.generateDocxFromMarkdown(
                                 markdownResponse, topic);
-                        log.info("[Channel:{}] DOCX generated from markdown: {}", channelType, result.downloadUrl());
+                        log.debug("[Channel:{}] DOCX generated from markdown: {}", channelType, result.downloadUrl());
                         wsSessionManager.broadcast(result.downloadUrl());
 
                         Path filePath = Path.of(docxOutputDir, result.fileName()).toAbsolutePath().normalize();
@@ -699,7 +699,7 @@ public class ChannelOrchestrator {
         workingCtx.setActiveContextSource(ActiveContextSource.TASK);
         workingCtx.setCurrentTask("PPT_GENERATION: " + topic);
 
-        log.info("[Channel:{}] PPT generation: topic='{}' | User: {} ({}) | Session: {}",
+        log.debug("[Channel:{}] PPT generation: topic='{}' | User: {} ({}) | Session: {}",
                 channelType, topic,
                 userProfile.getDisplayName(), msg.getSenderId(), sessionId);
 
@@ -721,7 +721,7 @@ public class ChannelOrchestrator {
                 .flatMap(llmResponse -> {
                     try {
                         PptGeneratorTool.PptResult result = pptGeneratorTool.generatePptx(llmResponse, topic);
-                        log.info("[Channel:{}] PPT generated: {}", channelType, result.downloadUrl());
+                        log.debug("[Channel:{}] PPT generated: {}", channelType, result.downloadUrl());
                         wsSessionManager.broadcast(result.downloadUrl());
 
                         Path filePath = Path.of(pptOutputDir, result.fileName()).toAbsolutePath().normalize();
@@ -789,7 +789,7 @@ public class ChannelOrchestrator {
      * 调度下一个排队任务 — 从队列中取出任务并重新进入 Agent 处理链路。
      */
     private void dispatchNextTask(AgentTask nextTask, ChannelAdapter adapter) {
-        log.info("[Channel:{}] 调度下一个任务 {} group={} user={} priority={}",
+        log.debug("[Channel:{}] 调度下一个任务 {} group={} user={} priority={}",
                 adapter.getChannelType(), nextTask.getTaskId(),
                 nextTask.getGroupId(), nextTask.getUserId(), nextTask.getPriority());
 

@@ -292,12 +292,12 @@ public class AgentController {
                     String promptName = card.getPromptName();
                     if (promptName == null || promptName.isBlank()) {
                         return ResponseEntity.badRequest()
-                                .body(Map.of("error", "Agent 未配置 promptName，无法更新 Prompt"));
+                                .body(Map.<String, Object>of("error", "Agent 未配置 promptName，无法更新 Prompt"));
                     }
                     String templateText = (String) prompt.get("templateText");
                     if (templateText == null || templateText.isBlank()) {
                         return ResponseEntity.badRequest()
-                                .body(Map.of("error", "templateText 参数不能为空"));
+                                .body(Map.<String, Object>of("error", "templateText 参数不能为空"));
                     }
 
                     var existingPrompts = promptTemplateRepository.findByName(promptName);

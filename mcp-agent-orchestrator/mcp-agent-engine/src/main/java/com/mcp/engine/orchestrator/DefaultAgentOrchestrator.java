@@ -188,7 +188,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             return Mono.just("请输入有效的问题。");
         }
         MemoryIdentity identity = identityResolver.resolve(sessionId);
-        log.info("[Orchestrator] Receive request: {} | Session: {} | Model: {} | UserId: {}",
+        log.debug("[Orchestrator] Receive request: {} | Session: {} | Model: {} | UserId: {}",
                 request, sessionId, modelConfigId, identity.userId());
 
         UserProfile userProfile = userProfileService.getUserProfile(identity.userId());
@@ -213,9 +213,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             return Mono.just("请输入有效的问题。");
         }
         MemoryIdentity identity = identityResolver.resolve(sessionId);
-        log.info("[Orchestrator] Receive request: {} | Session: {} | SystemPrompt: {} | Model: {}",
+        log.debug("[Orchestrator] Receive request: {} | Session: {} | Model: {}",
                 request, sessionId,
-                systemPrompt != null ? systemPrompt.substring(0, Math.min(30, systemPrompt.length())) + "..." : "(using core prompt)",
                 modelConfigId != null ? modelConfigId : "default");
 
         Mono<String> promptMono = (systemPrompt != null && !systemPrompt.isBlank())
@@ -258,9 +257,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             return Mono.just("请输入有效的问题。");
         }
         MemoryIdentity identity = ctx.getIdentity();
-        log.info("[Orchestrator] Receive request: {} | Session: {} | Platform: {} | UserId: {} | GroupId: {} | Role: {}",
-                request, identity.sessionId(), identity.platform(), identity.userId(), identity.groupId(),
-                ctx.getUserProfile() != null ? ctx.getUserProfile().getRole() : "N/A");
+        log.debug("[Orchestrator] Receive request: session={} | platform={} | userId={} | groupId={}",
+                identity.sessionId(), identity.platform(), identity.userId(), identity.groupId());
 
         Mono<String> promptMono = (ctx.getSystemPrompt() != null && !ctx.getSystemPrompt().isBlank())
                 ? Mono.just(ctx.getSystemPrompt())
@@ -282,9 +280,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         String sessionId = identity.sessionId();
         long startTime = System.currentTimeMillis();
 
-        log.info("[DIAG-Perf] Request START | session={} | userId={} | message='{}'",
-                sessionId, identity.userId(),
-                request.length() > 60 ? request.substring(0, 60) + "..." : request);
+        log.debug("[DIAG-Perf] Request START | session={} | userId={} | msgLen={}",
+                sessionId, identity.userId(), request.length());
 
         UserRole userRole = ctx.getUserProfile() != null ? ctx.getUserProfile().getRole() : null;
 
@@ -310,9 +307,9 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 workingCtx.getActiveContextSource() != null ? workingCtx.getActiveContextSource().name() : "NONE");
 
         long decisionTime = System.currentTimeMillis() - startTime;
-        log.info("[Orchestrator] ContextRequirement: {} | session={} | hasActiveDoc={} | isGame={} | source={} | decisionTime={}ms",
+        log.debug("[Orchestrator] ContextRequirement: {} | session={} | hasActiveDoc={} | isGame={} | decisionTime={}ms",
                 requirement, sessionId, workingCtx.hasActiveDocument(),
-                state.isGameMode(), workingCtx.getActiveContextSource(), decisionTime);
+                state.isGameMode(), decisionTime);
 
         if (identity.groupId() != null) {
             String threadId = ctx.getThreadId();
@@ -332,7 +329,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     .groupConversationContext(groupConvCtx)
                     .build();
             trace.recordContextInjection("GROUP_CONVERSATION", groupConvCtx.length(), "group conversation assembled");
-            log.info("[Orchestrator] GroupConversationContext assembled: groupId={}, threadId={}, chars={}",
+            log.debug("[Orchestrator] GroupConversationContext assembled: groupId={}, threadId={}, chars={}",
                     identity.groupId(), threadId, groupConvCtx.length());
         }
 
@@ -343,8 +340,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
         trace.recordPlanCreated(plan.mode().name(), 0,
                 "agent=" + plan.agentId() + ", pipeline=" + plan.pipelineId());
-        log.info("[Orchestrator] ExecutionPlan: mode={}, agent={}, pipeline={}, context={}, session={}",
-                plan.mode(), plan.agentId(), plan.pipelineId(), requirement, sessionId);
+        log.debug("[Orchestrator] ExecutionPlan: mode={}, agent={}, pipeline={}, session={}",
+                plan.mode(), plan.agentId(), plan.pipelineId(), sessionId);
 
         ContractVerifier.ContractReport planContract = ContractVerifier.createDefault().verifyPlan(plan);
         if (!planContract.allPassed()) {
@@ -365,7 +362,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         trace.recordContextBuilt(0, ctxBudget.maxTokens(),
                 "tokenBudget=" + ctxBudget.maxTokens() + ", maxFiles=" + ctxBudget.maxFiles()
                 + ", maxBytes=" + ctxBudget.maxBytes() + ", maxLines=" + ctxBudget.maxLines());
-        log.info("[Orchestrator] ContextBudget: maxTokens={}, maxFiles={}, maxBytes={}, maxLines={}, timeout={} | session={} | modelContextWindow={}",
+        log.debug("[Orchestrator] ContextBudget: maxTokens={}, maxFiles={}, maxBytes={}, maxLines={}, timeout={} | session={} | modelContextWindow={}",
                 ctxBudget.maxTokens(), ctxBudget.maxFiles(), ctxBudget.maxBytes(),
                 ctxBudget.maxLines(), ctxBudget.timeout(), sessionId, modelContextWindow);
 
@@ -379,7 +376,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 try {
                     t.close();
                     ContractVerifier.ContractReport report = ContractVerifier.createDefault().verify(t.getEvents());
-                    log.info("[Trace] Contract verification: {} passed, {} failed | session={}",
+                    log.debug("[Trace] Contract verification: {} passed, {} failed | session={}",
                             report.passed(), report.failed(), sessionId);
                     if (!report.allPassed()) {
                         log.warn("[Trace] Contract violations: {}", report);
@@ -436,12 +433,12 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 String pipelineId = plan.pipelineId();
                 ToolPipeline pipeline = pipelineRegistry.get(pipelineId);
                 if (pipeline != null) {
-                    log.info("[Orchestrator] Pipeline route: {} → {} | session={}",
+                    log.debug("[Orchestrator] Pipeline route: {} → {} | session={}",
                             ctx.getUserMessage(), pipelineId, ctx.getIdentity().sessionId());
                     trace.recordAgentSelection("Pipeline", pipelineId);
                     yield processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline, plan, execState, ctxBudget);
                 } else {
-                    log.info("[Orchestrator] Pipeline not found, falling back to SearchAgent: session={}",
+                    log.debug("[Orchestrator] Pipeline not found, falling back to SearchAgent: session={}",
                             ctx.getIdentity().sessionId());
                     trace.recordAgentSelection(plan.agentId(), "DOCX_GENERATION_TASK");
                     trace.recordAgentStarted(plan.agentId(), "DOCX_GENERATION_TASK");
@@ -516,7 +513,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             }
                         }
                         sb.append("\n");
-                        log.info("[Orchestrator] Listed directory: {}", filePath);
+                        log.debug("[Orchestrator] Listed directory: {}", filePath);
 
                         for (String fn : filenames) {
                             Path resolved = p.resolve(fn).normalize();
@@ -528,7 +525,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                 String content = Files.readString(resolved);
                                 sb.append("--- 文件: ").append(resolved).append(" ---\n");
                                 sb.append(content).append("\n\n");
-                                log.info("[Orchestrator] Preloaded file from dir: {} ({} chars)", resolved, content.length());
+                                log.debug("[Orchestrator] Preloaded file from dir: {} ({} chars)", resolved, content.length());
                                 saveOpenedFileToWorkspace(workspace, resolved.toString(), content, resolved, sessionId);
                             }
                         }
@@ -536,7 +533,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                         String content = Files.readString(p);
                         sb.append("--- 文件: ").append(filePath).append(" ---\n");
                         sb.append(content).append("\n\n");
-                        log.info("[Orchestrator] Preloaded file: {} ({} chars)", filePath, content.length());
+                        log.debug("[Orchestrator] Preloaded file: {} ({} chars)", filePath, content.length());
                         saveOpenedFileToWorkspace(workspace, filePath, content, p, sessionId);
                     } else {
                         sb.append("--- 文件: ").append(filePath).append(" (路径不存在或不可读) ---\n\n");
@@ -558,7 +555,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             java.time.Instant mtime = Files.getLastModifiedTime(path).toInstant();
             long size = Files.size(path);
             workspace.addOpenedFile(filePath, content, "UTF-8", mtime, size);
-            log.info("[Orchestrator] Saved opened file to workspace: {} ({} chars)", filePath, content.length());
+            log.debug("[Orchestrator] Saved opened file to workspace: {} ({} chars)", filePath, content.length());
 
             ArtifactType artifactType = detectArtifactType(filePath);
             artifactService.createOrUpdate(
@@ -568,7 +565,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     content,
                     "UTF-8"
             );
-            log.info("[Orchestrator] Saved artifact: type={}, path={}, size={}", artifactType, filePath, content.length());
+            log.debug("[Orchestrator] Saved artifact: type={}, path={}, size={}", artifactType, filePath, content.length());
         } catch (IOException e) {
             workspace.addOpenedFile(filePath, content, "UTF-8", null, content.length());
         }
@@ -608,7 +605,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             return "";
         }
         Artifact artifact = resolved.get();
-        log.info("[Orchestrator] Reference resolved: type={}, title={}, id={}",
+        log.debug("[Orchestrator] Reference resolved: type={}, title={}, id={}",
                 artifact.getType(), artifact.getTitle(), artifact.getId());
 
         StringBuilder sb = new StringBuilder();
@@ -656,7 +653,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
             artifactService.saveArtifact(sessionId, artifact);
             convCtx.trackArtifact(artifact);
-            log.info("[Orchestrator] ConversationContext updated: session={}, type={}, title={}",
+            log.debug("[Orchestrator] ConversationContext updated: session={}, type={}, title={}",
                     sessionId, detectedType, artifact.getTitle());
         } catch (Exception e) {
             log.warn("[Orchestrator] Failed to track response in ConversationContext: {}", e.getMessage());
@@ -686,14 +683,14 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
     private void triggerMemoryLifecycle(MemoryIdentity identity, String request, String response) {
         if (shouldSkipMemoryLifecycle(request, response)) {
-            log.info("[DIAG-MemoryWrite] 跳过 MemoryLifecycle: request={} chars, response={} chars, total={} chars (低于阈值)",
+            log.debug("[DIAG-MemoryWrite] 跳过 MemoryLifecycle: request={} chars, response={} chars, total={} chars (低于阈值)",
                     request != null ? request.length() : 0,
                     response != null ? response.length() : 0,
                     (request != null ? request.length() : 0) + (response != null ? response.length() : 0));
             return;
         }
         String conversation = "用户: " + request + "\n助手: " + response;
-        log.info("[DIAG-MemoryWrite] 触发 MemoryLifecycle: session={} userId={} request={} chars, response={} chars",
+        log.debug("[DIAG-MemoryWrite] 触发 MemoryLifecycle: session={} userId={} request={} chars, response={} chars",
                 identity.sessionId(), identity.userId(),
                 request != null ? request.length() : 0,
                 response != null ? response.length() : 0);
@@ -704,7 +701,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         memoryLifecycleOrchestrator.processMemoryLifecycle(identity, conversation)
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
-                        v -> log.info("[DIAG-MemoryWrite] MemoryLifecycle 完成: session={}", identity.sessionId()),
+                        v -> log.debug("[DIAG-MemoryWrite] MemoryLifecycle 完成: session={}", identity.sessionId()),
                         error -> log.warn("[DIAG-MemoryWrite] MemoryLifecycle 失败: session={} error={}",
                                 identity.sessionId(), error.getMessage())
                 );
@@ -853,7 +850,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                         String freshContent = Files.readString(p);
                         sb.append("--- 文件: ").append(lastActive).append(" ---\n");
                         sb.append(freshContent).append("\n\n");
-                        log.info("[Orchestrator] Follow-up auto-reload: {} ({} chars)", lastActive, freshContent.length());
+                        log.debug("[Orchestrator] Follow-up auto-reload: {} ({} chars)", lastActive, freshContent.length());
                         saveOpenedFileToWorkspace(workspace, lastActive, freshContent, p, sessionId);
                         return sb.toString();
                     }
@@ -862,7 +859,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 }
                 sb.append("--- 文件: ").append(lastActive).append(" ---\n");
                 sb.append(of.getContent()).append("\n\n");
-                log.info("[Orchestrator] Follow-up using cached content: {} ({} chars)", lastActive, of.getContent().length());
+                log.debug("[Orchestrator] Follow-up using cached content: {} ({} chars)", lastActive, of.getContent().length());
                 return sb.toString();
             }
         }
@@ -871,7 +868,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             sb.append("--- 文件: ").append(entry.getKey()).append(" ---\n");
             sb.append(entry.getValue().getContent()).append("\n\n");
         }
-        log.info("[Orchestrator] Follow-up auto-reload: all {} opened files", workspace.getOpenedFiles().size());
+        log.debug("[Orchestrator] Follow-up auto-reload: all {} opened files", workspace.getOpenedFiles().size());
         return sb.toString();
     }
 
@@ -884,7 +881,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
         long startTime = System.currentTimeMillis();
         boolean userOnly = (recallMode == RecallMode.USER_ONLY);
-        log.info("[Orchestrator] RECALL_HISTORY ({} mode) request: {} | Session: {}",
+        log.debug("[Orchestrator] RECALL_HISTORY ({} mode) request: {} | Session: {}",
                 recallMode, request, sessionId);
 
         Mono<String> systemPromptMono = (systemPrompt != null && !systemPrompt.isBlank())
@@ -913,7 +910,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
                                     String historyContext = buildHistoryContext(messages, userOnly);
 
-                                    log.info("[Orchestrator] History loaded for session {}: total={}, userOnly={}, " +
+                                    log.debug("[Orchestrator] History loaded for session {}: total={}, userOnly={}, " +
                                                     "firstTime={}, lastTime={}, hasUserMsg={}, hasAssistantMsg={}",
                                             sessionId,
                                             messages.size(),
@@ -939,7 +936,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 })
                 .doOnError(error -> {
                     long duration = System.currentTimeMillis() - startTime;
-                    log.error("[Orchestrator] RECALL_HISTORY error! Duration: {}ms | Error: {}", duration, error.getMessage(), error);
+                    log.error("[Orchestrator] RECALL_HISTORY failed: session={} | duration={}ms | errorType={} | message={}",
+                            sessionId, duration, error.getClass().getSimpleName(), error.getMessage(), error);
                 })
                 .onErrorResume(error ->
                         Mono.just("回顾聊天记录时发生错误: " + error.getMessage())
@@ -1041,7 +1039,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
     @Override
     public Flux<String> processRequestStream(String request, String sessionId,
                                               String systemPrompt, String modelConfigId) {
-        log.info("[Orchestrator] Stream request: {} | Session: {} | Model: {}",
+        log.debug("[Orchestrator] Stream request: {} | Session: {} | Model: {}",
                 request, sessionId, modelConfigId != null ? modelConfigId : "default");
 
         MemoryIdentity identity = identityResolver.resolve(sessionId);
@@ -1097,7 +1095,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 var match = matches.get(0);
                 Agent matched = agentRegistry.getAgent(match.agentId()).orElse(null);
                 if (matched != null) {
-                    log.info("[Orchestrator] Intent-based routing: planType={} → agentType={} → agent={} (skills={})",
+                    log.debug("[Orchestrator] Intent-based routing: planType={} → agentType={} → agent={} (skills={})",
                             plan.getPlanType(), agentType, matched.getName(), skills);
                     return Mono.just(matched);
                 }
@@ -1110,7 +1108,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                         if (match != null && match.agentId() != null) {
                             Agent matched = agentRegistry.getAgent(match.agentId()).orElse(null);
                             if (matched != null) {
-                                log.info("[Orchestrator] Skill-based routing: planType={} → skills={} → agent={} (score={})",
+                                log.debug("[Orchestrator] Skill-based routing: planType={} → skills={} → agent={} (score={})",
                                         plan.getPlanType(), skills, matched.getName(), match.score());
                                 return Mono.just(matched);
                             }
@@ -1119,7 +1117,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     });
         }
 
-        log.info("[Orchestrator] No agent matched for planType={}, using default", plan.getPlanType());
+        log.debug("[Orchestrator] No agent matched for planType={}, using default", plan.getPlanType());
         return Mono.justOrEmpty(agents.isEmpty() ? null : agents.values().iterator().next());
     }
 
@@ -1153,7 +1151,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                         if (match != null && match.agentId() != null) {
                             Agent matched = agentRegistry.getAgent(match.agentId()).orElse(null);
                             if (matched != null) {
-                                log.info("[Orchestrator] Smart routed to agent: {} (score={}, skills={})",
+                                log.debug("[Orchestrator] Smart routed to agent: {} (score={}, skills={})",
                                         matched.getName(), match.score(), match.matchedSkills());
                                 return Mono.just(matched);
                             }
@@ -1356,12 +1354,12 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             String request, SessionState state, WorkingContext workingCtx) {
 
         if (state.isGameMode()) {
-            log.info("[DIAG-ContextRequirement] → DOCUMENT | reason=GameMode active");
+            log.debug("[DIAG-ContextRequirement] → DOCUMENT | reason=GameMode active");
             return ContextRequirement.DOCUMENT;
         }
 
         if (workingCtx.needsDocumentContext()) {
-            log.info("[DIAG-ContextRequirement] → DOCUMENT | reason=WorkingContext.needsDocumentContext | activeDoc={} | activeArtifact={}",
+            log.debug("[DIAG-ContextRequirement] → DOCUMENT | reason=WorkingContext.needsDocumentContext | activeDoc={} | activeArtifact={}",
                     workingCtx.getActiveDocumentPath(), workingCtx.getActiveArtifactId());
             return ContextRequirement.DOCUMENT;
         }
@@ -1370,24 +1368,24 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         String lower = trimmed.toLowerCase();
 
         if (containsFileOperation(lower)) {
-            log.info("[DIAG-ContextRequirement] → WORKSPACE | reason=containsFileOperation | message='{}'",
+            log.debug("[DIAG-ContextRequirement] → WORKSPACE | reason=containsFileOperation | message='{}'",
                     request.length() > 50 ? request.substring(0, 50) + "..." : request);
             return ContextRequirement.WORKSPACE;
         }
 
         if (isShortGreeting(trimmed, lower)) {
-            log.info("[DIAG-ContextRequirement] → NONE | reason=shortGreeting | length={} | message='{}'",
+            log.debug("[DIAG-ContextRequirement] → NONE | reason=shortGreeting | length={} | message='{}'",
                     trimmed.length(), trimmed);
             return ContextRequirement.NONE;
         }
 
         if (isSearchRelated(lower) && !containsFileOperation(lower)) {
-            log.info("[DIAG-ContextRequirement] → SEARCH | reason=isSearchRelated | message='{}'",
+            log.debug("[DIAG-ContextRequirement] → SEARCH | reason=isSearchRelated | message='{}'",
                     request.length() > 50 ? request.substring(0, 50) + "..." : request);
             return ContextRequirement.SEARCH;
         }
 
-        log.info("[DIAG-ContextRequirement] → CONVERSATION | reason=default fallthrough | isGame={} | hasActiveDoc={} | hasActiveArtifact={} | message='{}'",
+        log.debug("[DIAG-ContextRequirement] → CONVERSATION | reason=default fallthrough | isGame={} | hasActiveDoc={} | hasActiveArtifact={} | message='{}'",
                 state.isGameMode(), workingCtx.hasActiveDocument(),
                 workingCtx.getActiveArtifactId() != null,
                 request.length() > 80 ? request.substring(0, 80) + "..." : request);
@@ -1449,7 +1447,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 : artifactContext.substring(contentStart + 1).trim();
         if (!summary.isEmpty()) {
             workingCtx.setActiveDocumentSummary(summary);
-            log.info("[Orchestrator] Document summary cached, chars={}", summary.length());
+            log.debug("[Orchestrator] Document summary cached, chars={}", summary.length());
         }
     }
 
@@ -1477,7 +1475,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         String modelConfigId = ctx.getModelConfigId();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] FastPath: requirement={}, hasActiveDoc={}, isGame={}, source={}, message='{}', toolPolicy={}, memoryPolicy={}",
+        log.debug("[Orchestrator] FastPath: requirement={}, hasActiveDoc={}, isGame={}, source={}, message='{}', toolPolicy={}, memoryPolicy={}",
                 requirement, workingCtx.hasActiveDocument(),
                 ctx.getSessionState() != null && ctx.getSessionState().isGameMode(),
                 workingCtx.getActiveContextSource(), request,
@@ -1535,7 +1533,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             timeoutSeconds = pipeline.getTimeoutSeconds();
         }
 
-        log.info("[Orchestrator] Pipeline[{}] executing: {} steps | session={} | toolPolicy={} | timeoutPolicy={}",
+        log.debug("[Orchestrator] Pipeline[{}] executing: {} steps | session={} | toolPolicy={} | timeoutPolicy={}",
                 pipeline.getPipelineId(), pipeline.getSteps().size(), sessionId, plan.toolPolicy(), plan.timeoutPolicy());
 
         ToolPipeline finalPipeline = ToolPipeline.builder()
@@ -1550,14 +1548,14 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 .doOnSuccess(result -> {
                     long duration = System.currentTimeMillis() - startTime;
                     String outcome = result.isSuccess() ? "SUCCESS" : "FAILED";
-                    log.info("[Orchestrator] Pipeline[{}] {}: duration={}ms | session={} | steps={}",
+                    log.debug("[Orchestrator] Pipeline[{}] {}: duration={}ms | session={} | steps={}",
                             pipeline.getPipelineId(), outcome, duration, sessionId,
                             result.getStepResults() != null ? result.getStepResults().size() : 0);
                 })
                 .doOnError(error -> {
                     long duration = System.currentTimeMillis() - startTime;
-                    log.error("[Orchestrator] Pipeline[{}] ERROR: duration={}ms | session={} | error={}",
-                            pipeline.getPipelineId(), duration, sessionId, error.getMessage());
+                    log.error("[Orchestrator] Pipeline[{}] failed: session={} | duration={}ms | errorType={} | message={}",
+                            pipeline.getPipelineId(), sessionId, duration, error.getClass().getSimpleName(), error.getMessage(), error);
                 })
                 .flatMap(result -> {
                     if (result.isSuccess()) {
@@ -1580,7 +1578,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             yield processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState, ctxBudget);
                         }
                         case RETRY -> {
-                            log.info("[Orchestrator] Pipeline[{}] retrying... | session={}", pipeline.getPipelineId(), sessionId);
+                            log.debug("[Orchestrator] Pipeline[{}] retrying... | session={}", pipeline.getPipelineId(), sessionId);
                             yield processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline, plan, execState, ctxBudget);
                         }
                         default -> Mono.just("Pipeline execution failed: " + result.getError());
@@ -1599,7 +1597,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             yield processDocxGenerationWithSearchAgent(ctx, resolvedSystemPrompt, startTime, workingCtx, plan, execState, ctxBudget);
                         }
                         case RETRY -> {
-                            log.info("[Orchestrator] Pipeline[{}] retrying after exception... | session={}", pipeline.getPipelineId(), sessionId);
+                            log.debug("[Orchestrator] Pipeline[{}] retrying after exception... | session={}", pipeline.getPipelineId(), sessionId);
                             yield processWithPipeline(ctx, resolvedSystemPrompt, startTime, workingCtx, pipeline, plan, execState, ctxBudget);
                         }
                         default -> Mono.error(ex);
@@ -1622,7 +1620,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                 "[Orchestrator] SearchAgent not in registry, fallback keyword routing to: {} | session={}",
                                 agent.getName(), sessionId)))
                 .flatMap(searchAgent -> {
-                    log.info("[Orchestrator] Routing DOCX_GENERATION to agent: {} | session={} | toolPolicy={}",
+                    log.debug("[Orchestrator] Routing DOCX_GENERATION to agent: {} | session={} | toolPolicy={}",
                             searchAgent.getName(), sessionId, plan.toolPolicy());
 
                     LLMRequest llmRequest = LLMRequest.builder()
@@ -1644,8 +1642,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                 triggerMemoryLifecycle(identity, request, response);
                             })
                             .doOnError(error -> log.error(
-                                    "[Orchestrator] DOCX_GENERATION via SearchAgent failed: session={} error={}",
-                                    sessionId, error.getMessage(), error));
+                                    "[Orchestrator] DOCX_GENERATION failed: session={} | errorType={} | message={}",
+                                    sessionId, error.getClass().getSimpleName(), error.getMessage(), error));
                 })
                 .switchIfEmpty(Mono.defer(() -> {
                     log.warn("[Orchestrator] No SearchAgent found for DOCX_GENERATION, falling back to FastPath: session={}",
@@ -1665,7 +1663,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         String modelConfigId = ctx.getModelConfigId();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] FastPath[NONE]: lightweight chat for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
+        log.debug("[Orchestrator] FastPath[NONE]: lightweight chat for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
 
         boolean loadMemory = plan.memoryPolicy().readEnabled();
         int maxMemoryTokens = plan.memoryPolicy().maxMemoryTokens();
@@ -1689,7 +1687,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         return memoryMono
                 .doOnSuccess(memCtx -> {
                     long memElapsed = System.currentTimeMillis() - memStart;
-                    log.info("[DIAG-Perf] FastPath[NONE] memory loading: {}ms | memCtxLen={} | loadMemory={}",
+                    log.debug("[DIAG-Perf] FastPath[NONE] memory loading: {}ms | memCtxLen={} | loadMemory={}",
                             memElapsed, memCtx != null ? memCtx.length() : 0, loadMemory);
                 })
                 .flatMap(memoryContext -> {
@@ -1729,8 +1727,8 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 })
                 .doOnError(error -> {
                     long duration = System.currentTimeMillis() - startTime;
-                    log.error("[Orchestrator] FastPath[NONE] error! Duration: {}ms | Error: {}",
-                            duration, error.getMessage(), error);
+                    log.error("[Orchestrator] FastPath[NONE] failed: session={} | duration={}ms | errorType={} | message={}",
+                            sessionId, duration, error.getClass().getSimpleName(), error.getMessage(), error);
                 })
                 .onErrorResume(error -> handleFastPathError(error));
     }
@@ -1758,7 +1756,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         String modelConfigId = ctx.getModelConfigId();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] FastPath[SEARCH]: routing to SearchAgent for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
+        log.debug("[Orchestrator] FastPath[SEARCH]: routing to SearchAgent for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
 
         boolean loadMemory = plan.memoryPolicy().readEnabled();
         int maxMemoryChars = plan.memoryPolicy().maxMemoryTokens();
@@ -1777,7 +1775,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             String memoryContext = tuple.getT1();
             String historyContext = tuple.getT2();
 
-            log.info("[DIAG-Perf] FastPath[SEARCH] memory+history loading: {}ms | memCtxLen={} | histCtxLen={}",
+            log.debug("[DIAG-Perf] FastPath[SEARCH] memory+history loading: {}ms | memCtxLen={} | histCtxLen={}",
                     System.currentTimeMillis() - startTime,
                     memoryContext != null ? memoryContext.length() : 0,
                     historyContext != null ? historyContext.length() : 0);
@@ -1788,7 +1786,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                     "[Orchestrator] SearchAgent not in registry, fallback keyword routing to: {} | session={}",
                                     agent.getName(), sessionId)))
                     .flatMap(searchAgent -> {
-                        log.info("[Orchestrator] Routing SEARCH to agent: {} | session={}",
+                        log.debug("[Orchestrator] Routing SEARCH to agent: {} | session={}",
                                 searchAgent.getName(), sessionId);
 
                         LLMRequest llmRequest = LLMRequest.builder()
@@ -1835,7 +1833,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         String modelConfigId = ctx.getModelConfigId();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] FastPath[CONVERSATION]: with history for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
+        log.debug("[Orchestrator] FastPath[CONVERSATION]: with history for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
 
         boolean loadMemory = plan.memoryPolicy().readEnabled();
         int maxMemoryChars = plan.memoryPolicy().maxMemoryTokens();
@@ -1860,17 +1858,17 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                 String groupConvCtx = ctx.getGroupConversationContext();
                 if (groupConvCtx != null && !groupConvCtx.isBlank()) {
                     historyContext = groupConvCtx;
-                    log.info("[DIAG-FallbackHistory] ChatHistory为空({} chars)，使用群聊上下文回退历史: {} chars",
+                    log.debug("[DIAG-FallbackHistory] ChatHistory为空({} chars)，使用群聊上下文回退历史: {} chars",
                             originalLen, historyContext.length());
                 }
             }
 
-            log.info("[DIAG-Perf] FastPath[CONVERSATION] memory+history loading: {}ms | memCtxLen={} | histCtxLen={}",
+            log.debug("[DIAG-Perf] FastPath[CONVERSATION] memory+history loading: {}ms | memCtxLen={} | histCtxLen={}",
                     memElapsed,
                     memoryContext != null ? memoryContext.length() : 0,
                     historyContext != null ? historyContext.length() : 0);
 
-            log.info("[PromptTokens] HistoryContext size={} chars (budget={} chars, perMsg={} chars)",
+            log.debug("[PromptTokens] HistoryContext size={} chars (budget={} chars, perMsg={} chars)",
                     historyContext != null ? historyContext.length() : 0, maxHistoryChars, maxPerMessageChars);
 
             BuildContext buildCtx = BuildContext.builder()
@@ -1918,7 +1916,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         String modelConfigId = ctx.getModelConfigId();
         String sessionId = identity.sessionId();
 
-        log.info("[Orchestrator] FastPath[DOCUMENT]: with artifact recall for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
+        log.debug("[Orchestrator] FastPath[DOCUMENT]: with artifact recall for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
 
         boolean loadMemory = plan.memoryPolicy().readEnabled();
         int maxMemoryChars = plan.memoryPolicy().maxMemoryTokens();
@@ -1939,12 +1937,12 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             String historyContext = tuple.getT2();
             long memElapsed = System.currentTimeMillis() - memStart;
 
-            log.info("[DIAG-Perf] FastPath[DOCUMENT] memory+history loading: {}ms | memCtxLen={} | histCtxLen={}",
+            log.debug("[DIAG-Perf] FastPath[DOCUMENT] memory+history loading: {}ms | memCtxLen={} | histCtxLen={}",
                     memElapsed,
                     memoryContext != null ? memoryContext.length() : 0,
                     historyContext != null ? historyContext.length() : 0);
 
-            log.info("[PromptTokens] HistoryContext size={} chars (budget={} chars, perMsg={} chars)",
+            log.debug("[PromptTokens] HistoryContext size={} chars (budget={} chars, perMsg={} chars)",
                     historyContext != null ? historyContext.length() : 0, maxHistoryChars, maxPerMessageChars);
 
             long t0 = System.currentTimeMillis();
@@ -1967,7 +1965,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             long t1 = System.currentTimeMillis();
 
             if (!artifactContext.isEmpty()) {
-                log.info("[Orchestrator] FastPath[DOCUMENT]: artifact recalled, chars={}",
+                log.debug("[Orchestrator] FastPath[DOCUMENT]: artifact recalled, chars={}",
                         artifactContext.length());
                 cacheArtifactSummary(workingCtx, artifactContext);
             }
@@ -2004,12 +2002,12 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             int artifactChars = artifactContext != null ? artifactContext.length() : 0;
             int historyChars = historyContext != null ? historyContext.length() : 0;
             int totalSystemChars = fullPrompt != null ? fullPrompt.length() : 0;
-            log.info("[PromptTokens] System={}c | Memory={}c | Artifact={}c | History={}c | UserMsg={}c | TotalSystem={}c (~{} tok)",
+            log.debug("[PromptTokens] System={}c | Memory={}c | Artifact={}c | History={}c | UserMsg={}c | TotalSystem={}c (~{} tok)",
                     systemChars, memoryChars, artifactChars, historyChars,
                     userPrompt != null ? userPrompt.length() : 0,
                     totalSystemChars, totalSystemChars / 2);
 
-            log.info("[PipelineProfile] artifact_load={}ms | prompt_assemble={}ms",
+            log.debug("[PipelineProfile] artifact_load={}ms | prompt_assemble={}ms",
                     t1 - t0, t2 - t1);
 
             long t3 = System.currentTimeMillis();
@@ -2050,7 +2048,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
 
         String firstFilePath = extractFirstFilePath(request);
 
-        log.info("[Orchestrator] FastPath[WORKSPACE]: with workspace for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
+        log.debug("[Orchestrator] FastPath[WORKSPACE]: with workspace for '{}' | memoryPolicy={}", request, plan.memoryPolicy());
 
         boolean loadMemory = plan.memoryPolicy().readEnabled();
         int maxMemoryChars = plan.memoryPolicy().maxMemoryTokens();
@@ -2073,7 +2071,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             Workspace ws = tuple.getT4();
             long memElapsed = System.currentTimeMillis() - memStart;
 
-            log.info("[DIAG-Perf] FastPath[WORKSPACE] memory+file+history loading: {}ms | memCtxLen={} | fileCtxLen={} | histCtxLen={}",
+            log.debug("[DIAG-Perf] FastPath[WORKSPACE] memory+file+history loading: {}ms | memCtxLen={} | fileCtxLen={} | histCtxLen={}",
                     memElapsed,
                     memoryContext != null ? memoryContext.length() : 0,
                     fileContext != null ? fileContext.length() : 0,
@@ -2088,7 +2086,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                         firstFilePath,
                         artifactOpt.map(com.mcp.common.artifact.Artifact::getId).orElse(null)
                 );
-                log.info("[Orchestrator] WorkingContext updated: activeDocumentPath={}, activeArtifactId={}, source=ARTIFACT",
+                log.debug("[Orchestrator] WorkingContext updated: activeDocumentPath={}, activeArtifactId={}, source=ARTIFACT",
                         firstFilePath, workingCtx.getActiveArtifactId());
             }
 
@@ -2129,7 +2127,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             int artifactChars = artifactContext != null ? artifactContext.length() : 0;
             int historyChars = historyContext != null ? historyContext.length() : 0;
             int totalSystemChars = fullPrompt != null ? fullPrompt.length() : 0;
-            log.info("[PromptTokens] System={}c | Memory={}c | Artifact={}c | History={}c | UserMsg={}c | TotalSystem={}c (~{} tok)",
+            log.debug("[PromptTokens] System={}c | Memory={}c | Artifact={}c | History={}c | UserMsg={}c | TotalSystem={}c (~{} tok)",
                     systemChars, memoryChars, artifactChars, historyChars,
                     userPrompt != null ? userPrompt.length() : 0,
                     totalSystemChars, totalSystemChars / 2);

@@ -188,7 +188,7 @@ public class SimpleReActAgent implements Agent {
                 .flatMap(response -> {
                     if (response.hasToolCalls()) {
                         List<LlmToolResponse.ToolCall> calls = response.getToolCalls();
-                        log.info("[ReAct Round {}] model requested {} tool(s): {}",
+                        log.debug("[ReAct Round {}] model requested {} tool(s): {}",
                                 round, calls.size(),
                                 calls.stream().map(LlmToolResponse.ToolCall::getName).toList());
 
@@ -223,7 +223,7 @@ public class SimpleReActAgent implements Agent {
                                                 .name(tc.getName())
                                                 .content(resultStr)
                                                 .build());
-                                        log.info("[ReAct Round {}] tool {} result: {}", round, tc.getName(),
+                                        log.debug("[ReAct Round {}] tool {} resultLen= {}", round, tc.getName(),
                                                 resultStr.length() > 200 ? resultStr.substring(0, 200) + "..." : resultStr);
                                     }
                                     updatedMessages.add(ChatMessage.builder()
@@ -422,7 +422,7 @@ public class SimpleReActAgent implements Agent {
                 filteredTools.add(td);
             }
         }
-        log.info("[MultiTool] SimpleReActAgent: AgentCard.toolNames={}, registry={} tools (ranked by CapabilityResolver), filtered={} tools",
+        log.debug("[MultiTool] SimpleReActAgent: AgentCard.toolNames={}, registry={} tools (ranked by CapabilityResolver), filtered={} tools",
                 allowedToolNames.size(), allTools.size(), filteredTools.size());
 
         if (filteredTools.isEmpty()) {

@@ -77,14 +77,11 @@ public class AgentRuntime {
 
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
 
-        log.info("[AgentRuntime] Policy: {}, layers: {} → {}",
+        log.debug("[AgentRuntime] Policy: {}, layers: {} → {}",
                 policy, allLayers.size(), filteredLayers.size());
 
-        String promptPreview = assembledPrompt.length() > 500
-                ? assembledPrompt.substring(0, 500) + "..."
-                : assembledPrompt;
-        log.info("[AgentRuntime] ========== 最终 System Prompt (前500字符) ==========\n{}",
-                promptPreview);
+        log.debug("[AgentRuntime] System Prompt assembled: length={}, layers={}",
+                assembledPrompt.length(), filteredLayers.size());
 
         TraceRecord trace = TraceRecord.builder()
                 .sessionId(null)

@@ -137,8 +137,9 @@ public class WorkspaceFileService {
             Path targetPath = externalDir.resolve(safeName);
 
             if (Files.exists(targetPath)) {
-                if (Files.getLastModifiedTime(normalized).equals(Files.getLastModifiedTime(targetPath))
-                        && Files.size(normalized) == Files.size(targetPath)) {
+                if (Files.size(normalized) == Files.size(targetPath)
+                        && Files.mismatch(normalized, targetPath) == -1) {
+                    Files.setLastModifiedTime(targetPath, Files.getLastModifiedTime(normalized));
                     log.info("External file already synced: {} -> {}", normalized, targetPath);
                     return targetPath;
                 }

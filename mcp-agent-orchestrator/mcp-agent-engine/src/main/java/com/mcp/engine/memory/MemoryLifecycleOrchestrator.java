@@ -45,7 +45,7 @@ public class MemoryLifecycleOrchestrator {
         String convPreview = recentConversation != null && recentConversation.length() > 200
                 ? recentConversation.substring(0, 200) + "..."
                 : recentConversation;
-        log.info("[MemoryLifecycle] 开始处理 session={} userId={} groupId={} 对话预览: {}",
+        log.debug("[MemoryLifecycle] 开始处理 session={} userId={} groupId={} 对话预览: {}",
                 identity.sessionId(), identity.userId(), identity.groupId(), convPreview);
 
         return memoryExtractor.extract(recentConversation)
@@ -63,11 +63,11 @@ public class MemoryLifecycleOrchestrator {
     public Mono<Void> processMemoryLifecycle(MemoryIdentity identity,
                                              List<ChatMessage> messages, String query) {
         if (messages == null || messages.isEmpty()) {
-            log.info("[MemoryLifecycle] 消息列表为空，跳过 session={}", identity.sessionId());
+            log.debug("[MemoryLifecycle] 消息列表为空，跳过 session={}", identity.sessionId());
             return Mono.empty();
         }
 
-        log.info("[MemoryLifecycle] 开始处理 session={} userId={} groupId={} 消息数={}",
+        log.debug("[MemoryLifecycle] 开始处理 session={} userId={} groupId={} 消息数={}",
                 identity.sessionId(), identity.userId(), identity.groupId(), messages.size());
 
         return memoryExtractor.extractWithMessages(messages)
@@ -80,13 +80,13 @@ public class MemoryLifecycleOrchestrator {
                                          String query,
                                          RetryableAction retryAction) {
         if (candidates.isEmpty()) {
-            log.info("[MemoryLifecycle] 无候选记忆 — LLM 未抽取到任何结构化记忆");
+            log.debug("[MemoryLifecycle] 无候选记忆 — LLM 未抽取到任何结构化记忆");
             return Mono.empty();
         }
 
-        log.info("[MemoryLifecycle] LLM 抽取到 {} 条候选记忆", candidates.size());
+        log.debug("[MemoryLifecycle] LLM 抽取到 {} 条候选记忆", candidates.size());
         for (var c : candidates) {
-            log.info("[MemoryLifecycle] 候选: type={} content=\"{}\" confidence={}",
+            log.debug("[MemoryLifecycle] 候选: type={} content=\"{}\" confidence={}",
                     c.memoryType(), c.content(), c.confidence());
         }
 
@@ -95,7 +95,7 @@ public class MemoryLifecycleOrchestrator {
                 : memoryEvaluator.evaluate(candidates);
 
         if (scored.isEmpty()) {
-            log.info("[MemoryLifecycle] 所有候选记忆被过滤（importance<{}），共{}条候选被丢弃",
+            log.debug("[MemoryLifecycle] 所有候选记忆被过滤（importance<{}），共{}条候选被丢弃",
                     MemoryEvaluator.MIN_IMPORTANCE_TO_KEEP, candidates.size());
             return Mono.empty();
         }
@@ -185,7 +185,7 @@ public class MemoryLifecycleOrchestrator {
                 }
             }
             if (resolvedCount > 0) {
-                log.info("[MemoryLifecycle] 冲突解决: {} 组冲突已处理", resolvedCount);
+                log.debug("[MemoryLifecycle] 冲突解决: {} 组冲突已处理", resolvedCount);
             }
         }
     }

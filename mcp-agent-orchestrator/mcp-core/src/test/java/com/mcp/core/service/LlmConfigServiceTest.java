@@ -68,7 +68,7 @@ class LlmConfigServiceTest {
             LlmModelConfig googleDomain = domain(LlmProviderType.GOOGLE_GENAI, "gemini-pro");
             LlmModelConfig ollamaDomain = domain(LlmProviderType.LOCAL_OLLAMA, "qwen3:8b");
 
-            when(repository.findByEnabledTrue()).thenReturn(List.of(googleConfig, ollamaConfig));
+            when(repository.findAll()).thenReturn(List.of(googleConfig, ollamaConfig));
             when(mapper.toDomain(googleConfig)).thenReturn(googleDomain);
             when(mapper.toDomain(ollamaConfig)).thenReturn(ollamaDomain);
             when(providerAvailability.isProviderAvailable(LlmProviderType.GOOGLE_GENAI)).thenReturn(false);
@@ -87,7 +87,7 @@ class LlmConfigServiceTest {
             LlmConfigEntity googleConfig = entity("c1", LlmProviderType.GOOGLE_GENAI, "gemini-pro");
             LlmModelConfig googleDomain = domain(LlmProviderType.GOOGLE_GENAI, "gemini-pro");
 
-            when(repository.findByEnabledTrue()).thenReturn(List.of(googleConfig));
+            when(repository.findAll()).thenReturn(List.of(googleConfig));
             when(mapper.toDomain(googleConfig)).thenReturn(googleDomain);
             when(providerAvailability.isProviderAvailable(LlmProviderType.GOOGLE_GENAI)).thenReturn(false);
 
@@ -101,7 +101,7 @@ class LlmConfigServiceTest {
         @Test
         @DisplayName("DB 无启用配置 → 回退到硬编码 Ollama 兜底配置")
         void shouldFallbackWhenNoEnabledConfigs() {
-            when(repository.findByEnabledTrue()).thenReturn(List.of());
+            when(repository.findAll()).thenReturn(List.of());
 
             StepVerifier.create(service.getDefaultConfig())
                     .expectNextMatches(config ->

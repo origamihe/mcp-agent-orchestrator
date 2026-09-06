@@ -45,7 +45,7 @@ public class MemoryManager {
                                 String conversation) {
         MemoryIdentity identity = new MemoryIdentity(null, sessionId, userId, groupId, null);
         return lifecycleOrchestrator.processMemoryLifecycle(identity, conversation)
-                .doOnSuccess(v -> log.info("[MemoryManager] Remember completed for session={}", sessionId))
+                .doOnSuccess(v -> log.debug("[MemoryManager] Remember completed for session={}", sessionId))
                 .doOnError(e -> log.error("[MemoryManager] Remember failed for session={}: {}",
                         sessionId, e.getMessage()));
     }
@@ -57,7 +57,7 @@ public class MemoryManager {
                                 String conversation, String query) {
         MemoryIdentity identity = new MemoryIdentity(null, sessionId, userId, groupId, null);
         return lifecycleOrchestrator.processMemoryLifecycle(identity, conversation, query)
-                .doOnSuccess(v -> log.info("[MemoryManager] Remember completed for session={}", sessionId))
+                .doOnSuccess(v -> log.debug("[MemoryManager] Remember completed for session={}", sessionId))
                 .doOnError(e -> log.error("[MemoryManager] Remember failed for session={}: {}",
                         sessionId, e.getMessage()));
     }
@@ -72,7 +72,7 @@ public class MemoryManager {
      */
     public MemoryContext recall(String sessionId, String userId, String query) {
         MemoryContext context = searchService.buildMemoryContext(sessionId, userId, query);
-        log.info("[MemoryManager] Recall: hot={} relevant={} recent={} total={}",
+        log.debug("[MemoryManager] Recall: hot={} relevant={} recent={} total={}",
                 context.getHotMemories().size(),
                 context.getRelevantMemories().size(),
                 context.getRecentMemories().size(),
@@ -120,7 +120,7 @@ public class MemoryManager {
         MemoryPackageEntity entity = existing.get();
         entity.setActive(false);
         repository.save(entity);
-        log.info("[MemoryManager] Forgotten: id={} content=\"{}\"", memoryId, entity.getContent());
+        log.debug("[MemoryManager] Forgotten: id={} content=\"{}\"", memoryId, entity.getContent());
         return true;
     }
 
@@ -132,7 +132,7 @@ public class MemoryManager {
             return false;
         }
         repository.deleteById(memoryId);
-        log.info("[MemoryManager] Deleted: id={}", memoryId);
+        log.debug("[MemoryManager] Deleted: id={}", memoryId);
         return true;
     }
 
@@ -165,7 +165,7 @@ public class MemoryManager {
             }
         }
         if (cleaned > 0) {
-            log.info("[MemoryManager] Cleaned up {} expired memories", cleaned);
+            log.debug("[MemoryManager] Cleaned up {} expired memories", cleaned);
         }
         return cleaned;
     }

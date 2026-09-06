@@ -117,7 +117,7 @@ public class ToolPipelineManager {
         List<StepResult> stepResults = new ArrayList<>();
         Map<String, Object> context = new LinkedHashMap<>(initialInput != null ? initialInput : Map.of());
 
-        log.info("[ToolPipeline] Executing pipeline: {} ({} steps)", def.getName(), def.getSteps().size());
+        log.debug("[ToolPipeline] Executing pipeline: {} ({} steps)", def.getName(), def.getSteps().size());
 
         List<PipelineStep> steps = def.getSteps();
         if (steps.isEmpty()) {
@@ -132,7 +132,7 @@ public class ToolPipelineManager {
                     result.setStartedAt(startTime);
                     recordResult(result);
                     notifyListeners(result);
-                    log.info("[ToolPipeline] Pipeline completed: {} ({} steps, {}ms)",
+                    log.debug("[ToolPipeline] Pipeline completed: {} ({} steps, {}ms)",
                             def.getName(), stepResults.size(), result.getTotalDurationMs());
                     return result;
                 }))
@@ -230,7 +230,7 @@ public class ToolPipelineManager {
                         context.put(step.getId() + ".result", output);
                     }
 
-                    log.info("[ToolPipeline] Step completed: {} ({}ms)", step.getId(), duration);
+                    log.debug("[ToolPipeline] Step completed: {} ({}ms)", step.getId(), duration);
                     return sr;
                 })
                 .onErrorResume(error -> {
@@ -279,7 +279,7 @@ public class ToolPipelineManager {
                         execState.toolCompleted(step.getId() + "_fallback");
                     }
 
-                    log.info("[ToolPipeline] Fallback succeeded: {} -> {} ({}ms)",
+                    log.debug("[ToolPipeline] Fallback succeeded: {} -> {} ({}ms)",
                             step.getId(), step.getFallbackTool(), duration);
                     return sr;
                 })

@@ -106,7 +106,7 @@ public class SearchAgent implements Agent {
     @Override
     public Mono<String> execute(LLMRequest request) {
         this.currentRequest = request;
-        log.info("[SearchAgent] Executing: session={}, userMessage={}",
+        log.debug("[SearchAgent] Executing: session={}, userMessage={}",
                 request.getSessionId(),
                 request.getUserMessage() != null
                         ? request.getUserMessage().substring(0, Math.min(50, request.getUserMessage().length()))
@@ -149,7 +149,7 @@ public class SearchAgent implements Agent {
                 .flatMap(result -> {
                     if (researchSynthesizer != null
                             && (!result.searchResults().isEmpty() || !result.documents().isEmpty())) {
-                        log.info("[SearchAgent] Post-processing: synthesizing {} results and {} documents",
+                        log.debug("[SearchAgent] Post-processing: synthesizing {} results and {} documents",
                                 result.searchResults().size(), result.documents().size());
                         return researchSynthesizer.synthesize(
                                 request.getUserMessage(), result.searchResults(), result.documents());
@@ -164,7 +164,7 @@ public class SearchAgent implements Agent {
                     return Mono.just("搜索任务超时（300秒），可能是当前模型推理速度较慢或搜索服务响应缓慢。请尝试使用更精确的搜索词，或稍后重试。");
                 })
                 .onErrorResume(e -> {
-                    log.error("[SearchAgent] Search failed with error: {}", e.getMessage(), e);
+                    log.warn("[SearchAgent] Search failed: session={} | errorType={} | message={} | recovered=true", request.getSessionId(), e.getClass().getSimpleName(), e.getMessage());
                     return Mono.just("搜索任务执行失败：" + (e.getMessage() != null ? e.getMessage() : "未知错误") + "。请稍后重试。");
                 });
     }
@@ -305,7 +305,7 @@ public class SearchAgent implements Agent {
                                          List<ToolResultEntry> collectedToolResults, String userQuery) {
         int maxRounds = DEFAULT_MAX_TOOL_ROUNDS;
         if (round >= maxRounds) {
-            log.info("[SearchAgent] Max rounds ({}) reached, forcing final answer with {} collected results",
+            log.debug("[SearchAgent] Max rounds ({}) reached, forcing final answer with {} collected results",
                     maxRounds, collectedToolResults.size());
             if (collectedToolResults.isEmpty()) {
                 log.warn("[SearchAgent] Max rounds reached with no tool results, returning degraded response");
@@ -325,7 +325,7 @@ public class SearchAgent implements Agent {
                 .flatMap(response -> {
                     List<LlmToolResponse.ToolCall> effectiveCalls = response.getToolCalls();
 
-                    log.info("[SearchAgent Round {}] LLM response: hasToolCalls={}, contentLength={}, collectedToolResults={}",
+                    log.debug("[SearchAgent Round {}] LLM response: hasToolCalls={}, contentLength={}, collectedToolResults={}",
                             round, response.hasToolCalls(),
                             response.getContent() != null ? response.getContent().length() : 0,
                             collectedToolResults.size());
@@ -351,7 +351,7 @@ public class SearchAgent implements Agent {
                     }
 
                     if (!effectiveCalls.isEmpty()) {
-                        log.info("[SearchAgent Round {}] Processing {} tool call(s): {}",
+                        log.debug("[SearchAgent Round {}] Processing {} tool call(s): {}",
                                 round, effectiveCalls.size(),
                                 effectiveCalls.stream().map(LlmToolResponse.ToolCall::getName).toList());
 
@@ -370,7 +370,7 @@ public class SearchAgent implements Agent {
                                         if (t2 != null) {
                                             t2.recordToolResult(tc.getName(), true, resultStr.length(), round, null);
                                         }
-                                        log.info("[SearchAgent Round {}] RAW tool response for {}: {}",
+                                        log.debug("[SearchAgent Round {}] tool response for {}: {}",
                                                 round, tc.getName(),
                                                 resultStr.length() > 500
                                                         ? resultStr.substring(0, 500) + "..."
@@ -385,7 +385,7 @@ public class SearchAgent implements Agent {
                         return Flux.merge(tasks)
                                 .collectList()
                                 .flatMap(results -> {
-                                    log.info("[SearchAgent Round {}] tool execution completed: {} results from {} tasks",
+                                    log.debug("[SearchAgent Round {}] tool execution completed: {} results from {} tasks",
                                             round, results.size(), tasks.size());
 
                                     List<ChatMessage> updatedMessages = new ArrayList<>(messages);
@@ -412,7 +412,7 @@ public class SearchAgent implements Agent {
                                                 .content(resultEntry.jsonForLlm())
                                                 .build());
                                         updatedToolResults.add(resultEntry);
-                                        log.info("[SearchAgent Round {}] added tool result entry: {} ({} chars)",
+                                        log.debug("[SearchAgent Round {}] added tool result entry: {} ({} chars)",
                                                 round, tc.getName(), resultEntry.jsonForLlm().length());
                                     }
                                     updatedMessages.add(ChatMessage.builder()
@@ -422,7 +422,7 @@ public class SearchAgent implements Agent {
                                             .build());
                                     updatedMessages.addAll(toolMessages);
 
-                                    log.info("[SearchAgent Round {}] accumulated tool results: {} → {}",
+                                    log.debug("[SearchAgent Round {}] accumulated tool results: {} → {}",
                                             round, collectedToolResults.size(), updatedToolResults.size());
 
                                     Set<String> updatedCalls = new LinkedHashSet<>(recentCalls);
@@ -521,7 +521,7 @@ public class SearchAgent implements Agent {
                         finalContent = "抱歉，搜索未能返回有效结果，请稍后再试。";
                     }
 
-                    log.info("[SearchAgent Round {}] No tool calls, building final result with {} collected tool results",
+                    log.debug("[SearchAgent Round {}] No tool calls, building final result with {} collected tool results",
                             round, collectedToolResults.size());
                     return Mono.just(buildFinalResult(finalContent, collectedToolResults));
                 });
@@ -535,7 +535,7 @@ public class SearchAgent implements Agent {
         List<SearchResult> searchResults = new ArrayList<>();
         List<SearchDocument> documents = new ArrayList<>();
 
-        log.info("[SearchAgent] buildFinalResult: parsing {} tool result entries", toolResults.size());
+        log.debug("[SearchAgent] buildFinalResult: parsing {} tool result entries", toolResults.size());
 
         SessionTrace trace = SessionTraceHolder.currentOrNull();
         if (trace != null) {
@@ -565,7 +565,7 @@ public class SearchAgent implements Agent {
             }
         }
 
-        log.info("[SearchAgent] Extracted {} search results and {} documents for synthesis",
+        log.debug("[SearchAgent] Extracted {} search results and {} documents for synthesis",
                 searchResults.size(), documents.size());
         return new ReactResult(finalAnswer, searchResults, documents);
     }
@@ -751,7 +751,7 @@ public class SearchAgent implements Agent {
 
     private Mono<ToolExecutionResult> executeSingleTool(LlmToolResponse.ToolCall toolCall) {
         // ===== 诊断节点5：ToolExecutor 是否真正进入执行 =====
-        log.info("[LLM-DIAG] Node5-ToolExecutor: ENTERING tool execution - toolName={}, arguments={}, toolExecutor={}",
+        log.debug("[LLM-DIAG] Node5-ToolExecutor: ENTERING tool execution - toolName={}, arguments={}, toolExecutor={}",
                 toolCall.getName(), toolCall.getArguments(),
                 toolExecutor != null ? toolExecutor.getClass().getSimpleName() : "null");
         if (toolExecutor == null) {
@@ -851,7 +851,7 @@ public class SearchAgent implements Agent {
         // ===== 诊断节点2：ToolRegistry 当前注册的工具 =====
         List<ToolDefinition> allTools = toolRegistry.getAllTools();
         List<ToolDefinition> enabledTools = toolRegistry.getEnabledTools();
-        log.info("[LLM-DIAG] Node2-ToolRegistry: totalRegisteredTools={}, enabledTools={}, toolNames={}",
+        log.debug("[LLM-DIAG] Node2-ToolRegistry: totalRegisteredTools={}, enabledTools={}, toolNames={}",
                 allTools.size(), enabledTools.size(),
                 allTools.stream().map(ToolDefinition::getName).toList());
         if (allTools.isEmpty()) {
@@ -862,7 +862,7 @@ public class SearchAgent implements Agent {
                     toolRegistry, toolRegistry != null ? toolRegistry.getClass().getName() : "null");
         } else {
             for (ToolDefinition td : allTools) {
-                log.info("[LLM-DIAG] Node2-ToolDetail: name={}, enabled={}, category={}, description={}",
+                log.debug("[LLM-DIAG] Node2-ToolDetail: name={}, enabled={}, category={}, description={}",
                         td.getName(), td.isEnabled(), td.getCategory(),
                         td.getDescription() != null ? td.getDescription().substring(0, Math.min(80, td.getDescription().length())) : "null");
             }
@@ -870,7 +870,7 @@ public class SearchAgent implements Agent {
 
         // ===== 多工具协同：按 AgentCard.toolNames 过滤，只暴露本 Agent 需要的工具 =====
         List<String> allowedToolNames = getAgentCard().getToolNames();
-        log.info("[LLM-DIAG] Node2-MultiToolFilter: AgentCard.toolNames={}, totalRegistryTools={}",
+        log.debug("[LLM-DIAG] Node2-MultiToolFilter: AgentCard.toolNames={}, totalRegistryTools={}",
                 allowedToolNames, allTools.size());
 
         List<ToolDefinition> filteredTools = new ArrayList<>();
@@ -882,7 +882,7 @@ public class SearchAgent implements Agent {
                 skippedTools.add(td.getName());
             }
         }
-        log.info("[LLM-DIAG] Node2-MultiToolFilter: filteredTools={}, skippedTools={}",
+        log.debug("[LLM-DIAG] Node2-MultiToolFilter: filteredTools={}, skippedTools={}",
                 filteredTools.stream().map(ToolDefinition::getName).toList(), skippedTools);
 
         if (filteredTools.isEmpty()) {

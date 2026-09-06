@@ -70,7 +70,7 @@ public class RetryManager {
                     () -> execute(task), delayMs, TimeUnit.MILLISECONDS);
             futures.put(task.getTaskId(), future);
 
-            log.info("[RetryManager] 已调度重试: taskId={}, type={}, sessionId={}, retryCount={}/{}, delayMs={}",
+            log.debug("[RetryManager] 已调度重试: taskId={}, type={}, sessionId={}, retryCount={}/{}, delayMs={}",
                     task.getTaskId(), task.getTaskType(), task.getSessionId(),
                     task.getRetryCount(), task.getMaxRetries(), delayMs);
         } catch (RejectedExecutionException e) {
@@ -82,7 +82,7 @@ public class RetryManager {
     private void execute(RetryTask task) {
         futures.remove(task.getTaskId());
 
-        log.info("[RetryManager] 开始执行重试: taskId={}, type={}, sessionId={}, retryCount={}",
+        log.debug("[RetryManager] 开始执行重试: taskId={}, type={}, sessionId={}, retryCount={}",
                 task.getTaskId(), task.getTaskType(), task.getSessionId(), task.getRetryCount());
 
         try {
@@ -117,7 +117,7 @@ public class RetryManager {
             ScheduledFuture<?> future = entry.getValue();
             boolean cancelled = future.cancel(false);
             if (cancelled) {
-                log.info("[RetryManager] 取消任务: taskId={}, sessionId={}", entry.getKey(), sessionId);
+                log.debug("[RetryManager] 取消任务: taskId={}, sessionId={}", entry.getKey(), sessionId);
             }
             return cancelled;
         });

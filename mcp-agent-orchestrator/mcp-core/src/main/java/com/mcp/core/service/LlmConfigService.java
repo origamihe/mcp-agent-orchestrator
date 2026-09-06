@@ -69,28 +69,16 @@ public class LlmConfigService {
     }
 
     /**
-     * 获取默认配置（优先从缓存，缓存未命中时查DB并回写缓存）
+     * 获取默认配置（优先从缓存，缓存未命中时刷新缓存后返回）
      */
     public Mono<LlmModelConfig> getDefaultConfig() {
         if (cacheLoaded && defaultConfig != null) {
             return Mono.just(defaultConfig);
         }
-        return Mono.fromCallable(() -> repository.findByEnabledTrue().stream()
-                .map(mapper::toDomain)
-                .filter(config -> {
-                    if (!providerAvailability.isProviderAvailable(config.getProvider())) {
-                        log.info("[LlmConfig] DB config provider {} is not available, skipping",
-                                config.getProvider());
-                        return false;
-                    }
-                    return true;
-                })
-                .findFirst()
-                .orElseGet(() -> {
-                    LlmModelConfig fallback = getDefaultOllamaConfig();
-                    defaultConfig = fallback;
-                    return fallback;
-                }));
+        return Mono.fromCallable(() -> {
+            refreshCache();
+            return defaultConfig;
+        });
     }
 
     /**

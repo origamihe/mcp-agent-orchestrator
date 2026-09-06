@@ -62,7 +62,7 @@ public class UserProfileService {
         }
 
         if (userProfiles.isEmpty()) {
-            log.warn("[UserProfile] No user profiles configured via mcp.identity.users — all users will be treated as MEMBER/STRANGER");
+            log.info("[UserProfile] No user profiles configured via mcp.identity.users — all users will be treated as MEMBER/STRANGER (fallback mode)");
         }
 
         log.info("[UserProfile] Initialized {} user profiles, {} group contexts",

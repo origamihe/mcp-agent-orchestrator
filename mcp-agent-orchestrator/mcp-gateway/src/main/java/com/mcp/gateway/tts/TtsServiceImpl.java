@@ -63,7 +63,7 @@ public class TtsServiceImpl implements TtsService {
                 if (available) {
                     log.info("[TTS] Startup health check: TTS service is available at {}", ttsApiUrl);
                 } else {
-                    log.warn("[TTS] Startup health check: TTS service is NOT available at {}", ttsApiUrl);
+                    log.info("[TTS] Startup health check: TTS service is NOT available at {} (optional service, voice features will be disabled)", ttsApiUrl);
                 }
             })
             .subscribe();

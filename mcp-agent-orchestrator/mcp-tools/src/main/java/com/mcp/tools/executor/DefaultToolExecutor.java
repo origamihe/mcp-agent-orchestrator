@@ -67,7 +67,7 @@ public class DefaultToolExecutor implements ToolExecutor {
                                 args[i] = coerceType(rawValue, params[i].getType());
                             }
                         }
-                        log.info("[ToolExecutor] Executing: {} with args: {}", toolName, request.getArguments());
+                        log.debug("[ToolExecutor] Executing: {} with args: {}", toolName, request.getArguments());
                         return method.invoke(target, args);
                     })
                     .subscribeOn(Schedulers.boundedElastic())
@@ -75,7 +75,7 @@ public class DefaultToolExecutor implements ToolExecutor {
                     .map(result -> {
                         long duration = System.currentTimeMillis() - startTime;
                         toolRegistry.recordToolExecution(toolName, true, duration, null);
-                        log.info("[ToolExecutor] Success: {} ({}ms)", toolName, duration);
+                        log.debug("[ToolExecutor] Success: {} ({}ms)", toolName, duration);
                         ToolExecutionResult execResult;
                         if (result instanceof ToolExecutionResult ter) {
                             execResult = new ToolExecutionResult(

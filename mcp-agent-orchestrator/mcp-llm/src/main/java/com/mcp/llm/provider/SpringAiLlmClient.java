@@ -70,12 +70,12 @@ public class SpringAiLlmClient implements LlmClient {
         long startTime = System.currentTimeMillis();
         int sysLen = systemPrompt != null ? systemPrompt.length() : 0;
         int usrLen = userPrompt != null ? userPrompt.length() : 0;
-        log.info("[DIAG-LLM] generateWithSystemPrompt START | sysPromptLen={} | usrPromptLen={} | totalLen={}",
+        log.debug("[LLM] generate START | sysPromptLen={} | usrPromptLen={} | totalLen={}",
                 sysLen, usrLen, sysLen + usrLen);
 
         return llmConfigService.getDefaultConfig()
                 .flatMap(config -> {
-                    log.info("[DIAG-LLM] Using model: {}, provider: {}",
+                    log.debug("[LLM] Using model: {}, provider: {}",
                             config.getModelName(), config.getProvider());
                     ProviderContext context = providerRegistry.getContext(config);
                     return Mono.fromCallable(() -> {
@@ -87,7 +87,7 @@ public class SpringAiLlmClient implements LlmClient {
                                 .call()
                                 .chatResponse();
                         long callEnd = System.currentTimeMillis();
-                        log.info("[DIAG-LLM] LLM call completed in {}ms", callEnd - callStart);
+                        log.debug("[LLM] call completed in {}ms", callEnd - callStart);
                         logTokenUsage(response);
                         return response.getResult().getOutput().getText();
                     }).subscribeOn(Schedulers.boundedElastic())
@@ -97,19 +97,19 @@ public class SpringAiLlmClient implements LlmClient {
                     long totalElapsed = System.currentTimeMillis() - startTime;
                     metricsCollector.recordCallDuration(totalElapsed);
                     metricsCollector.recordSuccess();
-                    log.info("[DIAG-LLM] generateWithSystemPrompt SUCCESS | totalElapsed={}ms | responseLen={}",
+                    log.debug("[LLM] generate SUCCESS | totalElapsed={}ms | responseLen={}",
                             totalElapsed, result != null ? result.length() : 0);
                 })
                 .doOnError(error -> {
                     long totalElapsed = System.currentTimeMillis() - startTime;
                     metricsCollector.recordCallDuration(totalElapsed);
                     metricsCollector.recordFailure();
-                    log.error("[DIAG-LLM] generateWithSystemPrompt FAILED | totalElapsed={}ms | error={}",
+                    log.error("[LLM] generate FAILED | totalElapsed={}ms | error={}",
                             totalElapsed, error.getMessage());
                 })
                 .onErrorResume(java.util.concurrent.TimeoutException.class, e -> {
                     long totalElapsed = System.currentTimeMillis() - startTime;
-                    log.warn("[DIAG-LLM] generateWithSystemPrompt TIMED OUT after {}ms", totalElapsed);
+                    log.warn("[LLM] generate TIMED OUT after {}ms", totalElapsed);
                     return Mono.just("AI 模型响应超时（120秒），可能是当前模型推理速度较慢。请稍后重试，或缩短问题长度。");
                 })
                 .defaultIfEmpty("No response from AI model.");
@@ -211,7 +211,7 @@ public class SpringAiLlmClient implements LlmClient {
                                 ? context.chatOptions().getClass().getSimpleName()
                                 : "null";
                         boolean isToolCallingOptions = context.chatOptions() instanceof ToolCallingChatOptions;
-                        log.info("[LLM-DIAG] Node1-BeforeLLM: tools.size()={}, toolNames={}, chatOptionsType={}, isToolCallingChatOptions={}",
+                        log.debug("[LLM] Node1-BeforeLLM: tools.size()={}, toolNames={}, chatOptionsType={}, isToolCallingChatOptions={}",
                                 toolCount, toolNames, optionsType, isToolCallingOptions);
 
                         ChatOptions effectiveOptions = context.chatOptions();
@@ -221,11 +221,11 @@ public class SpringAiLlmClient implements LlmClient {
                                 clonedToolOpts.setToolCallbacks(toolCallbacks);
                                 clonedToolOpts.setInternalToolExecutionEnabled(false);
                                 effectiveOptions = cloned;
-                                log.info("[LLM-DIAG] Node1-Options: cloned {}, set internalToolExecutionEnabled=false, toolCallbacks={}",
+                                log.debug("[LLM] Node1-Options: cloned {}, set internalToolExecutionEnabled=false, toolCallbacks={}",
                                         effectiveOptions.getClass().getSimpleName(), toolNames);
                             }
                         } else if (toolCount > 0) {
-                            log.warn("[LLM-DIAG] Node1-WARN: chatOptions is NOT ToolCallingChatOptions (type={}), "
+                            log.warn("[LLM] Node1-WARN: chatOptions is NOT ToolCallingChatOptions (type={}), "
                                     + "cannot disable internal tool execution. Tools may be auto-executed by Spring AI.",
                                     optionsType);
                         }
@@ -242,7 +242,7 @@ public class SpringAiLlmClient implements LlmClient {
                                 }
                             }
                             springMessages = augmentedMessages;
-                            log.info("[LLM-DIAG] Node1-TextTools: appended {} tool definitions to system prompt (~{} chars)",
+                            log.debug("[LLM] Node1-TextTools: appended {} tool definitions to system prompt (~{} chars)",
                                     toolCount, toolText.length());
                         }
 
@@ -251,10 +251,10 @@ public class SpringAiLlmClient implements LlmClient {
                                 .messages(springMessages)
                                 .options(effectiveOptions);
                         if (toolCount > 0) {
-                            log.info("[LLM-DIAG] Node1-Registered {} tool(s): internalExec=false + text-based tool descriptions in system prompt",
+                            log.debug("[LLM] Node1-Registered {} tool(s): internalExec=false + text-based tool descriptions in system prompt",
                                     toolCount);
                         } else {
-                            log.warn("[LLM-DIAG] Node1-WARN: toolDefinitions is EMPTY! Model will NOT know about any tools. "
+                            log.warn("[LLM] Node1-WARN: toolDefinitions is EMPTY! Model will NOT know about any tools. "
                                     + "Check ToolRegistry registration and buildToolDefinitions().");
                         }
                         ChatResponse response = promptSpec.call().chatResponse();
@@ -292,12 +292,12 @@ public class SpringAiLlmClient implements LlmClient {
         long startTime = System.currentTimeMillis();
         int sysLen = systemPrompt != null ? systemPrompt.length() : 0;
         int usrLen = userPrompt != null ? userPrompt.length() : 0;
-        log.info("[DIAG-LLM] generateStreamWithSystemPrompt START | sysPromptLen={} | usrPromptLen={}",
+        log.debug("[LLM] generateStream START | sysPromptLen={} | usrPromptLen={}",
                 sysLen, usrLen);
 
         return llmConfigService.getDefaultConfig()
                 .flatMapMany(config -> {
-                    log.info("[DIAG-LLM] Streaming with model: {}, provider: {}",
+                    log.debug("[LLM] Streaming with model: {}, provider: {}",
                             config.getModelName(), config.getProvider());
                     ProviderContext context = providerRegistry.getContext(config);
                     return createChatClient(context).prompt()
@@ -311,7 +311,7 @@ public class SpringAiLlmClient implements LlmClient {
                                 metricsCollector.recordCallDuration(totalElapsed);
                                 metricsCollector.recordSuccess();
                                 metricsCollector.recordStreamCall();
-                                log.info("[DIAG-LLM] generateStreamWithSystemPrompt COMPLETE | totalElapsed={}ms",
+                                log.debug("[LLM] generateStream COMPLETE | totalElapsed={}ms",
                                         totalElapsed);
                             })
                             .doOnError(error -> {
@@ -333,13 +333,13 @@ public class SpringAiLlmClient implements LlmClient {
     @Override
     public Flux<String> generateStreamWithConfigAndSystem(String configId, String systemPrompt, String userPrompt) {
         long startTime = System.currentTimeMillis();
-        log.info("[DIAG-LLM] generateStreamWithConfigAndSystem START | configId={} | sysPromptLen={} | usrPromptLen={}",
+        log.debug("[LLM] generateStreamWithConfig START | configId={} | sysPromptLen={} | usrPromptLen={}",
                 configId, systemPrompt != null ? systemPrompt.length() : 0,
                 userPrompt != null ? userPrompt.length() : 0);
 
         return llmConfigService.getConfigById(configId)
                 .flatMapMany(config -> {
-                    log.info("[DIAG-LLM] Streaming with config: {}, model: {}, provider: {}",
+                    log.debug("[LLM] Streaming with config: {}, model: {}, provider: {}",
                             configId, config.getModelName(), config.getProvider());
                     ProviderContext context = providerRegistry.getContext(config);
                     return createChatClient(context).prompt()
@@ -353,7 +353,7 @@ public class SpringAiLlmClient implements LlmClient {
                                 metricsCollector.recordCallDuration(totalElapsed);
                                 metricsCollector.recordSuccess();
                                 metricsCollector.recordStreamCall();
-                                log.info("[DIAG-LLM] generateStreamWithConfigAndSystem COMPLETE | totalElapsed={}ms",
+                                log.debug("[LLM] generateStreamWithConfig COMPLETE | totalElapsed={}ms",
                                         totalElapsed);
                             })
                             .doOnError(error -> {
@@ -392,7 +392,7 @@ public class SpringAiLlmClient implements LlmClient {
         try {
             var usage = response.getMetadata().getUsage();
             if (usage != null) {
-                log.info("[LLMTokens] Prompt={} | Completion={} | Total={} | Ratio={}",
+                log.debug("[LLMTokens] Prompt={} | Completion={} | Total={} | Ratio={}",
                         usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens(),
                         usage.getCompletionTokens() != null && usage.getCompletionTokens() > 0
                                 ? String.format("%.1f", (double) usage.getPromptTokens()
@@ -576,14 +576,14 @@ public class SpringAiLlmClient implements LlmClient {
         List<LlmToolResponse.ToolCall> toolCalls = new ArrayList<>();
 
         // ===== 诊断节点3：LLM 原始响应 =====
-        log.info("[LLM-DIAG] Node3-LLMRawResponse: response.toString()={}", response.toString());
-        log.info("[LLM-DIAG] Node3-LLMRawResponse: output.getText() length={}, output.getToolCalls() size={}",
+        log.debug("[LLM] Node3-LLMRawResponse: response.toString()={}", response.toString());
+        log.debug("[LLM] Node3-LLMRawResponse: output.getText() length={}, output.getToolCalls() size={}",
                 content != null ? content.length() : 0,
                 output.getToolCalls() != null ? output.getToolCalls().size() : 0);
 
         if (output.getToolCalls() != null) {
             for (AssistantMessage.ToolCall tc : output.getToolCalls()) {
-                log.info("[LLM-DIAG] Node3-LLMRawResponse: toolCall name={}, id={}, arguments={}",
+                log.debug("[LLM] Node3-LLMRawResponse: toolCall name={}, id={}, arguments={}",
                         tc.name(), tc.id(), tc.arguments());
                 Map<String, Object> arguments = parseArguments(tc.arguments());
                 toolCalls.add(new LlmToolResponse.ToolCall(tc.id(), tc.name(), arguments));
@@ -596,13 +596,13 @@ public class SpringAiLlmClient implements LlmClient {
             List<LlmToolResponse.ToolCall> textToolCalls = tryParseTextToolCalls(content, toolDefinitions);
             if (!textToolCalls.isEmpty()) {
                 toolCalls.addAll(textToolCalls);
-                log.info("[LLM-DIAG] Node4-TextFallback: parsed {} tool call(s) from text content (Ollama fallback)",
+                log.debug("[LLM] Node4-TextFallback: parsed {} tool call(s) from text content (Ollama fallback)",
                         textToolCalls.size());
             }
         }
 
         // ===== 诊断节点4：Tool Parser 解析结果 =====
-        log.info("[LLM-DIAG] Node4-ToolParser: parsedToolCallCount={}, hasToolCalls={}, contentLength={}",
+        log.debug("[LLM] Node4-ToolParser: parsedToolCallCount={}, hasToolCalls={}, contentLength={}",
                 toolCalls.size(), !toolCalls.isEmpty(),
                 content != null ? content.length() : 0);
         if (toolCalls.isEmpty() && (content == null || content.isBlank())) {
@@ -668,14 +668,14 @@ public class SpringAiLlmClient implements LlmClient {
                 java.util.Map<String, Object> defaultArgs = extractQueryFromText(content);
                 if (defaultArgs != null) {
                     parsed.add(new LlmToolResponse.ToolCall("text-"+java.util.UUID.randomUUID().toString(), bestFallbackTool, defaultArgs));
-                    log.info("[LLM-DIAG] Node4-TextFallback: forced tool call from text mention: tool={}, args={}",
+                    log.debug("[LLM] Node4-TextFallback: forced tool call from text mention: tool={}, args={}",
                             bestFallbackTool, defaultArgs.keySet());
                 }
             }
         }
 
         if (!parsed.isEmpty()) {
-            log.info("[LLM-DIAG] Node4-TextFallback: extracted {} tool call(s) from text content", parsed.size());
+            log.debug("[LLM] Node4-TextFallback: extracted {} tool call(s) from text content", parsed.size());
         }
         return parsed;
     }
@@ -700,7 +700,7 @@ public class SpringAiLlmClient implements LlmClient {
                     String key = explicitName + ":" + argsMap.keySet().toString();
                     if (seenKeys.add(key)) {
                         parsed.add(new LlmToolResponse.ToolCall("text-"+java.util.UUID.randomUUID().toString(), explicitName, argsMap));
-                        log.info("[LLM-DIAG] Node4-TextFallback: parsed via explicit name: tool={}, params={}",
+                        log.debug("[LLM] Node4-TextFallback: parsed via explicit name: tool={}, params={}",
                                 explicitName, argsMap.keySet());
                     }
                     return;
@@ -716,7 +716,7 @@ public class SpringAiLlmClient implements LlmClient {
                     String key = singleKey + ":" + argsMap.keySet().toString();
                     if (seenKeys.add(key)) {
                         parsed.add(new LlmToolResponse.ToolCall("text-"+java.util.UUID.randomUUID().toString(), singleKey, argsMap));
-                        log.info("[LLM-DIAG] Node4-TextFallback: parsed via tool-name mapping: tool={}, params={}",
+                        log.debug("[LLM] Node4-TextFallback: parsed via tool-name mapping: tool={}, params={}",
                                 singleKey, argsMap.keySet());
                     }
                     return;
@@ -728,7 +728,7 @@ public class SpringAiLlmClient implements LlmClient {
                 String key = bestMatchTool + ":" + jsonMap.keySet().toString();
                 if (seenKeys.add(key)) {
                     parsed.add(new LlmToolResponse.ToolCall("text-"+java.util.UUID.randomUUID().toString(), bestMatchTool, jsonMap));
-                    log.info("[LLM-DIAG] Node4-TextFallback: parsed text-based tool call: tool={}, params={}",
+                    log.debug("[LLM] Node4-TextFallback: parsed text-based tool call: tool={}, params={}",
                             bestMatchTool, jsonMap.keySet());
                 }
             }

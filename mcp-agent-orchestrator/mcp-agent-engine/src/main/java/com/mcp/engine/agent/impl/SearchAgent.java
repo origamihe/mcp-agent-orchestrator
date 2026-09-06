@@ -19,6 +19,7 @@ import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.SearchDocument;
 import com.mcp.tools.model.SearchResult;
 import com.mcp.tools.model.ToolDefinition;
+import com.mcp.tools.model.ToolError;
 import com.mcp.tools.model.ToolExecutionRequest;
 import com.mcp.tools.model.ToolExecutionResult;
 import com.mcp.tools.registry.ToolRegistry;
@@ -66,7 +67,7 @@ public class SearchAgent implements Agent {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final int DEFAULT_MAX_TOOL_ROUNDS = 5;
-    private static final int REQUIRED_SEARCH_MAX_RETRY_ROUNDS = 2;
+    private static final int REQUIRED_SEARCH_MAX_RETRY_ROUNDS = 1;
 
     @Override
     public String getId() {
@@ -232,17 +233,75 @@ public class SearchAgent implements Agent {
     }
 
     /**
-     * 当 deep_research 返回 0 条结果时，要求 LLM 回退到 web_search 工具。
+     * 代码级回退搜索：当 deep_research 返回 0 条结果时，
+     * 由代码直接调用 web_search 工具，而非通过 Prompt 要求 LLM 再次调用。
+     * 这是 P2 改进：消除 Prompt 驱动的 Tool Retry。
      */
-    private String buildEmptyResultFallbackInstruction(String userQuery) {
-        return """
-                【系统指令 - 回退搜索策略】
+    private Mono<ReactResult> executeEmptyResultFallback(
+            String userQuery,
+            List<ToolResultEntry> existingResults,
+            List<ChatMessage> currentMessages,
+            Set<String> recentCalls,
+            LLMRequest request,
+            int round,
+            int maxRounds,
+            SearchRequirement searchRequirement) {
+        String executionId = request.getExecutionState() != null
+                ? request.getExecutionState().getExecutionId() : "N/A";
+        log.info("[ToolFallback] requestId={} reason=EMPTY_RESULT_FALLBACK tool=web_search "
+                + "existingResults={}",
+                executionId, existingResults.size());
 
-                deep_research 未返回任何结果。请立即改用 web_search 工具重新搜索，参数如下：
-                - query: "%s"
+        Map<String, Object> webSearchArgs = new HashMap<>();
+        webSearchArgs.put("query", userQuery);
 
-                调用完成后，根据搜索结果生成最终回答。不要输出任何解释性文字，直接调用工具即可。
-                """.formatted(userQuery.replace("\"", "\\\""));
+        return executeAuthorizedTool("web_search", webSearchArgs, request)
+                .flatMap(webResult -> {
+                    if (!webResult.isSuccess()) {
+                        log.warn("[ToolFallback] requestId={} Empty result fallback (web_search) FAILED: status={}",
+                                executionId, webResult.status());
+                        return reactLoop(currentMessages, round + 1, recentCalls,
+                                existingResults, userQuery, maxRounds, searchRequirement, request);
+                    }
+
+                    String resultStr = toToolResultJson(
+                            new LlmToolResponse.ToolCall(webResult.toolCallId(), "web_search", webSearchArgs),
+                            webResult);
+                    Map<String, Object> parsedContent = parseRawData(webResult.data());
+
+                    List<ToolResultEntry> updatedToolResults = new ArrayList<>(existingResults);
+                    updatedToolResults.add(new ToolResultEntry("web_search", resultStr, parsedContent));
+
+                    List<ChatMessage> updatedMessages = new ArrayList<>(currentMessages);
+                    List<Map<String, Object>> assistantToolCalls = new ArrayList<>();
+                    assistantToolCalls.add(Map.of(
+                            "id", webResult.toolCallId(),
+                            "type", "function",
+                            "function", Map.of(
+                                    "name", "web_search",
+                                    "arguments", webSearchArgs
+                            )
+                    ));
+                    updatedMessages.add(ChatMessage.builder()
+                            .role("assistant")
+                            .content("")
+                            .toolCalls(assistantToolCalls)
+                            .build());
+                    updatedMessages.add(ChatMessage.builder()
+                            .role("tool")
+                            .toolCallId(webResult.toolCallId())
+                            .name("web_search")
+                            .content(resultStr)
+                            .build());
+
+                    Set<String> updatedCalls = new LinkedHashSet<>(recentCalls);
+                    updatedCalls.add("web_search:" + canonicalArgs(webSearchArgs));
+
+                    log.info("[ToolFallback] requestId={} Empty result fallback (web_search) SUCCESS, "
+                            + "continuing reactLoop", executionId);
+                    return reactLoop(updatedMessages, round + 1, updatedCalls,
+                            updatedToolResults, userQuery, maxRounds, searchRequirement, request);
+                });
     }
 
     private Mono<ReactResult> reactLoop(List<ChatMessage> messages, int round,
@@ -436,14 +495,10 @@ public class SearchAgent implements Agent {
 
                                     if (deepResearchReturnedEmpty && !hasTriedFallback && round < maxRounds - 1) {
                                         log.warn("[SearchAgent Round {}] deep_research returned 0 results, "
-                                                + "injecting fallback retry with web_search", round);
-                                        List<ChatMessage> retryMessages = new ArrayList<>(updatedMessages);
-                                        retryMessages.add(ChatMessage.builder()
-                                                .role("user")
-                                                .content(buildEmptyResultFallbackInstruction(userQuery))
-                                                .build());
-                                        return reactLoop(retryMessages, round + 1, updatedCalls,
-                                                updatedToolResults, userQuery, maxRounds, searchRequirement, request);
+                                                + "executing code-based fallback with web_search", round);
+                                        return executeEmptyResultFallback(userQuery, updatedToolResults,
+                                                updatedMessages, updatedCalls, request,
+                                                round + 1, maxRounds, searchRequirement);
                                     }
 
                                     return reactLoop(updatedMessages, round + 1, updatedCalls,
@@ -509,6 +564,12 @@ public class SearchAgent implements Agent {
     /**
      * 确定性回退：当 SearchRequirement.REQUIRED 且 LLM 未调用工具时，
      * 由代码直接调用 ToolExecutor 执行 deep_research。
+     * <p>
+     * P0.5 改进：
+     * 1. 必须经过 PolicyEngine 授权检查
+     * 2. 必须验证 ToolExecutionResult.isSuccess()
+     * 3. 必须验证搜索结果非空
+     * 只有三个条件都满足，才判定 Search Fulfilled。
      */
     private Mono<ReactResult> executeDeterministicFallback(
             String userQuery, List<ToolResultEntry> existingResults, LLMRequest request) {
@@ -526,54 +587,128 @@ public class SearchAgent implements Agent {
                     existingResults));
         }
 
-        String toolCallId = "fallback-" + UUID.randomUUID().toString().substring(0, 8);
-
         Map<String, Object> args = new HashMap<>();
         args.put("query", userQuery);
         args.put("depth", "2");
 
-        ToolExecutionRequest toolRequest = new ToolExecutionRequest();
-        toolRequest.setToolName("deep_research");
-        toolRequest.setArguments(args);
-        toolRequest.setRequestId(toolCallId);
-
-        ExecutionState execState = request.getExecutionState();
-        if (execState != null) {
-            execState.waitingForTool(toolCallId);
-        }
-
-        log.info("[ToolExecution] requestId={} tool=deep_research started=true fallback=true", executionId);
-
-        return toolExecutor.execute(toolRequest)
-                .map(result -> {
-                    if (execState != null) {
-                        execState.toolCompleted(toolCallId);
+        return executeAuthorizedTool("deep_research", args, request)
+                .flatMap(result -> {
+                    if (!result.isSuccess()) {
+                        log.error("[ToolFallback] requestId={} Deterministic fallback FAILED: "
+                                + "status={} error={}",
+                                executionId, result.status(), result.error());
+                        return Mono.just(buildFinalResult(
+                                "搜索任务执行失败，无法获取最新信息。请稍后重试或尝试更具体的搜索词。",
+                                existingResults));
                     }
-                    log.info("[ToolExecution] requestId={} tool=deep_research finished=true fallback=true "
-                            + "success={}",
-                            executionId, result.isSuccess() || result.data() != null);
 
                     String resultStr = toToolResultJson(
-                            new LlmToolResponse.ToolCall(toolCallId, "deep_research", args),
+                            new LlmToolResponse.ToolCall(result.toolCallId(), "deep_research", args),
                             result);
-                    Map<String, Object> parsedContent = extractParsedContent(resultStr, "deep_research");
+
+                    Object rawData = result.data();
+                    Map<String, Object> parsedContent = parseRawData(rawData);
 
                     List<ToolResultEntry> allResults = new ArrayList<>(existingResults);
                     allResults.add(new ToolResultEntry("deep_research", resultStr, parsedContent));
 
-                    return buildFinalResult(
-                            "以下是通过确定性搜索回退机制获取的结果。",
-                            allResults);
-                })
-                .onErrorResume(error -> {
-                    log.error("[ToolFallback] requestId={} Deterministic fallback execution failed: {}",
-                            executionId, error.getMessage());
-                    if (execState != null) {
-                        execState.toolCompleted(toolCallId);
+                    boolean hasValidResults = false;
+                    if (parsedContent != null) {
+                        Object resultCount = parsedContent.get("resultCount");
+                        Object resList = parsedContent.get("results");
+                        hasValidResults = (resultCount instanceof Number n && n.intValue() > 0)
+                                || (resList instanceof List<?> l && !l.isEmpty());
                     }
+
+                    if (!hasValidResults) {
+                        log.warn("[ToolFallback] requestId={} Deterministic fallback returned no valid results",
+                                executionId);
+                        return Mono.just(buildFinalResult(
+                                "搜索未能返回有效结果。请尝试使用不同的搜索词，或稍后重试。",
+                                allResults));
+                    }
+
+                    log.info("[ToolFallback] requestId={} Deterministic fallback SUCCESS: "
+                            + "search fulfilled with {} results",
+                            executionId,
+                            parsedContent != null ? parsedContent.get("resultCount") : "unknown");
                     return Mono.just(buildFinalResult(
-                            "搜索任务执行失败：" + (error.getMessage() != null ? error.getMessage() : "未知错误"),
-                            existingResults));
+                            "以下是通过确定性搜索回退机制获取的结果。",
+                            allResults));
+                });
+    }
+
+    /**
+     * 统一授权工具执行入口 — 所有非 LLM 驱动的工具调用（确定性回退、空结果回退等）
+     * 都必须经过此方法，确保 PolicyEngine 检查 + 执行结果验证形成
+     * 唯一的 Tool Execution Gate。
+     * <p>
+     * 设计原则：
+     * <pre>
+     *                  ┌→ LLM Tool Call → executeSingleTool (Policy + Executor)
+     * Request → Auth ──┤
+     *                  └→ Deterministic Fallback → executeAuthorizedTool (Policy + Executor)
+     * </pre>
+     * 两个入口最终汇合到同一个 Tool Execution Gate。
+     */
+    private Mono<ToolExecutionResult> executeAuthorizedTool(
+            String toolName, Map<String, Object> args, LLMRequest request) {
+        String toolCallId = "auth-" + UUID.randomUUID().toString().substring(0, 8);
+
+        return toolRegistry.getTool(toolName)
+                .map(toolDef -> {
+                    MemoryIdentity identity = new MemoryIdentity(null, request.getSessionId(),
+                            request.getUserId(), null, null);
+                    return policyEngine.evaluate(identity, getId(), toolDef, null,
+                            request.getExecutionPlan());
+                })
+                .defaultIfEmpty(PolicyEngine.PolicyDecision.DENY)
+                .flatMap(decision -> {
+                    if (decision == PolicyEngine.PolicyDecision.DENY) {
+                        log.warn("[ToolFallback] PolicyEngine DENY: tool={} toolCallId={}",
+                                toolName, toolCallId);
+                        SessionTrace t = SessionTraceHolder.currentOrNull();
+                        if (t != null) {
+                            t.recordPolicyDecision(toolName, "DENY",
+                                    "Authorized tool execution blocked by PolicyEngine");
+                        }
+                        return Mono.just(ToolExecutionResult.denied(
+                                toolCallId, toolName, "PolicyEngine denied authorized tool execution"));
+                    }
+
+                    ToolExecutionRequest toolRequest = new ToolExecutionRequest();
+                    toolRequest.setToolName(toolName);
+                    toolRequest.setArguments(new HashMap<>(args));
+                    toolRequest.setRequestId(toolCallId);
+
+                    ExecutionState execState = request.getExecutionState();
+                    if (execState != null) {
+                        execState.waitingForTool(toolCallId);
+                    }
+
+                    log.info("[ToolExecution] requestId={} tool={} started=true authorized=true",
+                            request.getExecutionState() != null
+                                    ? request.getExecutionState().getExecutionId() : "N/A",
+                            toolName);
+
+                    return toolExecutor.execute(toolRequest)
+                            .doOnSuccess(r -> {
+                                if (execState != null) {
+                                    execState.toolCompleted(toolCallId);
+                                }
+                            })
+                            .onErrorResume(error -> {
+                                log.error("[ToolFallback] Authorized tool execution error: {} - {}",
+                                        toolName, error.getMessage());
+                                if (execState != null) {
+                                    execState.toolCompleted(toolCallId);
+                                }
+                                return Mono.just(ToolExecutionResult.executionError(
+                                        toolCallId, toolName,
+                                        ToolError.internal(
+                                                error.getMessage() != null ? error.getMessage() : "unknown error"),
+                                        Duration.ZERO));
+                            });
                 });
     }
 
@@ -584,7 +719,7 @@ public class SearchAgent implements Agent {
         if (toolExecutor == null) {
             log.error("[LLM-DIAG] Node5-CRITICAL: toolExecutor is NULL! Cannot execute tool: {}", toolCall.getName());
             return Mono.just(ToolExecutionResult.executionError(toolCall.getId(), toolCall.getName(),
-                    com.mcp.tools.model.ToolError.internal("toolExecutor is null"), java.time.Duration.ZERO));
+                    ToolError.internal("toolExecutor is null"), Duration.ZERO));
         }
 
         ExecutionState execState = request.getExecutionState();
@@ -634,9 +769,9 @@ public class SearchAgent implements Agent {
                                 }
                                 return Mono.just(ToolExecutionResult.executionError(
                                         toolCall.getId(), toolCall.getName(),
-                                        com.mcp.tools.model.ToolError.internal(
-                                                error.getMessage() != null ? error.getMessage() : "unknown error"),
-                                        java.time.Duration.ZERO));
+                                        ToolError.internal(
+                                        error.getMessage() != null ? error.getMessage() : "unknown error"),
+                                Duration.ZERO));
                             });
                 });
     }
@@ -842,6 +977,35 @@ public class SearchAgent implements Agent {
             return wrapper;
         } catch (Exception e) {
             log.debug("[SearchAgent] extractParsedContent failed for {}: {}", toolName, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 解析 ToolExecutionResult 的原始 data 字段，提取结构化内容。
+     * 处理 ToolExecutionResult.toJson() 格式中的 data 字段（JSON 字符串）。
+     */
+    private Map<String, Object> parseRawData(Object rawData) {
+        if (rawData == null) return null;
+        try {
+            if (rawData instanceof String dataStr) {
+                if (dataStr.startsWith("{")) {
+                    Map<String, Object> dataMap = objectMapper.readValue(dataStr,
+                            new TypeReference<Map<String, Object>>() {});
+                    Object contentObj = dataMap.get("content");
+                    if (contentObj instanceof String contentStr && contentStr.startsWith("{")) {
+                        return objectMapper.readValue(contentStr,
+                                new TypeReference<Map<String, Object>>() {});
+                    }
+                    return dataMap;
+                }
+            }
+            if (rawData instanceof Map<?, ?> m) {
+                return (Map<String, Object>) m;
+            }
+            return null;
+        } catch (Exception e) {
+            log.debug("[SearchAgent] parseRawData failed: {}", e.getMessage());
             return null;
         }
     }

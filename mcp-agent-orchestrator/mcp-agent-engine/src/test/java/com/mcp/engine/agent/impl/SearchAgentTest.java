@@ -154,6 +154,9 @@ class SearchAgentTest {
                             .inputSchema("{}")
                             .build()));
 
+            when(researchSynthesizer.synthesize(anyString(), anyList(), anyList()))
+                    .thenReturn(Mono.just("确定性搜索回退：搜索完成"));
+
             StepVerifier.create(searchAgent.execute(request))
                     .assertNext(response -> {
                         assertThat(response).isNotNull();

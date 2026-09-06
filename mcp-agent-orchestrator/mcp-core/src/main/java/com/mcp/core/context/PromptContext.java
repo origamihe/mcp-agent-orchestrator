@@ -70,6 +70,9 @@ public class PromptContext {
     /** Artifact 上下文（活动文档/模组/代码的摘要 + 相关段落） */
     private String artifact;
 
+    /** 日期上下文（当前日期、时间、时区，由 DateContextProvider 注入） */
+    private String dateContext;
+
     /**
      * 将 PromptContext 转换为 PromptLayer 列表。
      * 每个非空字段生成一个独立的 PromptLayer，按 priority 排序后由 ContextAssembler 渲染。
@@ -91,6 +94,7 @@ public class PromptContext {
         addLayer(layers, "BASE_SYSTEM", 5, baseSystemPrompt);
         addLayer(layers, "MODE_LOCK", 0, modeLock);
         addLayer(layers, "WORLD_STATE", 10, worldState);
+        addLayer(layers, "DATE_CONTEXT", 12, dateContext);
         addLayer(layers, "IDENTITY", 20, identity);
         addLayer(layers, "CHARACTER", 22, character);
         addLayer(layers, "RELATIONSHIP", 24, relationship);

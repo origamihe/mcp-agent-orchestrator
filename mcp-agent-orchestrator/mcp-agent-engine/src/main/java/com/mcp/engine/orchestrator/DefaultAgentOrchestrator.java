@@ -55,6 +55,7 @@ import com.mcp.common.channel.RecallMode;
 import com.mcp.common.channel.ContextRequirement;
 import com.mcp.common.channel.WorkingContext;
 import com.mcp.common.channel.ActiveContextSource;
+import com.mcp.common.channel.SearchRequirement;
 import com.mcp.common.channel.SessionState;
 import com.mcp.common.workspace.Workspace;
 import com.mcp.common.artifact.Artifact;
@@ -1632,6 +1633,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                             .modelConfigId(ctx.getModelConfigId())
                             .executionPlan(plan)
                             .executionState(execState)
+                            .searchRequirement(SearchRequirement.REQUIRED)
                             .build();
 
                     return agentRuntime.execute(searchAgent, llmRequest)
@@ -1798,6 +1800,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                                 .modelConfigId(modelConfigId)
                                 .executionPlan(plan)
                                 .executionState(execState)
+                                .searchRequirement(SearchRequirement.REQUIRED)
                                 .build();
 
                         long t0 = System.currentTimeMillis();

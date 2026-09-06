@@ -1,5 +1,6 @@
 package com.mcp.engine.agent;
 
+import com.mcp.common.channel.SearchRequirement;
 import com.mcp.engine.execution.ExecutionPlan;
 import com.mcp.engine.execution.ExecutionState;
 import lombok.Builder;
@@ -58,6 +59,10 @@ public class LLMRequest {
 
     /** 执行状态（P1 核心：Agent 通过此字段更新执行生命周期状态） */
     private ExecutionState executionState;
+
+    /** 搜索需求级别（P2 核心：代码层判定是否需要搜索，替代 Prompt 判定） */
+    @Builder.Default
+    private SearchRequirement searchRequirement = SearchRequirement.NONE;
 
     /** 扩展变量 */
     @Builder.Default

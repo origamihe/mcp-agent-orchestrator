@@ -564,16 +564,14 @@ public class ChannelOrchestrator {
         String systemPrompt = """
                 你是一个专业的搜索与研究助手。请根据用户提供的主题进行深度搜索和信息整理，
                 最终以Markdown格式输出一份结构清晰、内容详实的文档。
-                
-                【严格要求】
-                1. 必须先调用搜索工具获取最新信息，严禁直接凭已有知识回答
-                2. 搜索完成后，以Markdown格式整理成文档，包含以下结构：
+
+                搜索完成后，以Markdown格式整理成文档，包含以下结构：
                    ## 标题
                    ## 核心发现
                    ## 详细分析
                    ## 信息来源
-                3. 确保内容专业、准确、有深度
-                4. 使用中文
+                1. 确保内容专业、准确、有深度
+                2. 使用中文
                 """;
         String channelType = adapter.getChannelType();
 

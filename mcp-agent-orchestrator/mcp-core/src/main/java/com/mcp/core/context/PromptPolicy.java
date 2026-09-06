@@ -38,7 +38,7 @@ public enum PromptPolicy {
             "MODE_LOCK", "WORKSPACE", "HOST_CONTEXT", "MEMORY", "ARTIFACT", "PLAN")),
 
     SEARCH(Set.of(
-            "MODE_LOCK", "WORKSPACE", "HOST_CONTEXT", "MEMORY", "ARTIFACT", "PLAN", "MODE_HINT")),
+            "MODE_LOCK", "DATE_CONTEXT", "WORKSPACE", "HOST_CONTEXT", "MEMORY", "ARTIFACT", "PLAN", "MODE_HINT")),
 
     ROLEPLAY(Set.of(
             "MODE_LOCK", "WORLD_STATE",

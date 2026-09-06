@@ -39,7 +39,7 @@ mcp-agent-orchestrator/
 │   └── UserProfileService, GroupContext, Workspace
 ├── mcp-core/             # 核心模块 — Prompt 构建管线
 │   ├── context/          # PromptContextBuilder, ContextProvider, ContextAssembler, PromptPolicy
-│   └── 8 个 ContextProvider (Relationship, Workspace, Artifact, GroupConversation 等)
+│   └── 9 个 ContextProvider (Date, Relationship, Workspace, Artifact, GroupConversation 等)
 ├── mcp-agent-engine/     # Agent 引擎
 │   ├── agent/            # Agent 实现 (ChatAgent, CodeAgent, SearchAgent, ResearchSynthesizer)
 │   ├── artifact/         # 文档召回 (KeywordRecallStrategy, EmbeddingRecallStrategy)
@@ -85,6 +85,7 @@ mcp-agent-orchestrator/
 | `MemoryIdentity` | mcp-common | 身份标识（平台、sessionId、userId、groupId） |
 | `SessionState` | mcp-common | 会话配置状态（Mutable） |
 | `WorkingContext` | mcp-common | 运行时工作上下文（Mutable, 生命周期 = 一次任务） |
+| `SearchRequirement` | mcp-common | 搜索需求级别（NONE/OPTIONAL/REQUIRED），代码层判定搜索必要性 |
 | `ContextRequirement` | mcp-common | 上下文加载需求等级（NONE/CONVERSATION/DOCUMENT/WORKSPACE/SEARCH） |
 | `ActiveContextSource` | mcp-common | 活跃上下文来源枚举（7 种） |
 
@@ -93,10 +94,10 @@ mcp-agent-orchestrator/
 后端实现 12 条 Pipeline/Orchestrator：
 
 - **Chat Pipeline**: User → determineContextRequirement → processContextAwareFastPath → LLM → Reply
-- **Context-Aware FastPath**: 按需加载上下文（NONE/CONVERSATION/DOCUMENT/WORKSPACE/SEARCH）
+- **Context-Aware FastPath**: 按需加载上下文（NONE/CONVERSATION/DOCUMENT/WORKSPACE/SEARCH），搜索类请求由 `SearchRequirement.REQUIRED` 强制走 SearchAgent
 - **Artifact Recall Pipeline**: 文档召回（KeywordRecallStrategy + EmbeddingRecallStrategy）
 - **Streaming Pipeline**: 逐 token 流式推送
-- **Document Generation Pipeline**: PDF/XLSX/HTML/DOCX 文件生成
+- **Document Generation Pipeline**: PDF/XLSX/HTML/DOCX 文件生成，搜索类生成由 `SearchRequirement.REQUIRED` 保证搜索执行
 - **Prompt A/B Testing Pipeline**: 变体选择 + 效果追踪
 - **Memory Pipeline**: 记忆生命周期管理
 - **Service Pipeline**: 多渠道投递（QQ/Webhook/Email）
@@ -114,17 +115,54 @@ mcp-agent-orchestrator/
 | `CapabilityAuditLog` | mcp-gateway | 结构化审计日志 |
 | `WebSocketAuthToken` | mcp-gateway | Token 生成/验证 |
 
+### 搜索强制执行模型（P2 架构修复）
+
+**核心原则：** "是否必须搜索"的确定性执行约束由代码层判定，不依赖 LLM Prompt。
+
+| 组件 | 位置 | 职责 |
+|------|------|------|
+| `SearchRequirement` | mcp-common | 搜索需求级别枚举（NONE / OPTIONAL / REQUIRED） |
+| `DateContextProvider` | mcp-core | 当前日期时间注入统一 Context（DATE_CONTEXT 层，优先级 12） |
+| `SearchAgent（重构后）` | mcp-agent-engine | 代码层强制执行搜索，废弃 Prompt 旁路 |
+
+**SearchRequirement 判定流程：**
+
+```
+ChannelOrchestrator
+    │
+    ▼
+DefaultAgentOrchestrator
+    │
+    ├─ processFastPathSearch()          → SearchRequirement.REQUIRED
+    ├─ processDocxGenerationWithSearchAgent() → SearchRequirement.REQUIRED
+    └─ processChat()                    → SearchRequirement.NONE
+    │
+    ▼
+SearchAgent.execute()
+    │
+    ├─ REQUIRED + LLM 无工具调用 → executeDeterministicFallback() 直接调用 deep_research
+    ├─ REQUIRED + LLM 有工具调用 → 正常 ReAct 循环
+    ├─ NONE                      → 接受 LLM 纯文本响应
+    └─ OPTIONAL                  → 重试一次后接受响应
+```
+
+**关键变更：**
+- `SearchAgent` 废弃 `currentRequest` 可变单例状态，改用 `LLMRequest` 参数传递
+- 废弃工具调用 Prompt 拼接旁路，统一使用 `AgentRuntime` 组装的 System Prompt
+- 统一工具调用机制为 Native Tool Calling，移除 JSON 文本 Tool Calling
+- 确定性回退机制：REQUIRED 请求在 LLM 不调用工具时，代码层直接执行 `deep_research`
+
 ### 架构指标 (最新)
 
 | 指标 | 数值 |
 |------|------|
-| Provider Count | 8 |
-| Context Count | 17 |
+| Provider Count | 9 |
+| Context Count | 18 |
 | Pipeline/Orchestrator Count | 12 |
 | RecallStrategy Count | 4 |
 | ContextRequirement Levels | 5 |
 | PromptPolicy Count | 7 |
-| Test Count | 715 (PASS: 715, FAIL: 0) |
+| Test Count | 723 (PASS: 723, FAIL: 0) |
 
 ## 环境要求
 
@@ -157,7 +195,7 @@ spring:
     password: 你的密码
 ```
 
-> 数据库表结构由 Flyway 自动管理，首次启动时会自动创建。
+> 数据库表结构由 Flyway 自动管理（V1~V27），首次启动时会自动创建。V27 新增 `llm_config.context_window` 字段。
 
 ### 2. 安装 Ollama 并拉取模型
 

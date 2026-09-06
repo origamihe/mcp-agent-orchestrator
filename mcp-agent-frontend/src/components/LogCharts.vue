@@ -150,17 +150,15 @@ function formatTime(dateStr: string): string {
 .charts-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    gap: 14px;
     margin-bottom: 20px;
 }
 
 .chart-card {
-    background: rgba(255,255,255,0.7);
-    backdrop-filter: blur(20px);
-    border-radius: 14px;
-    border: 1px solid rgba(255,255,255,0.8);
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
     padding: 16px 20px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.03);
 }
 
 .chart-card-wide {
@@ -170,7 +168,7 @@ function formatTime(dateStr: string): string {
 .chart-title {
     font-size: 13px;
     font-weight: 600;
-    color: #333;
+    color: var(--color-text);
     margin-bottom: 12px;
 }
 
@@ -205,19 +203,19 @@ function formatTime(dateStr: string): string {
     gap: 10px;
     padding: 6px 10px;
     background: rgba(231, 76, 60, 0.04);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     font-size: 12px;
 }
 
 .error-time {
     font-family: monospace;
-    color: #999;
+    color: var(--color-text-secondary);
     white-space: nowrap;
     min-width: 120px;
 }
 
 .error-message {
-    color: #555;
+    color: var(--color-text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -227,13 +225,13 @@ function formatTime(dateStr: string): string {
 .empty-chart {
     text-align: center;
     padding: 20px;
-    color: #999;
+    color: var(--color-text-secondary);
     font-size: 13px;
 }
 
 .level-badge {
     padding: 2px 8px;
-    border-radius: 12px;
+    border-radius: 4px;
     font-size: 10px;
     font-weight: 600;
     font-family: monospace;

@@ -2,7 +2,8 @@ package com.mcp.plugin.capability
 
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.daemon.impl.HighlightInfoType
-import com.intellij.codeInsight.daemon.impl.analysis.HighlightInfoHolder
+import com.intellij.lang.annotation.HighlightSeverity
+ 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.Service
@@ -197,28 +198,23 @@ class CapabilityAdapter(private val project: Project) {
             val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(doc) ?: return
 
             ReadAction.run<RuntimeException> {
-                val holder = HighlightInfoHolder(psiFile)
                 val highlights = com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerImpl
-                    .getHighlights(doc, HighlightInfoType.ERROR, project)
-                    ?: com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerImpl
-                        .getHighlights(doc, HighlightInfoType.WARNING, project)
+                    .getHighlights(doc, HighlightSeverity.ERROR, project)
 
-                if (highlights != null) {
-                    for (info in highlights) {
-                        diagnostics.add(mapOf(
-                            "filePath" to vf.path,
-                            "line" to (doc.getLineNumber(info.startOffset) + 1),
-                            "column" to (info.startOffset - doc.getLineStartOffset(doc.getLineNumber(info.startOffset)) + 1),
-                            "severity" to when {
-                                info.type.severity == HighlightInfoType.ERROR.severity -> "ERROR"
-                                info.type.severity == HighlightInfoType.WARNING.severity -> "WARNING"
-                                info.type.severity == HighlightInfoType.WEAK_WARNING.severity -> "WEAK_WARNING"
-                                else -> "INFO"
-                            },
-                            "message" to info.description,
-                            "tooltip" to info.toolTip
-                        ))
-                    }
+                for (info in highlights) {
+                    diagnostics.add(mapOf(
+                        "filePath" to vf.path,
+                        "line" to (doc.getLineNumber(info.startOffset) + 1),
+                        "column" to (info.startOffset - doc.getLineStartOffset(doc.getLineNumber(info.startOffset)) + 1),
+                        "severity" to when (info.type) {
+                            HighlightInfoType.ERROR -> "ERROR"
+                            HighlightInfoType.WARNING -> "WARNING"
+                            HighlightInfoType.WEAK_WARNING -> "WEAK_WARNING"
+                            else -> "INFO"
+                        },
+                        "message" to info.description,
+                        "tooltip" to info.toolTip
+                    ))
                 }
             }
         } catch (e: Exception) {
@@ -453,7 +449,7 @@ class CapabilityAdapter(private val project: Project) {
         val buffer = ByteArray(8192)
         val output = StringBuilder()
         var totalRead = 0
-        var bytesRead: Int
+        var bytesRead: Int = 0
 
         while (totalRead < limit && inputStream.read(buffer).also { bytesRead = it } != -1) {
             val toRead = minOf(bytesRead, limit - totalRead)

@@ -117,14 +117,14 @@ async function copyEntry() {
 }
 
 .modal-container {
-    background: #fff;
-    border-radius: 16px;
+    background: var(--color-surface);
+    border-radius: var(--radius-xl);
     width: 560px;
     max-width: 90vw;
     max-height: 80vh;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
     animation: slideUp 0.2s ease;
 }
 
@@ -133,7 +133,7 @@ async function copyEntry() {
     align-items: flex-start;
     justify-content: space-between;
     padding: 20px 24px 12px;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--color-border);
 }
 
 .modal-title-row {
@@ -144,7 +144,7 @@ async function copyEntry() {
 
 .modal-time {
     font-size: 13px;
-    color: #999;
+    color: var(--color-text-secondary);
     font-family: monospace;
 }
 
@@ -152,7 +152,7 @@ async function copyEntry() {
     background: none;
     border: none;
     font-size: 22px;
-    color: #999;
+    color: var(--color-text-secondary);
     cursor: pointer;
     padding: 0;
     line-height: 1;
@@ -161,12 +161,13 @@ async function copyEntry() {
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
 }
 
 .modal-close:hover {
-    background: #f5f5f5;
-    color: #333;
+    background: rgba(0,0,0,0.04);
+    color: var(--color-text);
+    box-shadow: none;
 }
 
 .modal-body {
@@ -182,22 +183,22 @@ async function copyEntry() {
 .section-title {
     font-size: 12px;
     font-weight: 600;
-    color: #999;
+    color: var(--color-text-secondary);
     text-transform: uppercase;
     margin-bottom: 8px;
     letter-spacing: 0.5px;
 }
 
 .message-box {
-    background: #f8f9fa;
-    border-radius: 10px;
+    background: rgba(0,0,0,0.02);
+    border-radius: var(--radius-sm);
     padding: 14px 16px;
     font-size: 13px;
     font-family: monospace;
     line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-all;
-    color: #333;
+    color: var(--color-text);
     max-height: 300px;
     overflow-y: auto;
 }
@@ -210,20 +211,20 @@ async function copyEntry() {
 
 .detail-item {
     padding: 8px 12px;
-    background: #f8f9fa;
-    border-radius: 8px;
+    background: rgba(0,0,0,0.02);
+    border-radius: var(--radius-sm);
 }
 
 .detail-label {
     font-size: 11px;
-    color: #999;
+    color: var(--color-text-secondary);
     display: block;
     margin-bottom: 2px;
 }
 
 .detail-value {
     font-size: 13px;
-    color: #333;
+    color: var(--color-text);
     font-family: monospace;
     word-break: break-all;
 }
@@ -233,41 +234,45 @@ async function copyEntry() {
     gap: 10px;
     justify-content: flex-end;
     padding: 16px 24px;
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--color-border);
 }
 
 .btn-copy {
     padding: 8px 20px;
-    border-radius: 10px;
-    border: 1px solid #667eea;
-    background: rgba(102, 126, 234, 0.08);
-    color: #667eea;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
 }
 
 .btn-copy:hover {
-    background: rgba(102, 126, 234, 0.15);
+    background: var(--accent-bg);
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+    box-shadow: none;
 }
 
 .btn-close {
     padding: 8px 20px;
-    border-radius: 10px;
-    border: 1px solid rgba(0, 0, 0, 0.12);
-    background: #fff;
-    color: #666;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
     font-size: 13px;
     cursor: pointer;
 }
 
 .btn-close:hover {
-    background: #f5f5f5;
+    background: rgba(0,0,0,0.04);
+    box-shadow: none;
 }
 
 .level-badge {
     padding: 3px 10px;
-    border-radius: 12px;
+    border-radius: 4px;
     font-size: 11px;
     font-weight: 600;
     font-family: monospace;

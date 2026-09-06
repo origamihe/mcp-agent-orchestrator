@@ -84,19 +84,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page {
-    padding: 24px 32px;
-    height: 100%;
-    overflow-y: auto;
-}
-
 .page-header {
     margin-bottom: 24px;
 }
 
 .page-header h2 {
-    font-size: 22px;
-    font-weight: 700;
+    font-size: 28px;
+    font-weight: 650;
+    letter-spacing: -0.3px;
 }
 
 .subtitle {
@@ -113,65 +108,65 @@ onMounted(() => {
 }
 
 .empty-icon {
-    width: 48px;
-    height: 48px;
+    width: 40px;
+    height: 40px;
     margin-bottom: 12px;
-    opacity: 0.3;
+    opacity: 0.25;
 }
 
 .stats-bar {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     margin-bottom: 24px;
+    flex-wrap: wrap;
 }
 
 .stat-chip {
-    padding: 12px 20px;
-    border-radius: 12px;
-    background: rgba(255,255,255,0.7);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255,255,255,0.8);
+    padding: 10px 18px;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 2px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.03);
+    min-width: 72px;
 }
 
 .stat-num {
-    font-size: 20px;
-    font-weight: 700;
-    color: #667eea;
+    font-size: 18px;
+    font-weight: 650;
+    color: var(--color-accent);
 }
 
 .stat-label {
     font-size: 11px;
     color: var(--color-text-secondary);
+    font-weight: 500;
 }
 
 .collection-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-    gap: 16px;
+    gap: 14px;
 }
 
 .collection-card {
-    background: rgba(255,255,255,0.7);
-    backdrop-filter: blur(20px);
-    border-radius: 14px;
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
     padding: 20px;
-    border: 1px solid rgba(255,255,255,0.8);
+    border: 1px solid var(--color-border);
     cursor: pointer;
-    transition: all 0.2s;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.03);
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .collection-card:hover {
-    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    background: var(--accent-bg);
+    border-color: var(--color-accent);
 }
 
 .collection-card.expanded {
-    border-color: #667eea;
+    border-color: var(--color-accent);
 }
 
 .collection-header {
@@ -211,13 +206,13 @@ onMounted(() => {
 .collection-docs {
     margin-top: 14px;
     padding-top: 14px;
-    border-top: 1px solid rgba(0,0,0,0.06);
+    border-top: 1px solid var(--color-border);
 }
 
 .doc-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
 }
 
 .doc-item {
@@ -225,7 +220,7 @@ onMounted(() => {
     justify-content: space-between;
     padding: 8px 12px;
     background: rgba(0,0,0,0.02);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     font-size: 13px;
 }
 

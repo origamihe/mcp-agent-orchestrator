@@ -125,14 +125,15 @@ class ChatPanel(
         if (text.isEmpty()) return
 
         val t = transport ?: return
-        val context = capabilityAdapter.execute("get_editor_state", emptyMap())
+        val hostContext = capabilityAdapter.execute("get_editor_state", emptyMap())
 
         t.send(OutgoingEnvelope(
             type = "chat",
             sessionId = t.sessionId,
+            userId = System.getProperty("user.name"),
             workspaceId = eventBus?.workspaceId,
             content = text,
-            context = context
+            hostContext = hostContext
         ))
 
         appendUser(text)

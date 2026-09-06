@@ -95,12 +95,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page {
-    padding: 24px 32px;
-    height: 100%;
-    overflow-y: auto;
-}
-
 .page-header {
     display: flex;
     align-items: center;
@@ -110,8 +104,9 @@ onMounted(() => {
 }
 
 .page-header h2 {
-    font-size: 22px;
-    font-weight: 700;
+    font-size: 28px;
+    font-weight: 650;
+    letter-spacing: -0.3px;
 }
 
 .subtitle {
@@ -122,13 +117,20 @@ onMounted(() => {
 .btn-refresh {
     margin-left: auto;
     padding: 8px 18px;
-    border-radius: 10px;
-    border: 1px solid #667eea;
-    background: rgba(102, 126, 234, 0.08);
-    color: #667eea;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
     cursor: pointer;
     font-size: 13px;
     font-weight: 500;
+}
+
+.btn-refresh:hover {
+    background: var(--accent-bg);
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+    box-shadow: none;
 }
 
 .btn-refresh:disabled { opacity: 0.5; }
@@ -140,36 +142,34 @@ onMounted(() => {
 }
 
 .empty-icon {
-    width: 48px;
-    height: 48px;
+    width: 40px;
+    height: 40px;
     margin-bottom: 12px;
-    opacity: 0.3;
+    opacity: 0.25;
 }
 
 .host-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-    gap: 16px;
+    gap: 14px;
 }
 
 .host-card {
-    background: rgba(255,255,255,0.7);
-    backdrop-filter: blur(20px);
-    border-radius: 14px;
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
     padding: 20px;
-    border: 1px solid rgba(255,255,255,0.8);
+    border: 1px solid var(--color-border);
     cursor: pointer;
-    transition: all 0.2s;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.03);
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .host-card:hover {
-    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-    transform: translateY(-2px);
+    background: var(--accent-bg);
+    border-color: var(--color-accent);
 }
 
 .host-card.expanded {
-    border-color: #667eea;
+    border-color: var(--color-accent);
 }
 
 .host-header {
@@ -215,7 +215,7 @@ onMounted(() => {
     border-radius: 50%;
 }
 
-.status-dot.online { background: #27ae60; }
+.status-dot.online { background: var(--color-success); }
 .status-dot.offline { background: #bdc3c7; }
 
 .status-text {
@@ -233,7 +233,7 @@ onMounted(() => {
 .host-detail {
     margin-top: 14px;
     padding-top: 14px;
-    border-top: 1px solid rgba(0,0,0,0.06);
+    border-top: 1px solid var(--color-border);
 }
 
 .detail-section {
@@ -265,7 +265,7 @@ onMounted(() => {
     gap: 10px;
     padding: 6px 10px;
     background: rgba(0,0,0,0.02);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     font-size: 13px;
 }
 
@@ -306,7 +306,7 @@ onMounted(() => {
     gap: 10px;
     padding: 6px 10px;
     background: rgba(0,0,0,0.02);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     font-size: 13px;
 }
 
@@ -330,6 +330,6 @@ onMounted(() => {
     font-size: 11px;
     font-weight: 600;
     background: rgba(39, 174, 96, 0.1);
-    color: #27ae60;
+    color: var(--color-success);
 }
 </style>

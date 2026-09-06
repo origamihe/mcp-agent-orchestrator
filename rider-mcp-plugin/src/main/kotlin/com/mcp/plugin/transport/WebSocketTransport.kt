@@ -1,5 +1,7 @@
 package com.mcp.plugin.transport
 
+import com.google.gson.Gson
+import com.google.gson.annotations.SerializedName
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -8,8 +10,11 @@ import com.mcp.plugin.event.OutgoingEnvelope
 import com.mcp.plugin.event.Protocol
 import java.net.URI
 import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.net.http.WebSocket
 import java.nio.ByteBuffer
+import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -56,13 +61,14 @@ class WebSocketTransport(private val project: Project) : Transport {
     private fun doConnect() {
         try {
             val baseUri = settings.gatewayUrl
-            val uri = if (settings.gatewayToken.isNotBlank()) {
-                URI.create("$baseUri?token=${settings.gatewayToken}")
+            val token = resolveToken(baseUri)
+            val uri = if (token.isNotBlank()) {
+                URI.create("$baseUri?token=$token")
             } else {
-                logger.warn("[Transport] No gateway token configured, connection may be rejected")
+                logger.warn("[Transport] No gateway token available, connection may be rejected")
                 URI.create(baseUri)
             }
-            logger.info("[Transport] Connecting to: $uri")
+            logger.info("[Transport] Connecting to: ${uri.toASCIIString().replace(token, "***")}")
             webSocket = httpClient.newWebSocketBuilder()
                 .buildAsync(uri, WebSocketListener())
                 .join()
@@ -79,6 +85,50 @@ class WebSocketTransport(private val project: Project) : Transport {
             scheduleReconnect()
         }
     }
+
+    private fun resolveToken(baseUri: String): String {
+        if (settings.gatewayToken.isNotBlank()) {
+            return settings.gatewayToken
+        }
+        return try {
+            val tokenUrl = deriveHttpUrl(baseUri) + "/api/hosts/token"
+            logger.info("[Transport] Fetching token from: $tokenUrl")
+            val request = HttpRequest.newBuilder()
+                .uri(URI.create(tokenUrl))
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build()
+            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() == 200) {
+                val tokenResp = Gson().fromJson(response.body(), TokenResponse::class.java)
+                val token = tokenResp.token
+                if (token.isNotBlank()) {
+                    logger.info("[Transport] Token fetched successfully")
+                    settings.gatewayToken = token
+                    token
+                } else {
+                    logger.warn("[Transport] Token response was empty")
+                    ""
+                }
+            } else {
+                logger.warn("[Transport] Token fetch failed: HTTP ${response.statusCode()}")
+                ""
+            }
+        } catch (e: Exception) {
+            logger.warn("[Transport] Token fetch error: ${e.message}")
+            ""
+        }
+    }
+
+    private fun deriveHttpUrl(wsUrl: String): String {
+        return wsUrl
+            .replace("ws://", "http://")
+            .replace("wss://", "https://")
+            .replaceAfterLast("/", "")
+            .trimEnd('/')
+    }
+
+    private data class TokenResponse(@SerializedName("token") val token: String)
 
     private fun scheduleReconnect() {
         if (!shouldReconnect.get()) return

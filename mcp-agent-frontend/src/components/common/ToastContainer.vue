@@ -134,8 +134,8 @@ defineExpose({ success, error, warning, info })
     height: 20px;
 }
 
-.toast-success .icon { color: #27ae60; }
-.toast-error .icon { color: #e74c3c; }
+.toast-success .icon { color: var(--color-success); }
+.toast-error .icon { color: var(--color-danger); }
 .toast-warning .icon { color: #f39c12; }
 .toast-info .icon { color: #667eea; }
 

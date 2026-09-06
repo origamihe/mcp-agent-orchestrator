@@ -21,11 +21,9 @@
 
 .not-found h1 {
     font-size: 72px;
-    font-weight: 700;
-    background: var(--gradient-dream);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-weight: 650;
+    color: var(--color-accent);
+    opacity: 0.6;
 }
 
 .not-found p {
@@ -35,10 +33,15 @@
 
 .btn-home {
     padding: 10px 24px;
-    border-radius: 10px;
-    background: var(--gradient-dream);
+    border-radius: var(--radius-sm);
+    background: var(--color-accent);
     color: #fff;
     text-decoration: none;
     font-weight: 500;
+    font-size: 14px;
+}
+
+.btn-home:hover {
+    box-shadow: var(--shadow-glow);
 }
 </style>

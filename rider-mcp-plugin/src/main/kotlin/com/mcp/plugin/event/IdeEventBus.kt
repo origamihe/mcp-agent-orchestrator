@@ -9,6 +9,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.util.messages.MessageBusConnection
 import com.mcp.plugin.transport.Transport
 import com.mcp.plugin.transport.WebSocketTransport
 import com.mcp.plugin.util.LanguageDetector
@@ -20,11 +21,12 @@ class IdeEventBus(private val project: Project) {
     private val transport: Transport? = project.getService(WebSocketTransport::class.java)
     val workspaceId: String = "${project.name}-${UUID.randomUUID().toString().take(8)}"
 
-    fun init() {
-        val connection = project.messageBus.connect()
+    private var connection: MessageBusConnection? = null
 
-        @Suppress("DEPRECATION")
-        connection.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
+    fun init() {
+        connection = project.messageBus.connect()
+
+        connection?.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
             override fun fileOpened(source: FileEditorManager, file: VirtualFile) {
                 fire(IdeEventType.FILE_OPENED, mapOf(
                     "filePath" to file.path,
@@ -38,7 +40,7 @@ class IdeEventBus(private val project: Project) {
             }
         })
 
-        connection.subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
+        connection?.subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
                 events.mapNotNull { it.file }.forEach { file ->
                     fire(IdeEventType.FILE_SAVED, mapOf(
@@ -49,6 +51,12 @@ class IdeEventBus(private val project: Project) {
         })
 
         logger.info("[IdeEventBus] Initialized, workspaceId=$workspaceId")
+    }
+
+    fun dispose() {
+        connection?.disconnect()
+        connection = null
+        logger.info("[IdeEventBus] Disposed, workspaceId=$workspaceId")
     }
 
     private fun fire(type: IdeEventType, payload: Map<String, Any?> = emptyMap()) {

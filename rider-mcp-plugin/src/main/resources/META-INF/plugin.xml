@@ -41,6 +41,8 @@
                 serviceImplementation="com.mcp.plugin.transport.WebSocketTransport"/>
         <projectService
                 serviceImplementation="com.mcp.plugin.diff.DiffApplier"/>
+        <projectService
+                serviceImplementation="com.mcp.plugin.session.AgentSessionController"/>
     </extensions>
 
     <actions>

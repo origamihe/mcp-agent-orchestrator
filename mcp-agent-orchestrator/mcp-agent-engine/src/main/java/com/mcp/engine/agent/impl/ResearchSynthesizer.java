@@ -120,6 +120,12 @@ public class ResearchSynthesizer {
                 - stance: 判断文章立场（Neutral=中立, Supportive=支持性, Critical=批评性, Mixed=混合）
                 - confidence: 基于文章来源权威性和内容质量，估算可信度（0.0-1.0）
                 - publishedAt: 从文章内容中提取发布时间信息，尽可能准确
+                
+                【重要约束 - 禁止编造事实】：
+                - 只总结输入文章中实际存在的内容，不得补充任何输入中不存在的信息
+                - 不得根据常识补全文章中没有的事件、数据、人名、地名
+                - 不得根据标题猜测文章正文
+                - 如果文章内容不足以确定某个字段，使用 null 或明确说明"信息不足"
                 """;
 
         List<ChatMessage> messages = new ArrayList<>();
@@ -324,6 +330,15 @@ public class ResearchSynthesizer {
                 - 不要写"核心发现"和"主要观点"内容重复
                 - 核心发现是"结论"，主题分析是"过程"
                 - 如果证据不足，明确说"目前仅有X个来源，信息有限，以下分析仅供参考"
+                
+                【Grounding 约束 - 严格禁止编造】：
+                - 所有事实必须来自输入证据池，不得补充输入中不存在的事件、数据、人名、地名
+                - 不得生成输入证据中不存在的 URL
+                - 不得生成输入证据中不存在的发布日期
+                - 不得根据常识补全新闻事件
+                - 不得根据标题猜测文章正文
+                - 无法从证据确认的信息必须标记为"未知"或"未确认"
+                - 系统日期不等于新闻发布日期，不得将当前日期作为事件日期
                 """;
 
         List<ChatMessage> messages = new ArrayList<>();
@@ -334,6 +349,8 @@ public class ResearchSynthesizer {
         return llmClient.chatWithTools(messages, List.of())
                 .map(response -> {
                     String content = response.getContent();
+                    log.info("[SearchSynthesis] grounded=true evidencePool={}",
+                            pool.evidenceItems().size());
                     return (content != null && !content.isBlank()) ? content : buildFallbackFromPool(pool);
                 })
                 .onErrorReturn(buildFallbackFromPool(pool));

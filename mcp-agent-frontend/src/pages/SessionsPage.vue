@@ -107,19 +107,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page {
-    padding: 24px 32px;
-    height: 100%;
-    overflow-y: auto;
-}
-
 .page-header {
     margin-bottom: 24px;
 }
 
 .page-header h2 {
-    font-size: 22px;
-    font-weight: 700;
+    font-size: 28px;
+    font-weight: 650;
+    letter-spacing: -0.3px;
 }
 
 .subtitle {
@@ -131,28 +126,35 @@ onMounted(() => {
 
 .session-toolbar {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     margin-bottom: 20px;
     align-items: center;
 }
 
 .filter-select {
     padding: 8px 14px;
-    border-radius: 10px;
-    border: 1px solid rgba(0,0,0,0.1);
-    background: rgba(255,255,255,0.9);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
     font-size: 13px;
 }
 
 .btn-refresh {
     padding: 8px 18px;
-    border-radius: 10px;
-    border: 1px solid #667eea;
-    background: rgba(102, 126, 234, 0.08);
-    color: #667eea;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
     cursor: pointer;
     font-size: 13px;
     font-weight: 500;
+}
+
+.btn-refresh:hover {
+    background: var(--accent-bg);
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+    box-shadow: none;
 }
 
 .btn-refresh:disabled { opacity: 0.5; }
@@ -164,19 +166,17 @@ onMounted(() => {
 }
 
 .empty-icon {
-    width: 48px;
-    height: 48px;
+    width: 40px;
+    height: 40px;
     margin-bottom: 12px;
-    opacity: 0.3;
+    opacity: 0.25;
 }
 
 .session-table-wrapper {
-    background: rgba(255,255,255,0.7);
-    backdrop-filter: blur(20px);
-    border-radius: 16px;
-    border: 1px solid rgba(255,255,255,0.8);
+    background: var(--color-surface);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
     overflow: hidden;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.04);
 }
 
 .session-table {
@@ -186,29 +186,33 @@ onMounted(() => {
 
 .session-table th {
     text-align: left;
-    padding: 14px 20px;
+    padding: 12px 18px;
     font-size: 12px;
     font-weight: 600;
     color: var(--color-text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    border-bottom: 1px solid rgba(0,0,0,0.06);
-    background: rgba(0,0,0,0.02);
+    border-bottom: 1px solid var(--color-border);
+    background: rgba(0,0,0,0.015);
 }
 
 .session-table td {
-    padding: 14px 20px;
+    padding: 12px 18px;
     font-size: 13px;
-    border-bottom: 1px solid rgba(0,0,0,0.04);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.session-table tbody tr:last-child td {
+    border-bottom: none;
 }
 
 .clickable-row {
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background 0.15s;
 }
 
 .clickable-row:hover {
-    background: rgba(102, 126, 234, 0.04);
+    background: var(--accent-bg);
 }
 
 .agent-cell { font-weight: 600; }

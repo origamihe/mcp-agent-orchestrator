@@ -70,19 +70,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page {
-    padding: 24px 32px;
-    height: 100%;
-    overflow-y: auto;
-}
-
 .page-header {
     margin-bottom: 24px;
 }
 
 .page-header h2 {
-    font-size: 22px;
-    font-weight: 700;
+    font-size: 28px;
+    font-weight: 650;
+    letter-spacing: -0.3px;
 }
 
 .subtitle {
@@ -99,35 +94,34 @@ onMounted(() => {
 }
 
 .empty-icon {
-    width: 48px;
-    height: 48px;
+    width: 40px;
+    height: 40px;
     margin-bottom: 12px;
-    opacity: 0.3;
+    opacity: 0.25;
 }
 
 .policy-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-    gap: 16px;
+    gap: 14px;
 }
 
 .policy-card {
-    background: rgba(255,255,255,0.7);
-    backdrop-filter: blur(20px);
-    border-radius: 14px;
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
     padding: 20px;
-    border: 1px solid rgba(255,255,255,0.8);
+    border: 1px solid var(--color-border);
     cursor: pointer;
-    transition: all 0.2s;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.03);
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .policy-card:hover {
-    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    background: var(--accent-bg);
+    border-color: var(--color-accent);
 }
 
 .policy-card.expanded {
-    border-color: #667eea;
+    border-color: var(--color-accent);
 }
 
 .policy-header {
@@ -157,7 +151,7 @@ onMounted(() => {
     align-items: center;
     justify-content: center;
     font-size: 18px;
-    color: #667eea;
+    color: var(--color-accent);
     font-weight: 600;
 }
 
@@ -176,15 +170,20 @@ onMounted(() => {
 }
 
 .summary-chip.active {
-    background: rgba(102, 126, 234, 0.08);
-    color: #667eea;
+    background: var(--accent-bg);
+    color: var(--color-accent);
     font-weight: 500;
+}
+
+.summary-chip.danger {
+    background: rgba(198, 40, 40, 0.06);
+    color: #c62828;
 }
 
 .policy-detail {
     margin-top: 16px;
     padding-top: 16px;
-    border-top: 1px solid rgba(0,0,0,0.06);
+    border-top: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -214,15 +213,15 @@ onMounted(() => {
     border-radius: 20px;
     font-size: 12px;
     background: rgba(39, 174, 96, 0.08);
-    color: #27ae60;
+    color: var(--color-success);
 }
 
 .restrict-chip {
     padding: 3px 10px;
     border-radius: 20px;
     font-size: 12px;
-    background: rgba(231, 76, 60, 0.08);
-    color: #e74c3c;
+    background: rgba(255, 59, 48, 0.08);
+    color: var(--color-danger);
 }
 
 .empty-hint {

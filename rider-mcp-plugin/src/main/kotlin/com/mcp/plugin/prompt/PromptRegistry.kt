@@ -90,9 +90,10 @@ class PromptRegistry : DefaultActionGroup("MCP Agent", true) {
                     transport?.send(OutgoingEnvelope(
                         type = "chat",
                         sessionId = transport.sessionId,
+                        userId = System.getProperty("user.name"),
                         workspaceId = eventBus?.workspaceId,
                         content = fullPrompt,
-                        context = capabilityAdapter.execute("get_editor_state", emptyMap())
+                        hostContext = capabilityAdapter.execute("get_editor_state", emptyMap())
                     ))
                 }
             }

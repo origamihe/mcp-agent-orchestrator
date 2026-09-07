@@ -8,19 +8,27 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
 import com.mcp.plugin.McpPluginSettings
 import com.mcp.plugin.capability.ALL_CAPABILITIES
-import com.mcp.plugin.capability.CapabilityAdapter
 import com.mcp.plugin.event.IdeEventBus
 import com.mcp.plugin.event.OutgoingEnvelope
-import com.mcp.plugin.event.Protocol
+import com.mcp.plugin.session.AgentEvent
+import com.mcp.plugin.session.AgentMode
+import com.mcp.plugin.session.AgentSessionController
+import com.mcp.plugin.session.ModelInfo
 import com.mcp.plugin.transport.Transport
 import com.mcp.plugin.transport.WebSocketTransport
 import java.awt.BorderLayout
 import java.awt.Dimension
+import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.event.AdjustmentEvent
+import java.awt.event.AdjustmentListener
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import javax.swing.*
-import javax.swing.text.DefaultCaret
+import javax.swing.text.BadLocationException
+import javax.swing.text.SimpleAttributeSet
+import javax.swing.text.StyleConstants
+import javax.swing.text.StyledDocument
 
 class ChatPanel(
     private val project: Project,
@@ -28,27 +36,25 @@ class ChatPanel(
 ) : JPanel(BorderLayout()) {
 
     companion object {
-        private const val HTML_CONTENT_TYPE = "text/html"
         private const val FONT_FAMILY = "SansSerif"
         private const val WELCOME_MESSAGE = "欢迎使用 MCP Agent！输入 Ctrl+Enter 发送消息。"
-
-        private const val ACTION_APPLY_DIFF = "apply_diff"
-        private const val ACTION_APPLY_FULL = "apply_full"
-        private const val ACTION_NOTIFY = "notify"
     }
 
     private val logger = Logger.getInstance(ChatPanel::class.java)
     private val settings = ApplicationManager.getApplication().getService(McpPluginSettings::class.java) ?: McpPluginSettings()
     private val transport: Transport? = project.getService(WebSocketTransport::class.java)
     private val eventBus = project.getService(IdeEventBus::class.java)
-    private val capabilityAdapter = project.getService(CapabilityAdapter::class.java)
+    private val sessionController: AgentSessionController = project.getService(AgentSessionController::class.java)
 
     private val chatArea = JTextPane().apply {
         isEditable = false
-        contentType = HTML_CONTENT_TYPE
-        putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
-        (caret as DefaultCaret).updatePolicy = DefaultCaret.ALWAYS_UPDATE
     }
+
+    private val chatScroll = JBScrollPane(chatArea).apply {
+        verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+    }
+
+    private val executionTimeline = ExecutionTimeline(chatArea, chatScroll)
 
     private val inputField = JTextArea(3, 30).apply {
         lineWrap = true
@@ -56,33 +62,96 @@ class ChatPanel(
         font = Font(FONT_FAMILY, Font.PLAIN, 13)
     }
 
-    private val sendButton = JButton("发送").apply { addActionListener { sendChat() } }
-    private val statusLabel = JLabel("● 未连接").apply { foreground = JBColor.RED }
+    private val sendButton = JButton("Send").apply {
+        addActionListener { sendChat() }
+    }
+
+    private val cancelButton = JButton("Stop").apply {
+        isVisible = false
+        addActionListener { cancelRun() }
+    }
+
+    private val statusLabel = JLabel("Disconnected").apply { foreground = JBColor.RED }
+
+    private val modeCombo = JComboBox(AgentMode.entries.toTypedArray()).apply {
+        selectedItem = AgentMode.fromBackendMode(settings.agentMode)
+        addActionListener {
+            val mode = selectedItem as? AgentMode ?: return@addActionListener
+            sessionController.changeMode(mode)
+        }
+    }
+
+    private val modelCombo = JComboBox<ModelInfo>().apply {
+        setRenderer { _, value, _, _, _ ->
+            JLabel(value?.displayName ?: "Default")
+        }
+        addActionListener {
+            val model = selectedItem as? ModelInfo
+            sessionController.changeModel(model?.configId)
+        }
+    }
 
     init {
         layout = BorderLayout(5, 5)
         border = BorderFactory.createEmptyBorder(8, 8, 8, 8)
 
-        val header = JPanel(BorderLayout()).apply {
-            add(JLabel(settings.agentName).apply { font = Font(FONT_FAMILY, Font.BOLD, 16) }, BorderLayout.WEST)
-            add(statusLabel, BorderLayout.EAST)
-            border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.LIGHT_GRAY)
-        }
-
-        val chatScroll = JBScrollPane(chatArea).apply {
-            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
-        }
-
-        val inputPanel = JPanel(BorderLayout(5, 5)).apply {
-            add(JBScrollPane(inputField).apply { preferredSize = Dimension(300, 60) }, BorderLayout.CENTER)
-            add(sendButton, BorderLayout.EAST)
-            border = BorderFactory.createMatteBorder(1, 0, 0, 0, JBColor.LIGHT_GRAY)
-        }
+        val header = buildHeader()
+        val inputPanel = buildInputPanel()
 
         add(header, BorderLayout.NORTH)
         add(chatScroll, BorderLayout.CENTER)
         add(inputPanel, BorderLayout.SOUTH)
 
+        setupInputKeyListener()
+        setupTransportListeners()
+        setupSessionListeners()
+
+        sessionController.init()
+
+        if (settings.autoConnect) {
+            transport?.connect()
+            sendHello()
+        }
+
+        appendSystem(WELCOME_MESSAGE)
+    }
+
+    private fun buildHeader(): JPanel {
+        val topRow = JPanel(BorderLayout()).apply {
+            add(JLabel(settings.agentName).apply { font = Font(FONT_FAMILY, Font.BOLD, 16) }, BorderLayout.WEST)
+            add(statusLabel, BorderLayout.EAST)
+            border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.LIGHT_GRAY)
+        }
+
+        val modePanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
+            add(JLabel("Mode:").apply { font = Font(FONT_FAMILY, Font.PLAIN, 11) })
+            add(modeCombo.apply { font = Font(FONT_FAMILY, Font.PLAIN, 11) })
+            add(JLabel("Model:").apply { font = Font(FONT_FAMILY, Font.PLAIN, 11) })
+            add(modelCombo.apply { font = Font(FONT_FAMILY, Font.PLAIN, 11) })
+        }
+
+        val header = JPanel(BorderLayout()).apply {
+            add(topRow, BorderLayout.NORTH)
+            add(modePanel, BorderLayout.SOUTH)
+        }
+        return header
+    }
+
+    private fun buildInputPanel(): JPanel {
+        val inputPanel = JPanel(BorderLayout(5, 5)).apply {
+            add(JBScrollPane(inputField).apply { preferredSize = Dimension(300, 60) }, BorderLayout.CENTER)
+
+            val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0)).apply {
+                add(cancelButton)
+                add(sendButton)
+            }
+            add(buttonPanel, BorderLayout.EAST)
+            border = BorderFactory.createMatteBorder(1, 0, 0, 0, JBColor.LIGHT_GRAY)
+        }
+        return inputPanel
+    }
+
+    private fun setupInputKeyListener() {
         inputField.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
                 if (e.keyCode == KeyEvent.VK_ENTER && e.isControlDown) {
@@ -91,21 +160,31 @@ class ChatPanel(
                 }
             }
         })
+    }
 
+    private fun setupTransportListeners() {
         transport?.onMessage { json -> handleIncoming(json) }
         transport?.onConnectionChange { connected ->
             SwingUtilities.invokeLater {
-                statusLabel.text = if (connected) "● 已连接" else "● 未连接"
+                statusLabel.text = if (connected) "Connected" else "Disconnected"
                 statusLabel.foreground = if (connected) JBColor(0x00AA00, 0x00AA00) else JBColor.RED
             }
         }
+    }
 
-        if (settings.autoConnect) {
-            transport?.connect()
-            sendHello()
+    private fun setupSessionListeners() {
+        sessionController.onModelListChanged { models ->
+            SwingUtilities.invokeLater {
+                val currentSelection = modelCombo.selectedItem as? ModelInfo
+                modelCombo.removeAllItems()
+                modelCombo.addItem(ModelInfo("", "Default", null))
+                models.forEach { modelCombo.addItem(it) }
+                if (currentSelection != null) {
+                    val idx = models.indexOfFirst { it.configId == currentSelection.configId }
+                    if (idx >= 0) modelCombo.selectedIndex = idx + 1
+                }
+            }
         }
-
-        appendSystem(WELCOME_MESSAGE)
     }
 
     private fun sendHello() {
@@ -124,99 +203,143 @@ class ChatPanel(
         val text = inputField.text.trim()
         if (text.isEmpty()) return
 
-        val t = transport ?: return
-        val context = capabilityAdapter.execute("get_editor_state", emptyMap())
-
-        t.send(OutgoingEnvelope(
-            type = "chat",
-            sessionId = t.sessionId,
-            workspaceId = eventBus?.workspaceId,
-            content = text,
-            context = context
-        ))
-
         appendUser(text)
         inputField.text = ""
+        cancelButton.isVisible = true
+        sendButton.isEnabled = false
+
+        sessionController.sendChat(text) { runId ->
+            logger.info("[ChatPanel] Run started: $runId")
+        }
+    }
+
+    private fun cancelRun() {
+        sessionController.cancelRun()
+        cancelButton.isVisible = false
+        sendButton.isEnabled = true
     }
 
     private fun handleIncoming(json: String) {
-        SwingUtilities.invokeLater {
-            try {
-                val msg = Protocol.fromJson(json)
-                when (msg.type) {
-                    "capability_call" -> {
-                        val callId = msg.callId ?: return@invokeLater
-                        val capability = msg.capability ?: return@invokeLater
-                        val params = msg.params ?: emptyMap()
-                        val result = capabilityAdapter.execute(capability, params)
-                        val t = transport ?: return@invokeLater
-                        t.send(OutgoingEnvelope(
-                            type = "capability_result",
-                            sessionId = t.sessionId,
-                            callId = callId,
-                            capability = capability,
-                            result = result
-                        ))
-                    }
-                    "reply" -> {
-                        appendAgent(msg.content ?: "")
-                        msg.actions?.forEach { action ->
-                            when (action["type"]) {
-                                ACTION_APPLY_DIFF -> {
-                                    val filePath = action["filePath"] as? String ?: return@forEach
-                                    val diff = action["diff"] as? String ?: return@forEach
-                                    logger.warn("[ChatPanel] apply_diff via reply action — should use capability_call for full security audit")
-                                    val result = JOptionPane.showConfirmDialog(
-                                        this, "Agent 建议修改: $filePath\n\n是否应用？",
-                                        "Apply Diff", JOptionPane.YES_NO_OPTION
-                                    )
-                                    if (result == JOptionPane.YES_OPTION) {
-                                        capabilityAdapter.execute("apply_diff", mapOf("filePath" to filePath, "diff" to diff))
-                                    }
-                                }
-                                ACTION_APPLY_FULL -> {
-                                    val filePath = action["filePath"] as? String ?: return@forEach
-                                    val content = action["content"] as? String ?: return@forEach
-                                    logger.warn("[ChatPanel] apply_full via reply action — should use capability_call for full security audit")
-                                    capabilityAdapter.execute("apply_full_content", mapOf("filePath" to filePath, "content" to content))
-                                }
-                                ACTION_NOTIFY -> {
-                                    val title = action["title"] as? String ?: ""
-                                    val body = action["body"] as? String ?: ""
-                                    JOptionPane.showMessageDialog(this, body, title, JOptionPane.INFORMATION_MESSAGE)
-                                }
-                            }
-                        }
-                    }
+        sessionController.handleMessage(json) { event ->
+            SwingUtilities.invokeLater {
+                if (sessionController.isStaleEvent(event.generation)) {
+                    logger.debug("[ChatPanel] Stale event ignored (gen=${event.generation})")
+                    return@invokeLater
                 }
-            } catch (e: Exception) {
-                logger.error("[ChatPanel] Error handling message: ${e.message}")
+                renderEvent(event)
+            }
+        }
+    }
+
+    /**
+     * 渲染事件分发。
+     *
+     * 核心原则：
+     * - 用户消息和 Agent 回复由 ChatPanel 直接渲染
+     * - 所有执行事件（ToolCall/FileRead/Search/MCP/Diff 等）委托给 ExecutionTimeline
+     * - ExecutionTimeline 只渲染来自真实 capability_call → execute → capability_result 链路的事件
+     */
+    private fun renderEvent(event: AgentEvent) {
+        when (event) {
+            is AgentEvent.UserMessage -> appendUser(event.content)
+
+            is AgentEvent.FinalAnswer -> {
+                appendAgent(event.content)
+                SwingUtilities.invokeLater {
+                    cancelButton.isVisible = false
+                    sendButton.isEnabled = true
+                }
+            }
+
+            is AgentEvent.RunStarted -> {
+                appendSystem("Run started — ${event.mode.displayName}")
+                executionTimeline.renderEvent(event)
+            }
+
+            is AgentEvent.RunCompleted -> {
+                executionTimeline.renderEvent(event)
+                SwingUtilities.invokeLater {
+                    cancelButton.isVisible = false
+                    sendButton.isEnabled = true
+                }
+            }
+
+            is AgentEvent.RunFailed -> {
+                executionTimeline.renderEvent(event)
+                SwingUtilities.invokeLater {
+                    cancelButton.isVisible = false
+                    sendButton.isEnabled = true
+                }
+            }
+
+            is AgentEvent.RunCancelled -> {
+                appendSystem("Run cancelled")
+                executionTimeline.renderEvent(event)
+                SwingUtilities.invokeLater {
+                    cancelButton.isVisible = false
+                    sendButton.isEnabled = true
+                }
+            }
+
+            is AgentEvent.Thinking -> executionTimeline.renderEvent(event)
+
+            is AgentEvent.ToolCallStarted,
+            is AgentEvent.ToolCallCompleted,
+            is AgentEvent.ToolCallFailed,
+            is AgentEvent.FileRead,
+            is AgentEvent.FileSearch,
+            is AgentEvent.MCPToolCall,
+            is AgentEvent.DiffCreated,
+            is AgentEvent.DiffApplied -> {
+                executionTimeline.renderEvent(event)
             }
         }
     }
 
     private fun appendUser(text: String) {
-        val escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
-        appendHtml("<div style='margin:8px 0;'><b style='color:#4A90D9;'>👤 你</b><br>$escaped</div>")
+        appendDoc("You", text, userStyle)
     }
 
     private fun appendAgent(text: String) {
-        val escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
-        appendHtml("<div style='margin:8px 0;'><b style='color:#50B86C;'>🤖 ${settings.agentName}</b><br>$escaped</div>")
+        appendDoc(settings.agentName, text, agentStyle)
     }
 
     private fun appendSystem(text: String) {
-        appendHtml("<div style='margin:4px 0; color:#888; font-size:11px;'>$text</div>")
+        appendToDoc("$text\n", systemStyle)
     }
 
-    private fun appendHtml(html: String) {
-        val current = chatArea.text ?: "<html><body></body></html>"
-        val bodyClose = current.indexOf("</body>")
-        val newContent = if (bodyClose > 0) {
-            current.substring(0, bodyClose) + html + "\n" + current.substring(bodyClose)
-        } else {
-            "<html><body>$html</body></html>"
-        }
-        chatArea.text = newContent
+    private fun appendDoc(sender: String, text: String, style: SimpleAttributeSet) {
+        appendToDoc("$sender:\n", style)
+        appendToDoc("$text\n\n", normalStyle)
     }
+
+    private fun appendToDoc(text: String, attr: SimpleAttributeSet) {
+        try {
+            val doc = chatArea.styledDocument
+            doc.insertString(doc.length, text, attr)
+        } catch (e: BadLocationException) {
+            logger.error("[ChatPanel] Failed to append to document: ${e.message}")
+        }
+    }
+
+    private val userStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setBold(this, true)
+            StyleConstants.setForeground(this, JBColor(0x4A90D9, 0x4A90D9))
+        }
+
+    private val agentStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setBold(this, true)
+            StyleConstants.setForeground(this, JBColor(0x50B86C, 0x50B86C))
+        }
+
+    private val systemStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, JBColor.GRAY)
+            StyleConstants.setFontSize(this, 11)
+        }
+
+    private val normalStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet()
 }

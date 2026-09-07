@@ -14,88 +14,97 @@ import java.io.File
 class DiffApplier(private val project: Project) {
     private val logger = Logger.getInstance(DiffApplier::class.java)
 
-    fun applyDiff(filePath: String, diff: String, callback: (Boolean) -> Unit = {}) {
+    fun applyDiff(filePath: String, diff: String): Boolean {
         if (!PathValidator.isPathInWorkspace(filePath, project.basePath)) {
             logger.warn("[DiffApplier] applyDiff blocked: path outside workspace: $filePath")
-            callback(false)
-            return
+            return false
         }
         if (PathValidator.isSensitivePath(filePath)) {
             logger.warn("[DiffApplier] applyDiff blocked: sensitive path: $filePath")
-            callback(false)
-            return
+            return false
         }
 
-        ApplicationManager.getApplication().invokeLater {
-            try {
-                val file = File(filePath)
-                if (!file.exists()) {
-                    logger.warn("[DiffApplier] File not found: $filePath")
-                    callback(false)
-                    return@invokeLater
-                }
+        return try {
+            var success = false
+            ApplicationManager.getApplication().invokeAndWait {
+                try {
+                    val file = File(filePath)
+                    if (!file.exists()) {
+                        logger.warn("[DiffApplier] File not found: $filePath")
+                        return@invokeAndWait
+                    }
 
-                val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: run {
-                    callback(false)
-                    return@invokeLater
-                }
+                    val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: run {
+                        return@invokeAndWait
+                    }
 
-                val originalDoc = FileDocumentManager.getInstance().getDocument(vf) ?: run {
-                    callback(false)
-                    return@invokeLater
-                }
+                    val originalDoc = FileDocumentManager.getInstance().getDocument(vf) ?: run {
+                        return@invokeAndWait
+                    }
 
-                val patchedContent = applyPatchInMemory(originalDoc.text, diff)
-                if (patchedContent == null) {
-                    callback(false)
-                    return@invokeLater
-                }
+                    val patchedContent = applyPatchInMemory(originalDoc.text, diff)
+                    if (patchedContent == null) {
+                        return@invokeAndWait
+                    }
 
-                WriteCommandAction.runWriteCommandAction(project) {
-                    originalDoc.setText(patchedContent)
-                    FileDocumentManager.getInstance().saveDocument(originalDoc)
+                    WriteCommandAction.runWriteCommandAction(project) {
+                        originalDoc.setText(patchedContent)
+                        FileDocumentManager.getInstance().saveDocument(originalDoc)
+                    }
+                    logger.info("[DiffApplier] Applied diff to: $filePath")
+                    success = true
+                } catch (e: Exception) {
+                    logger.error("[DiffApplier] Failed: ${e.message}")
                 }
-                logger.info("[DiffApplier] Applied diff to: $filePath")
-                callback(true)
-            } catch (e: Exception) {
-                logger.error("[DiffApplier] Failed: ${e.message}")
-                callback(false)
             }
+            success
+        } catch (e: Exception) {
+            logger.error("[DiffApplier] Failed: ${e.message}")
+            false
         }
     }
 
-    fun applyFullContent(filePath: String, newContent: String) {
+    fun applyFullContent(filePath: String, newContent: String): Boolean {
         if (!PathValidator.isPathInWorkspace(filePath, project.basePath)) {
             logger.warn("[DiffApplier] applyFullContent blocked: path outside workspace: $filePath")
-            return
+            return false
         }
         if (PathValidator.isSensitivePath(filePath)) {
             logger.warn("[DiffApplier] applyFullContent blocked: sensitive path: $filePath")
-            return
+            return false
         }
 
-        ApplicationManager.getApplication().invokeLater {
-            try {
-                val file = File(filePath)
-                if (!file.exists()) {
-                    file.parentFile?.mkdirs()
-                    file.writeText(newContent)
-                    LocalFileSystem.getInstance().refreshAndFindFileByPath(filePath)
-                    logger.info("[DiffApplier] Created new file: $filePath")
-                    return@invokeLater
-                }
+        return try {
+            var success = false
+            ApplicationManager.getApplication().invokeAndWait {
+                try {
+                    val file = File(filePath)
+                    if (!file.exists()) {
+                        file.parentFile?.mkdirs()
+                        file.writeText(newContent)
+                        LocalFileSystem.getInstance().refreshAndFindFileByPath(filePath)
+                        logger.info("[DiffApplier] Created new file: $filePath")
+                        success = true
+                        return@invokeAndWait
+                    }
 
-                val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: return@invokeLater
-                val doc = FileDocumentManager.getInstance().getDocument(vf) ?: return@invokeLater
+                    val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: return@invokeAndWait
+                    val doc = FileDocumentManager.getInstance().getDocument(vf) ?: return@invokeAndWait
 
-                WriteCommandAction.runWriteCommandAction(project) {
-                    doc.setText(newContent)
-                    FileDocumentManager.getInstance().saveDocument(doc)
+                    WriteCommandAction.runWriteCommandAction(project) {
+                        doc.setText(newContent)
+                        FileDocumentManager.getInstance().saveDocument(doc)
+                    }
+                    logger.info("[DiffApplier] Applied full content to: $filePath")
+                    success = true
+                } catch (e: Exception) {
+                    logger.error("[DiffApplier] Failed: ${e.message}")
                 }
-                logger.info("[DiffApplier] Applied full content to: $filePath")
-            } catch (e: Exception) {
-                logger.error("[DiffApplier] Failed: ${e.message}")
             }
+            success
+        } catch (e: Exception) {
+            logger.error("[DiffApplier] Failed: ${e.message}")
+            false
         }
     }
 

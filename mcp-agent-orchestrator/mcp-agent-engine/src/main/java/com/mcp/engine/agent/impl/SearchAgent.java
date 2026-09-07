@@ -111,11 +111,11 @@ public class SearchAgent implements Agent {
         SearchRequirement searchRequirement = request.getSearchRequirement();
         ExecutionState execState = request.getExecutionState();
 
-        log.info("[SearchDecision] requestId={} sessionId={} requirement={} toolAuthorized={}",
-                execState != null ? execState.getExecutionId() : "N/A",
+        log.info("[SearchContract] sessionId={} requirement={} toolCallingEnabled=true "
+                + "deterministicFallbackEnabled=true requestId={}",
                 sessionId,
                 searchRequirement,
-                request.getExecutionPlan() != null && request.getExecutionPlan().toolPolicy().allowSearch());
+                execState != null ? execState.getExecutionId() : "N/A");
 
         log.debug("[SearchAgent] Executing: session={}, userMessage={}",
                 sessionId,
@@ -164,14 +164,39 @@ public class SearchAgent implements Agent {
         return reactLoop(messages, 0, new ArrayList<>(), userMessage, maxRounds, searchRequirement, request)
                 .timeout(Duration.ofSeconds(300))
                 .flatMap(result -> {
-                    if (researchSynthesizer != null
-                            && (!result.searchResults().isEmpty() || !result.documents().isEmpty())) {
-                        log.debug("[SearchAgent] Post-processing: synthesizing {} results and {} documents",
-                                result.searchResults().size(), result.documents().size());
-                        return researchSynthesizer.synthesize(
-                                userMessage, result.searchResults(), result.documents());
+                    List<SearchResult> validResults = filterValidSearchResults(result.searchResults());
+                    List<SearchDocument> validDocs = filterValidSearchDocuments(result.documents());
+
+                    log.info("[SearchEvidence] sessionId={} resultCount={} validEvidenceCount={} "
+                            + "invalidEvidenceCount={} validDocCount={}",
+                            sessionId,
+                            result.searchResults().size(),
+                            validResults.size(),
+                            result.searchResults().size() - validResults.size(),
+                            validDocs.size());
+
+                    boolean hasEvidence = !validResults.isEmpty() || !validDocs.isEmpty();
+
+                    if (searchRequirement == SearchRequirement.REQUIRED && !hasEvidence) {
+                        log.warn("[SearchContract] sessionId={} status=FAILED reason=NO_VALID_EVIDENCE "
+                                + "requirement=REQUIRED rawResults={} validResults={}",
+                                sessionId, result.searchResults().size(), validResults.size());
+                        return Mono.just("[SearchContract] 搜索失败：REQUIRED 搜索未能获取有效 Evidence。"
+                                + "原始搜索结果数=" + result.searchResults().size()
+                                + "，有效结果数=" + validResults.size()
+                                + "。请尝试使用不同的搜索词，或稍后重试。");
                     }
-                    if (!result.searchResults().isEmpty() || !result.documents().isEmpty()) {
+
+                    if (researchSynthesizer != null && hasEvidence) {
+                        log.info("[SearchGrounding] sessionId={} sourceUrls={} documents={} "
+                                + "enteringSynthesis=true",
+                                sessionId,
+                                validResults.stream().filter(r -> r.url() != null && !r.url().isBlank()).count(),
+                                validDocs.size());
+                        return researchSynthesizer.synthesize(
+                                userMessage, validResults, validDocs);
+                    }
+                    if (hasEvidence) {
                         log.warn("[SearchAgent] ResearchSynthesizer not configured, returning raw results");
                     }
                     return Mono.just(result.finalAnswer());
@@ -190,45 +215,27 @@ public class SearchAgent implements Agent {
     /**
      * 最小化工具使用指引 — 仅指导 LLM 如何使用工具，不决定何时使用工具。
      * 是否必须搜索由代码层 SearchRequirement 决定，不由本 Prompt 决定。
+     * <p>
+     * P1 简化：移除研究报告格式模板，避免诱导 LLM 在不调用工具时直接生成"研究报告"。
+     * 最终研究报告格式由 ResearchSynthesizer 负责。
      */
     private String buildMinimalToolInstructions() {
         return """
                 【工具使用指引】
 
-                你是一个搜索助手，可以使用以下工具获取最新信息：
+                你可以使用以下工具获取最新信息：
                 - deep_research: 深度联网搜索，获取多源搜索结果和网页正文
                 - web_search: 基础网页搜索
                 - multi_search: 多搜索引擎并行搜索
                 - fetch_webpage: 抓取指定网页内容
 
-                工具调用格式（由系统自动处理，无需手动构造JSON）。
-
                 使用规则：
-                1. 优先使用 deep_research 获取全面信息
+                1. 优先调用 deep_research 工具获取信息
                 2. 如果 deep_research 返回空结果，可尝试 web_search 或 multi_search
-                3. 收集足够信息后，综合分析并给出最终答案
+                3. 必须调用工具，不要凭记忆回答
                 4. 不要向用户描述工具调用过程
                 5. 不要输出"我会使用..."、"接下来我将..."等预告文字
                 6. 使用中文回答，引用具体来源
-
-                最终输出格式：
-                ## 核心发现
-                （2-3句话概括最重要的发现）
-
-                ## 主要观点
-                按主题分类，列出不同来源的共识
-
-                ## 争议分析
-                （如存在不同观点）标注分歧
-
-                ## 不确定性说明
-                哪些信息尚待证实
-
-                ## 综合判断
-                总体趋势和后续关注
-
-                ## 信息来源
-                引用所有来源
                 """;
     }
 
@@ -568,20 +575,20 @@ public class SearchAgent implements Agent {
      * P0.5 改进：
      * 1. 必须经过 PolicyEngine 授权检查
      * 2. 必须验证 ToolExecutionResult.isSuccess()
-     * 3. 必须验证搜索结果非空
+     * 3. 必须验证搜索结果非空且有效（URL、标题、内容至少有一项非空）
      * 只有三个条件都满足，才判定 Search Fulfilled。
      */
     private Mono<ReactResult> executeDeterministicFallback(
             String userQuery, List<ToolResultEntry> existingResults, LLMRequest request) {
         String executionId = request.getExecutionState() != null
                 ? request.getExecutionState().getExecutionId() : "N/A";
-        log.info("[ToolFallback] requestId={} reason=EXECUTING_DETERMINISTIC_FALLBACK tool=deep_research "
-                + "existingResults={}",
+        log.info("[SearchContract] requirement=REQUIRED toolCallDetected=false "
+                + "deterministicFallback=true tool=deep_research "
+                + "requestId={} existingResults={}",
                 executionId, existingResults.size());
 
         if (toolExecutor == null || toolRegistry == null) {
-            log.error("[ToolFallback] requestId={} Cannot execute deterministic fallback: "
-                    + "toolExecutor or toolRegistry is null", executionId);
+            log.error("[SearchContract] requestId={} status=FAILED reason=NO_TOOL_EXECUTOR", executionId);
             return Mono.just(buildFinalResult(
                     "抱歉，搜索工具不可用，无法完成所需的搜索任务。",
                     existingResults));
@@ -594,7 +601,7 @@ public class SearchAgent implements Agent {
         return executeAuthorizedTool("deep_research", args, request)
                 .flatMap(result -> {
                     if (!result.isSuccess()) {
-                        log.error("[ToolFallback] requestId={} Deterministic fallback FAILED: "
+                        log.error("[SearchContract] requestId={} status=FAILED reason=EXECUTION_ERROR "
                                 + "status={} error={}",
                                 executionId, result.status(), result.error());
                         return Mono.just(buildFinalResult(
@@ -613,25 +620,48 @@ public class SearchAgent implements Agent {
                     allResults.add(new ToolResultEntry("deep_research", resultStr, parsedContent));
 
                     boolean hasValidResults = false;
+                    int validCount = 0;
                     if (parsedContent != null) {
                         Object resultCount = parsedContent.get("resultCount");
                         Object resList = parsedContent.get("results");
-                        hasValidResults = (resultCount instanceof Number n && n.intValue() > 0)
-                                || (resList instanceof List<?> l && !l.isEmpty());
+                        boolean hasCount = resultCount instanceof Number n && n.intValue() > 0;
+                        boolean hasList = resList instanceof List<?> l && !l.isEmpty();
+                        if (hasList) {
+                            List<?> list = (List<?>) resList;
+                            for (Object item : list) {
+                                if (item instanceof Map<?, ?> m) {
+                                    String title = (String) ((Map<String, Object>) m).getOrDefault("title", "");
+                                    String snippet = (String) ((Map<String, Object>) m).getOrDefault("snippet", "");
+                                    String url = (String) ((Map<String, Object>) m).getOrDefault("url", "");
+                                    if (!title.toString().isBlank() || !snippet.toString().isBlank() || !url.toString().isBlank()) {
+                                        validCount++;
+                                    }
+                                }
+                            }
+                        }
+                        hasValidResults = validCount > 0;
                     }
 
+                    log.info("[SearchEvidence] requestId={} resultCount={} validEvidenceCount={} "
+                            + "invalidEvidenceCount={}",
+                            executionId,
+                            parsedContent != null ? parsedContent.get("resultCount") : 0,
+                            validCount,
+                            parsedContent != null && parsedContent.get("results") instanceof List<?> l
+                                    ? l.size() - validCount : 0);
+
                     if (!hasValidResults) {
-                        log.warn("[ToolFallback] requestId={} Deterministic fallback returned no valid results",
-                                executionId);
+                        log.warn("[SearchContract] requestId={} status=FAILED reason=NO_VALID_EVIDENCE "
+                                + "validCount={}",
+                                executionId, validCount);
                         return Mono.just(buildFinalResult(
                                 "搜索未能返回有效结果。请尝试使用不同的搜索词，或稍后重试。",
                                 allResults));
                     }
 
-                    log.info("[ToolFallback] requestId={} Deterministic fallback SUCCESS: "
-                            + "search fulfilled with {} results",
-                            executionId,
-                            parsedContent != null ? parsedContent.get("resultCount") : "unknown");
+                    log.info("[SearchContract] requestId={} status=SUCCESS "
+                            + "validEvidenceCount={}",
+                            executionId, validCount);
                     return Mono.just(buildFinalResult(
                             "以下是通过确定性搜索回退机制获取的结果。",
                             allResults));
@@ -1014,22 +1044,31 @@ public class SearchAgent implements Agent {
                                           List<SearchDocument> documents) {
         log.debug("[SearchAgent] parseDeepResearchResult: map keys={}", map.keySet());
 
+        int skippedEmpty = 0;
         if (map.containsKey("results")) {
             Object resultsObj = map.get("results");
             if (resultsObj instanceof List<?> list) {
                 for (Object item : list) {
                     if (item instanceof Map<?, ?> m) {
                         Map<String, Object> r = (Map<String, Object>) m;
+                        String title = (String) r.getOrDefault("title", "");
+                        String snippet = (String) r.getOrDefault("snippet", "");
+                        String url = (String) r.getOrDefault("url", "");
+                        if (title.isBlank() && snippet.isBlank() && url.isBlank()) {
+                            skippedEmpty++;
+                            continue;
+                        }
                         searchResults.add(new SearchResult(
-                                (String) r.getOrDefault("title", ""),
-                                (String) r.getOrDefault("snippet", ""),
-                                (String) r.getOrDefault("url", ""),
+                                title, snippet, url,
                                 (String) r.getOrDefault("source", "Unknown"),
                                 r.get("score") instanceof Number n ? n.doubleValue() : 0.0
                         ));
                     }
                 }
-                log.debug("[SearchAgent] parseDeepResearchResult: extracted {} results", searchResults.size());
+                if (skippedEmpty > 0) {
+                    log.warn("[SearchAgent] parseDeepResearchResult: skipped {} empty results", skippedEmpty);
+                }
+                log.debug("[SearchAgent] parseDeepResearchResult: extracted {} valid results", searchResults.size());
             }
         }
         if (map.containsKey("documents")) {
@@ -1060,10 +1099,14 @@ public class SearchAgent implements Agent {
                         for (Object item : list) {
                             if (item instanceof Map<?, ?> m) {
                                 Map<String, Object> r = (Map<String, Object>) m;
+                                String title = (String) r.getOrDefault("title", "");
+                                String snippet = (String) r.getOrDefault("snippet", "");
+                                String url = (String) r.getOrDefault("url", "");
+                                if (title.isBlank() && snippet.isBlank() && url.isBlank()) {
+                                    continue;
+                                }
                                 searchResults.add(new SearchResult(
-                                        (String) r.getOrDefault("title", ""),
-                                        (String) r.getOrDefault("snippet", ""),
-                                        (String) r.getOrDefault("url", ""),
+                                        title, snippet, url,
                                         (String) r.getOrDefault("source", "Unknown"),
                                         r.get("score") instanceof Number n ? n.doubleValue() : 0.0
                                 ));
@@ -1125,10 +1168,14 @@ public class SearchAgent implements Agent {
                 for (Object item : list) {
                     if (item instanceof Map<?, ?> m) {
                         Map<String, Object> r = (Map<String, Object>) m;
+                        String title = (String) r.getOrDefault("title", "");
+                        String snippet = (String) r.getOrDefault("snippet", "");
+                        String url = (String) r.getOrDefault("url", "");
+                        if (title.isBlank() && snippet.isBlank() && url.isBlank()) {
+                            continue;
+                        }
                         searchResults.add(new SearchResult(
-                                (String) r.getOrDefault("title", ""),
-                                (String) r.getOrDefault("snippet", ""),
-                                (String) r.getOrDefault("url", ""),
+                                title, snippet, url,
                                 (String) r.getOrDefault("source", "Unknown"),
                                 r.get("score") instanceof Number n ? n.doubleValue() : 0.0
                         ));
@@ -1141,4 +1188,50 @@ public class SearchAgent implements Agent {
     private record ReactResult(String finalAnswer, List<SearchResult> searchResults, List<SearchDocument> documents) {}
 
     private record ToolResultEntry(String toolName, String jsonForLlm, Map<String, Object> parsedContent) {}
+
+    /**
+     * 过滤有效的 SearchResult，排除空字段的结果。
+     * 有效结果至少需要 title 或 snippet 或 url 中有一个非空。
+     */
+    private List<SearchResult> filterValidSearchResults(List<SearchResult> results) {
+        if (results == null || results.isEmpty()) {
+            return List.of();
+        }
+        return results.stream()
+                .filter(this::isValidSearchResult)
+                .toList();
+    }
+
+    /**
+     * 过滤有效的 SearchDocument，排除空字段的文档。
+     */
+    private List<SearchDocument> filterValidSearchDocuments(List<SearchDocument> docs) {
+        if (docs == null || docs.isEmpty()) {
+            return List.of();
+        }
+        return docs.stream()
+                .filter(this::isValidSearchDocument)
+                .toList();
+    }
+
+    /**
+     * 判断 SearchResult 是否有效：至少需要 title、snippet、url 中有一个非空。
+     */
+    private boolean isValidSearchResult(SearchResult r) {
+        if (r == null) return false;
+        boolean hasTitle = r.title() != null && !r.title().isBlank();
+        boolean hasSnippet = r.snippet() != null && !r.snippet().isBlank();
+        boolean hasUrl = r.url() != null && !r.url().isBlank();
+        return hasTitle || hasSnippet || hasUrl;
+    }
+
+    /**
+     * 判断 SearchDocument 是否有效：至少需要 title 或 content 非空。
+     */
+    private boolean isValidSearchDocument(SearchDocument d) {
+        if (d == null) return false;
+        boolean hasTitle = d.title() != null && !d.title().isBlank();
+        boolean hasContent = d.content() != null && !d.content().isBlank();
+        return hasTitle || hasContent;
+    }
 }

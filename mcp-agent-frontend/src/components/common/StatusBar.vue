@@ -3,7 +3,6 @@
         <div class="status-left">
             <span :class="['status-dot', statusClass]"></span>
             <span class="status-text">{{ statusText }}</span>
-            <span v-if="currentModelName" class="current-model">{{ currentModelName }}</span>
         </div>
         <div class="status-right">
             <span v-if="currentModelName" class="current-model">{{ currentModelName }}</span>
@@ -21,7 +20,7 @@ const props = defineProps<{
     models: LlmModelInfo[]
 }>()
 
-const statusText = computed(() => (props.isConnected ? '已连接' : '未连接'))
+const statusText = computed(() => (props.isConnected ? 'Connected' : 'Disconnected'))
 
 const statusClass = computed(() =>
     props.isConnected ? 'status-connected' : 'status-disconnected',
@@ -39,11 +38,9 @@ const currentModelName = computed(() => {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px 20px;
-    background: rgba(255,255,255,0.55);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-bottom: 1.5px solid rgba(255,255,255,0.5);
+    padding: 8px 24px;
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
     flex-shrink: 0;
 }
 
@@ -53,18 +50,9 @@ const currentModelName = computed(() => {
     gap: 8px;
 }
 
-.current-model {
-    font-size: 12px;
-    color: var(--color-text-secondary);
-    padding: 2px 10px;
-    background: #f0f2f5;
-    border-radius: 9999px;
-    font-weight: 500;
-}
-
 .status-dot {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     display: inline-block;
 }
@@ -78,12 +66,23 @@ const currentModelName = computed(() => {
 }
 
 .status-text {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--color-text-secondary);
+    font-weight: 500;
 }
 
 .status-right {
     display: flex;
     align-items: center;
+}
+
+.current-model {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    padding: 3px 10px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    font-weight: 500;
 }
 </style>

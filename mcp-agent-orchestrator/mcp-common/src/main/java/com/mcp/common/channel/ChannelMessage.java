@@ -23,6 +23,18 @@ public class ChannelMessage {
     private String replyToMessageId;        // 回复的消息ID（引用回复）
 
     /**
+     * Agent 执行模式 — 由 Host 端指定。
+     * 有效值: "CHAT", "CODING"（对应 Plugin 的 AgentMode.toBackendMode()）
+     */
+    private String mode;
+
+    /**
+     * 模型配置 ID — 由 Host 端指定的 LLM 模型。
+     * 对应 ModelRegistry 中的 configId。
+     */
+    private String modelConfigId;
+
+    /**
      * Host 上下文 — Host 向 Agent 提供的世界感知能力。
      * 不同 Host 填充不同的字段子集：
      * - IDE Host: currentFilePath, gitDiff, diagnostics...

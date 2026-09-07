@@ -103,6 +103,11 @@ public class IdeHostAdapter implements ChannelAdapter {
         String sessionId = payload.has("sessionId")
                 ? payload.get("sessionId").asText() : "ide-default";
 
+        String mode = payload.has("mode") && !payload.get("mode").isNull()
+                ? payload.get("mode").asText() : null;
+        String modelConfigId = payload.has("model") && !payload.get("model").isNull()
+                ? payload.get("model").asText() : null;
+
         HostContext hostContext = buildHostContext(payload);
 
         return ChannelMessage.builder()
@@ -112,6 +117,8 @@ public class IdeHostAdapter implements ChannelAdapter {
                 .chatType(ChannelMessage.ChatType.HOST)
                 .platformSessionId(sessionId)
                 .hostContext(hostContext)
+                .mode(mode)
+                .modelConfigId(modelConfigId)
                 .raw(new HashMap<>() {{ put("payload", payload); }})
                 .build();
     }

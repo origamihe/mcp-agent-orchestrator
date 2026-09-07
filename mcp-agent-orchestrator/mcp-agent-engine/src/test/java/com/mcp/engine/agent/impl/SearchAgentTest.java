@@ -12,6 +12,7 @@ import com.mcp.llm.client.LlmClient;
 import com.mcp.llm.client.LlmToolResponse;
 import com.mcp.tools.executor.ToolExecutor;
 import com.mcp.tools.model.ToolDefinition;
+import com.mcp.tools.model.ToolError;
 import com.mcp.tools.model.ToolExecutionRequest;
 import com.mcp.tools.model.ToolExecutionResult;
 import com.mcp.tools.registry.ToolRegistry;
@@ -206,6 +207,148 @@ class SearchAgentTest {
                     .verifyComplete();
 
             verify(llmClient, atLeast(2)).chatWithTools(anyList(), anyList());
+            verify(toolExecutor, atLeastOnce()).execute(any(ToolExecutionRequest.class));
+        }
+
+        @Test
+        @DisplayName("Test 2: REQUIRED + LLM 无 Tool Call + deep_research 空结果 → 明确失败")
+        void shouldReturnFailureWhenNoToolCallAndEmptyResults() {
+            LLMRequest request = buildRequest(SearchRequirement.REQUIRED);
+
+            when(llmClient.chatWithTools(anyList(), anyList()))
+                    .thenReturn(Mono.just(new LlmToolResponse("让我想想...", List.of())));
+
+            ToolExecutionResult fallbackResult = ToolExecutionResult.success(
+                    "fallback-003", "deep_research",
+                    "{\"content\":\"{\\\"resultCount\\\":0,\\\"results\\\":[]}\"}",
+                    Duration.ZERO);
+            when(toolExecutor.execute(any(ToolExecutionRequest.class)))
+                    .thenReturn(Mono.just(fallbackResult));
+
+            when(toolRegistry.getTool("deep_research"))
+                    .thenReturn(Mono.just(ToolDefinition.builder()
+                            .name("deep_research")
+                            .description("深度搜索")
+                            .inputSchema("{}")
+                            .build()));
+
+            StepVerifier.create(searchAgent.execute(request))
+                    .assertNext(response -> {
+                        assertThat(response).isNotNull();
+                        assertThat(response).contains("搜索失败");
+                        assertThat(response).doesNotContain("让我想想");
+                    })
+                    .verifyComplete();
+
+            verify(llmClient, atLeastOnce()).chatWithTools(anyList(), anyList());
+            verify(toolExecutor, atLeastOnce()).execute(any(ToolExecutionRequest.class));
+            verify(researchSynthesizer, never()).synthesize(anyString(), anyList(), anyList());
+        }
+
+        @Test
+        @DisplayName("Test 3: REQUIRED + deep_research execution failure → 明确失败")
+        void shouldReturnFailureWhenExecutionFails() {
+            LLMRequest request = buildRequest(SearchRequirement.REQUIRED);
+
+            when(llmClient.chatWithTools(anyList(), anyList()))
+                    .thenReturn(Mono.just(new LlmToolResponse("让我想想...", List.of())));
+
+            ToolExecutionResult failResult = ToolExecutionResult.executionError(
+                    "fallback-004", "deep_research",
+                    ToolError.network("网络连接失败"),
+                    Duration.ZERO);
+            when(toolExecutor.execute(any(ToolExecutionRequest.class)))
+                    .thenReturn(Mono.just(failResult));
+
+            when(toolRegistry.getTool("deep_research"))
+                    .thenReturn(Mono.just(ToolDefinition.builder()
+                            .name("deep_research")
+                            .description("深度搜索")
+                            .inputSchema("{}")
+                            .build()));
+
+            StepVerifier.create(searchAgent.execute(request))
+                    .assertNext(response -> {
+                        assertThat(response).isNotNull();
+                        assertThat(response).contains("搜索失败");
+                        assertThat(response).doesNotContain("让我想想");
+                    })
+                    .verifyComplete();
+
+            verify(llmClient, atLeastOnce()).chatWithTools(anyList(), anyList());
+            verify(toolExecutor, atLeastOnce()).execute(any(ToolExecutionRequest.class));
+            verify(researchSynthesizer, never()).synthesize(anyString(), anyList(), anyList());
+        }
+
+        @Test
+        @DisplayName("Test 4: REQUIRED + deep_research 返回 resultCount>0 但结果无正文/URL → Evidence 验证失败")
+        void shouldFailEvidenceValidationWhenResultsHaveNoContent() {
+            LLMRequest request = buildRequest(SearchRequirement.REQUIRED);
+
+            when(llmClient.chatWithTools(anyList(), anyList()))
+                    .thenReturn(Mono.just(new LlmToolResponse("让我想想...", List.of())));
+
+            ToolExecutionResult fallbackResult = ToolExecutionResult.success(
+                    "fallback-005", "deep_research",
+                    "{\"content\":\"{\\\"resultCount\\\":3,\\\"results\\\":[{\\\"title\\\":\\\"\\\",\\\"snippet\\\":\\\"\\\",\\\"url\\\":\\\"\\\"},{\\\"title\\\":\\\"\\\",\\\"snippet\\\":\\\"\\\",\\\"url\\\":\\\"\\\"},{\\\"title\\\":\\\"\\\",\\\"snippet\\\":\\\"\\\",\\\"url\\\":\\\"\\\"}]}\"}",
+                    Duration.ZERO);
+            when(toolExecutor.execute(any(ToolExecutionRequest.class)))
+                    .thenReturn(Mono.just(fallbackResult));
+
+            when(toolRegistry.getTool("deep_research"))
+                    .thenReturn(Mono.just(ToolDefinition.builder()
+                            .name("deep_research")
+                            .description("深度搜索")
+                            .inputSchema("{}")
+                            .build()));
+
+            StepVerifier.create(searchAgent.execute(request))
+                    .assertNext(response -> {
+                        assertThat(response).isNotNull();
+                        assertThat(response).contains("搜索失败");
+                        assertThat(response).doesNotContain("让我想想");
+                    })
+                    .verifyComplete();
+
+            verify(llmClient, atLeastOnce()).chatWithTools(anyList(), anyList());
+            verify(toolExecutor, atLeastOnce()).execute(any(ToolExecutionRequest.class));
+            verify(researchSynthesizer, never()).synthesize(anyString(), anyList(), anyList());
+        }
+
+        @Test
+        @DisplayName("Test 1: REQUIRED + LLM 无 Tool Call → LLM text 被忽略，使用 deterministic fallback 结果")
+        void shouldIgnoreLlmTextWhenNoToolCallAndRequired() {
+            LLMRequest request = buildRequest(SearchRequirement.REQUIRED);
+
+            when(llmClient.chatWithTools(anyList(), anyList()))
+                    .thenReturn(Mono.just(new LlmToolResponse("这里有搜索结果：今天AI取得重大突破...", List.of())));
+
+            ToolExecutionResult fallbackResult = ToolExecutionResult.success(
+                    "fallback-006", "deep_research",
+                    "{\"content\":\"{\\\"results\\\":[{\\\"title\\\":\\\"真实科技新闻\\\",\\\"snippet\\\":\\\"真实搜索结果内容\\\",\\\"url\\\":\\\"https://example.com/news\\\"}]}\"}",
+                    Duration.ZERO);
+            when(toolExecutor.execute(any(ToolExecutionRequest.class)))
+                    .thenReturn(Mono.just(fallbackResult));
+
+            when(toolRegistry.getTool("deep_research"))
+                    .thenReturn(Mono.just(ToolDefinition.builder()
+                            .name("deep_research")
+                            .description("深度搜索")
+                            .inputSchema("{}")
+                            .build()));
+
+            when(researchSynthesizer.synthesize(anyString(), anyList(), anyList()))
+                    .thenReturn(Mono.just("确定性搜索回退结果"));
+
+            StepVerifier.create(searchAgent.execute(request))
+                    .assertNext(response -> {
+                        assertThat(response).isNotNull();
+                        assertThat(response).doesNotContain("AI取得重大突破");
+                        assertThat(response).contains("确定性搜索回退");
+                    })
+                    .verifyComplete();
+
+            verify(llmClient, atLeastOnce()).chatWithTools(anyList(), anyList());
             verify(toolExecutor, atLeastOnce()).execute(any(ToolExecutionRequest.class));
         }
     }

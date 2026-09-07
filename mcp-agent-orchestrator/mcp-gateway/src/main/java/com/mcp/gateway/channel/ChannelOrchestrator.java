@@ -1,6 +1,7 @@
 package com.mcp.gateway.channel;
 
 import com.mcp.common.channel.ActiveContextSource;
+import com.mcp.common.channel.AgentMode;
 import com.mcp.common.channel.ChannelMessage;
 import com.mcp.common.channel.ChannelReply;
 import com.mcp.common.channel.IntentType;
@@ -211,11 +212,16 @@ public class ChannelOrchestrator {
                 sessionId,
                 workspace != null ? workspace.getWorkspaceId() : "none");
 
+        // 应用 Host 端指定的 mode 和 model（Plugin 通过 OutgoingEnvelope.mode/model 传递）
+        applyHostMode(state, msg.getMode());
+        String modelConfigId = msg.getModelConfigId();
+
         RequestContext ctx = RequestContext.builder()
                 .identity(identity)
                 .userProfile(userProfile)
                 .groupContext(groupContext)
                 .sessionState(state)
+                .modelConfigId(modelConfigId)
                 .workingContext(workingContexts.computeIfAbsent(sessionId, k -> new WorkingContext()))
                 .workspace(workspace)
                 .userMessage(userMessage)
@@ -305,6 +311,25 @@ public class ChannelOrchestrator {
             }
         } catch (Exception e) {
             log.warn("[WorldState] Failed to load world state for session {}: {}", sessionId, e.getMessage());
+        }
+    }
+
+    /**
+     * 应用 Host 端（如 IDE Plugin）指定的 Agent 执行模式。
+     * 如果 Host 端未指定 mode，则保持 SessionState 的当前模式不变。
+     */
+    private void applyHostMode(SessionState state, String hostMode) {
+        if (hostMode == null || hostMode.isBlank()) {
+            return;
+        }
+        try {
+            AgentMode mode = AgentMode.valueOf(hostMode.toUpperCase());
+            if (state.getMode() != mode) {
+                state.setMode(mode);
+                log.debug("[Channel] Host mode applied: {} -> {}", hostMode, mode);
+            }
+        } catch (IllegalArgumentException e) {
+            log.warn("[Channel] Unknown host mode: '{}', keeping current mode: {}", hostMode, state.getMode());
         }
     }
 

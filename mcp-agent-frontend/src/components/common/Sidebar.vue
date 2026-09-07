@@ -1,32 +1,94 @@
 <template>
     <nav :class="['sidebar', { collapsed: !isExpanded }]">
-        <router-link to="/" class="sidebar-logo" @click="isExpanded = true">
-            <span class="logo-text">{{ isExpanded ? 'MCP Agent' : 'MCP' }}</span>
-            <span v-if="isExpanded" class="logo-subtitle">Admin Console</span>
+        <router-link to="/" class="sidebar-brand" @click="isExpanded = true">
+            <span class="brand-text">{{ isExpanded ? 'MCP Agent' : 'MCP' }}</span>
+            <span v-if="isExpanded" class="brand-subtitle">Console</span>
         </router-link>
-        <ul class="sidebar-nav">
-            <li
-                v-for="item in navItems"
-                :key="item.path"
-            >
+
+        <div class="sidebar-nav">
+            <div class="nav-section">
                 <router-link
+                    to="/"
+                    :class="['nav-item', { active: isActive('/') }]"
+                    :title="'Overview'"
+                >
+                    <HomeIcon class="nav-icon" />
+                    <span v-if="isExpanded" class="nav-label">Overview</span>
+                </router-link>
+            </div>
+
+            <div class="nav-section">
+                <span v-if="isExpanded" class="nav-section-label">Agent</span>
+                <router-link
+                    v-for="item in agentItems"
+                    :key="item.path"
                     :to="item.path"
                     :class="['nav-item', { active: isActive(item.path) }]"
                     :title="item.label"
                 >
                     <component :is="item.icon" class="nav-icon" />
                     <span v-if="isExpanded" class="nav-label">{{ item.label }}</span>
-                    <span v-if="isExpanded && item.badge" class="nav-badge">{{ item.badge }}</span>
                 </router-link>
-            </li>
-        </ul>
-        <button class="sidebar-toggle" @click="isExpanded = !isExpanded" :title="isExpanded ? '收起' : '展开'">
+            </div>
+
+            <div class="nav-section">
+                <span v-if="isExpanded" class="nav-section-label">Knowledge</span>
+                <router-link
+                    v-for="item in knowledgeItems"
+                    :key="item.path"
+                    :to="item.path"
+                    :class="['nav-item', { active: isActive(item.path) }]"
+                    :title="item.label"
+                >
+                    <component :is="item.icon" class="nav-icon" />
+                    <span v-if="isExpanded" class="nav-label">{{ item.label }}</span>
+                </router-link>
+            </div>
+
+            <div class="nav-section">
+                <span v-if="isExpanded" class="nav-section-label">Control</span>
+                <router-link
+                    v-for="item in controlItems"
+                    :key="item.path"
+                    :to="item.path"
+                    :class="['nav-item', { active: isActive(item.path) }]"
+                    :title="item.label"
+                >
+                    <component :is="item.icon" class="nav-icon" />
+                    <span v-if="isExpanded" class="nav-label">{{ item.label }}</span>
+                </router-link>
+            </div>
+
+            <div class="nav-section">
+                <span v-if="isExpanded" class="nav-section-label">System</span>
+                <router-link
+                    v-for="item in systemItems"
+                    :key="item.path"
+                    :to="item.path"
+                    :class="['nav-item', { active: isActive(item.path) }]"
+                    :title="item.label"
+                >
+                    <component :is="item.icon" class="nav-icon" />
+                    <span v-if="isExpanded" class="nav-label">{{ item.label }}</span>
+                </router-link>
+            </div>
+
+            <div class="nav-section nav-section-last">
+                <router-link
+                    to="/settings"
+                    :class="['nav-item', { active: isActive('/settings') }]"
+                    :title="'Settings'"
+                >
+                    <Cog6ToothIcon class="nav-icon" />
+                    <span v-if="isExpanded" class="nav-label">Settings</span>
+                </router-link>
+            </div>
+        </div>
+
+        <button class="sidebar-toggle" @click="isExpanded = !isExpanded" :title="isExpanded ? 'Collapse' : 'Expand'">
             <ChevronLeftIcon v-if="isExpanded" class="toggle-icon" />
             <ChevronRightIcon v-else class="toggle-icon" />
         </button>
-        <div class="sidebar-footer" v-if="isExpanded">
-            <span class="version">v2.0 · Workspace First</span>
-        </div>
     </nav>
 </template>
 
@@ -35,16 +97,16 @@ import { ref } from 'vue'
 import { useRoute } from 'vue-router'
 import {
     HomeIcon,
-    ComputerDesktopIcon,
-    ChatBubbleLeftRightIcon,
-    Cog6ToothIcon,
     SquaresPlusIcon,
+    ClockIcon,
     BookOpenIcon,
+    CircleStackIcon,
     WrenchScrewdriverIcon,
     ShieldCheckIcon,
-    ClockIcon,
+    ComputerDesktopIcon,
+    ChatBubbleLeftRightIcon,
     DocumentTextIcon,
-    CircleStackIcon,
+    Cog6ToothIcon,
     ChevronLeftIcon,
     ChevronRightIcon,
 } from '@heroicons/vue/24/outline'
@@ -52,18 +114,25 @@ import {
 const route = useRoute()
 const isExpanded = ref(true)
 
-const navItems = [
-    { path: '/', label: '仪表盘', icon: HomeIcon },
-    { path: '/agents', label: 'Agent 管理', icon: SquaresPlusIcon },
-    { path: '/runs', label: '执行历史', icon: ClockIcon },
-    { path: '/memory', label: '记忆管理', icon: CircleStackIcon },
-    { path: '/knowledge', label: '知识库', icon: BookOpenIcon },
-    { path: '/tools', label: '工具管理', icon: WrenchScrewdriverIcon },
-    { path: '/policies', label: '安全策略', icon: ShieldCheckIcon },
-    { path: '/hosts', label: '宿主管理', icon: ComputerDesktopIcon },
-    { path: '/sessions', label: '会话', icon: ChatBubbleLeftRightIcon },
-    { path: '/logs', label: '日志', icon: DocumentTextIcon },
-    { path: '/settings', label: '系统配置', icon: Cog6ToothIcon },
+const agentItems = [
+    { path: '/agents', label: 'Agents', icon: SquaresPlusIcon },
+    { path: '/runs', label: 'Runs', icon: ClockIcon },
+]
+
+const knowledgeItems = [
+    { path: '/knowledge', label: 'Knowledge', icon: BookOpenIcon },
+    { path: '/memory', label: 'Memory', icon: CircleStackIcon },
+]
+
+const controlItems = [
+    { path: '/tools', label: 'Tools', icon: WrenchScrewdriverIcon },
+    { path: '/policies', label: 'Policies', icon: ShieldCheckIcon },
+]
+
+const systemItems = [
+    { path: '/hosts', label: 'Hosts', icon: ComputerDesktopIcon },
+    { path: '/sessions', label: 'Sessions', icon: ChatBubbleLeftRightIcon },
+    { path: '/logs', label: 'Logs', icon: DocumentTextIcon },
 ]
 
 function isActive(path: string): boolean {
@@ -76,154 +145,156 @@ function isActive(path: string): boolean {
 
 <style scoped>
 .sidebar {
-    width: 240px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.6) 100%);
-    backdrop-filter: blur(30px);
-    -webkit-backdrop-filter: blur(30px);
+    width: 232px;
+    background: var(--color-bg);
     color: var(--color-text);
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    border-right: 1.5px solid rgba(255,255,255,0.6);
-    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-right: 1px solid var(--color-border);
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     overflow: hidden;
 }
 
 .sidebar.collapsed {
-    width: 64px;
+    width: 60px;
 }
 
-.sidebar-logo {
-    padding: 24px 20px 16px;
-    text-align: center;
-    border-bottom: 1.5px solid rgba(255,255,255,0.5);
+.sidebar-brand {
+    padding: 22px 18px 18px;
     text-decoration: none;
     display: block;
-    transition: padding 0.3s;
+    text-align: center;
+    border-bottom: 1px solid var(--color-border);
+    transition: padding 0.25s;
 }
 
-.sidebar.collapsed .sidebar-logo {
-    padding: 20px 12px 14px;
+.sidebar.collapsed .sidebar-brand {
+    padding: 18px 10px 14px;
 }
 
-.logo-text {
-    font-size: 22px;
+.brand-text {
+    font-size: 20px;
     font-weight: 700;
-    background: var(--gradient-dream);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: var(--color-primary);
+    letter-spacing: -0.3px;
 }
 
-.sidebar.collapsed .logo-text {
-    font-size: 18px;
+.sidebar.collapsed .brand-text {
+    font-size: 16px;
 }
 
-.logo-subtitle {
+.brand-subtitle {
     display: block;
     font-size: 11px;
     color: var(--color-text-secondary);
-    margin-top: 2px;
-    letter-spacing: 1px;
+    margin-top: 1px;
+    letter-spacing: 0.8px;
+    font-weight: 500;
 }
 
 .sidebar-nav {
     list-style: none;
-    padding: 16px 12px;
+    padding: 12px 10px;
     flex: 1;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
 }
 
 .sidebar.collapsed .sidebar-nav {
-    padding: 16px 8px;
+    padding: 12px 6px;
+}
+
+.nav-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.nav-section-last {
+    margin-top: auto;
+}
+
+.nav-section-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 14px 14px 6px;
+    display: block;
 }
 
 .nav-item {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
+    gap: 10px;
+    padding: 9px 14px;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 500;
-    border-radius: 14px;
-    color: #444;
+    border-radius: 8px;
+    color: var(--color-text-secondary);
     text-decoration: none;
     white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease;
 }
 
 .sidebar.collapsed .nav-item {
-    padding: 12px;
+    padding: 10px;
     justify-content: center;
     gap: 0;
 }
 
 .nav-item:hover {
-    background: rgba(255, 255, 255, 0.7);
-    box-shadow: 0 4px 16px rgba(106, 133, 255, 0.12);
-    transform: translateY(-1px);
-    color: #667eea;
+    background: var(--accent-bg);
+    color: var(--color-text);
 }
 
 .nav-item.active {
-    background: var(--gradient-dream);
-    color: #fff;
-    box-shadow: 0 4px 16px rgba(106, 133, 255, 0.3);
+    background: var(--accent-bg);
+    color: var(--color-accent);
+}
+
+.nav-item.active .nav-icon {
+    color: var(--color-accent);
 }
 
 .nav-icon {
-    transition: transform 0.3s ease;
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     flex-shrink: 0;
+    color: var(--color-text-secondary);
+    transition: color 0.15s ease;
 }
 
 .nav-item:hover .nav-icon {
-    transform: scale(1.1);
-}
-
-.nav-badge {
-    margin-left: auto;
-    color: #ff5252;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 10px;
+    color: var(--color-text);
 }
 
 .sidebar-toggle {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 12px;
+    padding: 10px;
     border: none;
-    border-top: 1.5px solid rgba(255,255,255,0.5);
+    border-top: 1px solid var(--color-border);
     background: none;
     cursor: pointer;
     color: var(--color-text-secondary);
-    transition: color 0.2s;
+    transition: color 0.15s ease;
+    border-radius: 0;
 }
 
 .sidebar-toggle:hover {
-    color: #667eea;
+    color: var(--color-accent);
+    box-shadow: none;
 }
 
 .toggle-icon {
-    width: 20px;
-    height: 20px;
-}
-
-.sidebar-footer {
-    padding: 12px 20px;
-    border-top: 1.5px solid rgba(255,255,255,0.5);
-    text-align: center;
-}
-
-.version {
-    font-size: 12px;
-    color: var(--color-text-secondary);
+    width: 18px;
+    height: 18px;
 }
 </style>

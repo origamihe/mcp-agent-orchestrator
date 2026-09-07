@@ -3,6 +3,7 @@ package com.mcp.gateway.controller;
 import com.mcp.gateway.channel.ChannelAdapter;
 import com.mcp.gateway.channel.ChannelAdapterRegistry;
 import com.mcp.gateway.host.capability.CapabilityRiskRegistry;
+import com.mcp.gateway.ws.WebSocketAuthToken;
 import com.mcp.gateway.ws.WebSocketSessionManager;
 import com.mcp.common.tool.ToolRiskLevel;
 import com.mcp.tools.sandbox.SandboxPolicy;
@@ -22,6 +23,7 @@ public class HostController {
     private final WebSocketSessionManager wsSessionManager;
     private final CapabilityRiskRegistry riskRegistry;
     private final SandboxPolicy sandboxPolicy;
+    private final WebSocketAuthToken authToken;
 
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> listHosts() {
@@ -53,6 +55,11 @@ public class HostController {
                 })
                 .collect(Collectors.toList());
         return ResponseEntity.ok(capabilities);
+    }
+
+    @GetMapping("/token")
+    public ResponseEntity<Map<String, String>> getToken() {
+        return ResponseEntity.ok(Map.of("token", authToken.getSharedToken()));
     }
 
     private Map<String, Object> toHostMap(ChannelAdapter adapter) {

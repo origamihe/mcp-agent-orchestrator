@@ -121,19 +121,14 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.page {
-    padding: 24px 32px;
-    height: 100%;
-    overflow-y: auto;
-}
-
 .page-header {
     margin-bottom: 24px;
 }
 
 .page-header h2 {
-    font-size: 22px;
-    font-weight: 700;
+    font-size: 28px;
+    font-weight: 650;
+    letter-spacing: -0.3px;
 }
 
 .subtitle {
@@ -146,16 +141,14 @@ onMounted(async () => {
 .settings-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-    gap: 16px;
+    gap: 14px;
 }
 
 .settings-card {
-    background: rgba(255,255,255,0.7);
-    backdrop-filter: blur(20px);
-    border-radius: 16px;
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
     padding: 24px;
-    border: 1px solid rgba(255,255,255,0.8);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+    border: 1px solid var(--color-border);
 }
 
 .card-header {
@@ -197,7 +190,7 @@ onMounted(async () => {
     align-items: center;
     padding: 10px 14px;
     background: rgba(0,0,0,0.02);
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
 }
 
 .model-info {
@@ -238,7 +231,7 @@ onMounted(async () => {
     justify-content: space-between;
     align-items: center;
     padding: 8px 0;
-    border-bottom: 1px solid rgba(0,0,0,0.04);
+    border-bottom: 1px solid var(--color-border);
 }
 
 .config-item:last-child {
@@ -257,7 +250,7 @@ onMounted(async () => {
 }
 
 .config-value.enabled {
-    color: #27ae60;
+    color: var(--color-success);
 }
 
 .config-value.token {

@@ -16,7 +16,7 @@ defineProps<{
     padding: 3px 10px;
     border-radius: 20px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 500;
     display: inline-flex;
     align-items: center;
     gap: 4px;

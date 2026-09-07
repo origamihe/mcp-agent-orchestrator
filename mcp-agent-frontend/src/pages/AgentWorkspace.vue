@@ -1,22 +1,27 @@
 <template>
     <div class="page">
         <div class="page-header">
-            <button class="btn-back" @click="$router.push('/agents')">← 返回 Agent 列表</button>
-            <h2>{{ agentName }} · Workspace</h2>
-            <span class="connection-status" :class="{ connected: isConnected }">
-                {{ isConnected ? '已连接' : '未连接' }}
+            <button class="btn-secondary btn-back" @click="$router.push('/agents')">← Back to Agents</button>
+            <div class="header-main" v-if="agent">
+                <h2>{{ agent.agentName }}</h2>
+                <StatusBadge :type="statusType" :text="agent.status || 'Unknown'" />
+            </div>
+            <span :class="['connection-status', { connected: isConnected }]">
+                <span class="conn-dot"></span>
+                {{ isConnected ? 'Connected' : 'Disconnected' }}
             </span>
         </div>
+
         <div class="workspace-layout">
             <div class="panel trace-panel">
                 <div class="panel-header-row">
-                    <h3><ArrowPathRoundedSquareIcon class="panel-icon" /> Execution Trace</h3>
-                    <button class="btn-clear" @click="traces = []" v-if="traces.length">清空</button>
+                    <h3>Execution Trace</h3>
+                    <button class="btn-tertiary" @click="traces = []" v-if="traces.length">Clear</button>
                 </div>
                 <div class="trace-content">
-                    <div v-if="traces.length === 0" class="placeholder">
-                        <p>暂无执行记录</p>
-                        <span class="hint">与 Agent 对话后将在此显示执行追踪</span>
+                    <div v-if="traces.length === 0" class="empty-state">
+                        <p>No execution records</p>
+                        <span class="empty-hint">Traces will appear here during agent interaction</span>
                     </div>
                     <div v-for="(trace, idx) in traces" :key="idx" :class="['trace-item', trace.type]">
                         <div class="trace-header">
@@ -25,11 +30,12 @@
                         </div>
                         <p class="trace-detail">{{ trace.detail }}</p>
                         <div v-if="trace.duration" class="trace-meta">
-                            <span>耗时: {{ trace.duration }}ms</span>
+                            <span>{{ trace.duration }}ms</span>
                         </div>
                     </div>
                 </div>
             </div>
+
             <div class="panel chat-panel">
                 <ChatPanel
                     ref="chatPanelRef"
@@ -41,27 +47,28 @@
                     @update:selectedModelId="handleModelChange"
                 />
             </div>
+
             <div class="panel tool-panel">
                 <div class="panel-header-row">
-                    <h3><WrenchScrewdriverIcon class="panel-icon" /> Tool Monitor</h3>
-                    <button class="btn-clear" @click="toolCalls = []" v-if="toolCalls.length">清空</button>
+                    <h3>Tool Monitor</h3>
+                    <button class="btn-tertiary" @click="toolCalls = []" v-if="toolCalls.length">Clear</button>
                 </div>
                 <div class="tool-monitor-content">
-                    <div v-if="toolCalls.length === 0" class="placeholder">
-                        <p>工具调用监控</p>
-                        <span class="hint">Agent 调用工具后将在此显示详情</span>
+                    <div v-if="toolCalls.length === 0" class="empty-state">
+                        <p>Tool monitoring</p>
+                        <span class="empty-hint">Tool calls will appear here</span>
                     </div>
                     <div v-for="(call, idx) in toolCalls" :key="idx" :class="['tool-call-item', call.status]">
                         <div class="tool-call-header">
-                            <span class="tool-call-name">{{ call.toolName }}</span>
+                            <code class="tool-call-name">{{ call.toolName }}</code>
                             <span :class="['tool-call-status', call.status]">{{ statusLabel(call.status) }}</span>
                         </div>
                         <div class="tool-call-params" v-if="call.params">
-                            <span class="param-label">参数:</span>
+                            <span class="param-label">Params:</span>
                             <code>{{ truncate(call.params, 120) }}</code>
                         </div>
                         <div class="tool-call-result" v-if="call.result">
-                            <span class="param-label">结果:</span>
+                            <span class="param-label">Result:</span>
                             <code>{{ truncate(call.result, 120) }}</code>
                         </div>
                         <div class="tool-call-meta" v-if="call.duration">
@@ -79,11 +86,11 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ChatPanel from '@/components/features/ChatPanel.vue'
+import StatusBadge from '@/components/common/StatusBadge.vue'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useAgentStore } from '@/stores/agentStore'
 import { useAppStore } from '@/stores/app'
 import type { LlmModelInfo } from '@/types/llm'
-import { ArrowPathRoundedSquareIcon, WrenchScrewdriverIcon } from '@heroicons/vue/24/outline'
 import http from '@/api/client'
 
 const route = useRoute()
@@ -114,19 +121,27 @@ const traces = ref<TraceEntry[]>([])
 const toolCalls = ref<ToolCallEntry[]>([])
 
 const agentId = computed(() => route.params.agentId as string)
-const agentName = computed(() => agentStore.currentAgent?.agentName || agentId.value)
+const agent = computed(() => agentStore.currentAgent)
 const selectedModelId = computed(() => appStore.selectedModelId)
+
+const statusType = computed(() => {
+    const map: Record<string, 'success' | 'warning' | 'error' | 'info' | 'neutral'> = {
+        online: 'success', active: 'success', running: 'info',
+        idle: 'warning', offline: 'neutral', error: 'error',
+    }
+    return map[agent.value?.status || ''] || 'neutral'
+})
 
 const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/mcp`
 const { isConnected, connect, send, lastMessage } = useWebSocket(wsUrl)
 
 function traceLabel(type: string): string {
-    const labels: Record<string, string> = { llm: 'LLM', tool: '工具', policy: '策略', error: '错误' }
+    const labels: Record<string, string> = { llm: 'LLM', tool: 'Tool', policy: 'Policy', error: 'Error' }
     return labels[type] || type
 }
 
 function statusLabel(status: string): string {
-    const labels: Record<string, string> = { running: '执行中', success: '成功', error: '失败' }
+    const labels: Record<string, string> = { running: 'Running', success: 'Success', error: 'Error' }
     return labels[status] || status
 }
 
@@ -209,7 +224,7 @@ onMounted(async () => {
 
 <style scoped>
 .page {
-    padding: 16px 24px;
+    padding: 20px 28px;
     height: 100%;
     overflow: hidden;
     display: flex;
@@ -219,129 +234,133 @@ onMounted(async () => {
 .page-header {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 14px;
     margin-bottom: 16px;
     flex-shrink: 0;
 }
 
-.btn-back {
-    padding: 6px 14px;
-    border-radius: 8px;
-    border: 1px solid rgba(0,0,0,0.1);
-    background: rgba(255,255,255,0.7);
-    cursor: pointer;
-    font-size: 13px;
-    color: var(--color-text-secondary);
+.header-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+}
+
+.header-main h2 {
+    font-size: 22px;
+    font-weight: 650;
+    margin: 0;
 }
 
 .connection-status {
     font-size: 12px;
     padding: 4px 12px;
     border-radius: 20px;
-    background: rgba(231, 76, 60, 0.1);
-    color: #e74c3c;
-    margin-left: auto;
+    background: rgba(231, 76, 60, 0.08);
+    color: #c62828;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .connection-status.connected {
-    background: rgba(39, 174, 96, 0.1);
-    color: #27ae60;
+    background: rgba(39, 174, 96, 0.08);
+    color: #2e7d32;
+}
+
+.conn-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
 }
 
 .workspace-layout {
     display: flex;
     flex: 1;
-    gap: 16px;
+    gap: 14px;
     overflow: hidden;
 }
 
 .panel {
-    background: rgba(255,255,255,0.7);
-    backdrop-filter: blur(20px);
-    border-radius: 16px;
-    padding: 20px;
-    border: 1px solid rgba(255,255,255,0.8);
+    background: var(--color-surface);
+    border-radius: var(--radius-lg);
+    padding: 18px;
+    border: 1px solid var(--color-border);
     overflow: hidden;
     display: flex;
     flex-direction: column;
+}
+
+.trace-panel { width: 260px; min-width: 220px; }
+.chat-panel { flex: 1; }
+.tool-panel { width: 270px; min-width: 220px; }
+
+@media (max-width: 1000px) {
+    .workspace-layout { flex-direction: column; }
+    .trace-panel, .tool-panel { width: 100%; max-height: 200px; }
 }
 
 .panel-header-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     flex-shrink: 0;
 }
 
 .panel h3 {
     font-size: 14px;
     font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 8px;
     margin: 0;
 }
 
-.panel-icon {
-    width: 18px;
-    height: 18px;
-    color: #667eea;
-}
-
-.btn-clear {
+.btn-tertiary {
     padding: 3px 10px;
     border-radius: 6px;
-    border: 1px solid rgba(0,0,0,0.1);
-    background: rgba(0,0,0,0.03);
+    border: none;
+    background: none;
     cursor: pointer;
     font-size: 12px;
     color: var(--color-text-secondary);
 }
 
-.trace-panel { flex: 1; }
-.chat-panel { flex: 2; display: flex; flex-direction: column; }
-.tool-panel { flex: 1; }
-
-.chat-panel :deep(.chat-panel) {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
+.btn-tertiary:hover {
+    background: rgba(0,0,0,0.04);
+    box-shadow: none;
 }
 
 .trace-content, .tool-monitor-content {
     flex: 1;
     overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
 }
 
-.placeholder {
-    color: var(--color-text-secondary);
-    font-size: 14px;
+.empty-state {
     text-align: center;
-    padding: 40px 0;
+    padding: 30px 10px;
+    color: var(--color-text-secondary);
 }
 
-.placeholder .hint {
-    display: block;
+.empty-state p {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.empty-hint {
     font-size: 12px;
-    margin-top: 6px;
     opacity: 0.6;
 }
 
 .trace-item {
-    padding: 10px 14px;
-    border-radius: 10px;
-    background: rgba(0,0,0,0.02);
-    border-left: 3px solid #667eea;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    border-left: 3px solid var(--color-accent);
+    background: var(--accent-bg);
 }
 
-.trace-item.llm { border-left-color: #667eea; }
-.trace-item.tool { border-left-color: #27ae60; }
-.trace-item.policy { border-left-color: #f39c12; }
-.trace-item.error { border-left-color: #e74c3c; }
+.trace-item.error { border-left-color: var(--color-danger); background: rgba(198, 40, 40, 0.04); }
+.trace-item.policy { border-left-color: #f39c12; background: rgba(243, 156, 18, 0.04); }
 
 .trace-header {
     display: flex;
@@ -353,14 +372,14 @@ onMounted(async () => {
 .trace-type-badge {
     font-size: 11px;
     font-weight: 600;
-    padding: 2px 8px;
+    padding: 1px 8px;
     border-radius: 4px;
 }
 
-.trace-type-badge.llm { background: rgba(102, 126, 234, 0.1); color: #667eea; }
-.trace-type-badge.tool { background: rgba(39, 174, 96, 0.1); color: #27ae60; }
-.trace-type-badge.policy { background: rgba(243, 156, 18, 0.1); color: #f39c12; }
-.trace-type-badge.error { background: rgba(231, 76, 60, 0.1); color: #e74c3c; }
+.trace-type-badge.llm { background: #e3f2fd; color: #1565c0; }
+.trace-type-badge.tool { background: #e8f5e9; color: #2e7d32; }
+.trace-type-badge.policy { background: #fff3e0; color: #ef6c00; }
+.trace-type-badge.error { background: #ffebee; color: #c62828; }
 
 .trace-time {
     font-size: 11px;
@@ -369,7 +388,8 @@ onMounted(async () => {
 
 .trace-detail {
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.4;
+    margin: 0;
 }
 
 .trace-meta {
@@ -379,65 +399,61 @@ onMounted(async () => {
 }
 
 .tool-call-item {
-    padding: 10px 14px;
-    border-radius: 10px;
-    background: rgba(0,0,0,0.02);
-    border-left: 3px solid #f39c12;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
 }
 
-.tool-call-item.running { border-left-color: #f39c12; }
-.tool-call-item.success { border-left-color: #27ae60; }
-.tool-call-item.error { border-left-color: #e74c3c; }
+.tool-call-item.running { border-color: #e3f2fd; background: #f8fbff; }
+.tool-call-item.success { border-color: #e8f5e9; }
+.tool-call-item.error { border-color: #ffebee; }
 
 .tool-call-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .tool-call-name {
+    font-size: 12px;
     font-weight: 600;
-    font-size: 13px;
-    font-family: monospace;
 }
 
 .tool-call-status {
     font-size: 11px;
-    font-weight: 600;
-    padding: 2px 8px;
+    font-weight: 500;
+    padding: 1px 8px;
     border-radius: 4px;
 }
 
-.tool-call-status.running { background: rgba(243, 156, 18, 0.1); color: #f39c12; }
-.tool-call-status.success { background: rgba(39, 174, 96, 0.1); color: #27ae60; }
-.tool-call-status.error { background: rgba(231, 76, 60, 0.1); color: #e74c3c; }
+.tool-call-status.running { background: #fff3e0; color: #ef6c00; }
+.tool-call-status.success { background: #e8f5e9; color: #2e7d32; }
+.tool-call-status.error { background: #ffebee; color: #c62828; }
 
 .tool-call-params, .tool-call-result {
-    margin-bottom: 4px;
+    font-size: 12px;
+    margin-top: 4px;
 }
 
 .param-label {
-    font-size: 11px;
     color: var(--color-text-secondary);
-    font-weight: 500;
+    font-size: 11px;
 }
 
 .tool-call-params code, .tool-call-result code {
-    font-size: 12px;
-    display: block;
-    margin-top: 2px;
-    padding: 4px 8px;
-    background: rgba(0,0,0,0.03);
-    border-radius: 4px;
+    font-size: 11px;
+    color: var(--color-text-secondary);
     word-break: break-all;
 }
 
 .tool-call-meta {
     display: flex;
-    gap: 12px;
+    justify-content: space-between;
     font-size: 11px;
     color: var(--color-text-secondary);
-    margin-top: 6px;
+    margin-top: 4px;
 }
 </style>

@@ -1,10 +1,12 @@
 <template>
     <div class="page">
         <div class="page-header">
-            <button class="btn-back" @click="$router.push('/agents')">← 返回 Agent 列表</button>
-            <h2>{{ agent?.agentName || 'Agent 详情' }}</h2>
-            <span class="agent-id">{{ agent?.agentId }}</span>
-            <StatusBadge v-if="agent" :type="statusType" :text="agent.status || '未知'" />
+            <button class="btn-secondary btn-back" @click="$router.push('/agents')">← Back to Agents</button>
+            <div class="header-main" v-if="agent">
+                <h2>{{ agent.agentName }}</h2>
+                <span class="agent-id">{{ agent.agentId }}</span>
+                <StatusBadge :type="statusType" :text="agent.status || 'Unknown'" />
+            </div>
         </div>
 
         <div class="tabs">
@@ -15,230 +17,246 @@
                 @click="switchTab(tab.id)"
             >
                 {{ tab.label }}
-                <span v-if="tab.badge" class="tab-badge">{{ tab.badge }}</span>
             </button>
         </div>
 
         <div class="tab-content">
-            <LoadingSpinner v-if="loading" text="加载中..." />
+            <LoadingSpinner v-if="loading" text="Loading..." />
 
             <template v-else-if="agent">
                 <div v-if="activeTab === 'overview'" class="tab-panel">
-                    <div class="overview-grid">
-                        <div class="info-card">
-                            <h4>基本信息</h4>
-                            <dl>
-                                <dt>名称</dt><dd>{{ agent.agentName }}</dd>
-                                <dt>类型</dt><dd><span class="type-badge">{{ typeLabel }}</span></dd>
-                                <dt>版本</dt><dd>{{ agent.version }}</dd>
-                                <dt>描述</dt><dd>{{ agent.description }}</dd>
-                            </dl>
-                        </div>
-                        <div class="info-card">
-                            <h4>技能</h4>
-                            <div class="skill-tags" v-if="agent.skills?.length">
-                                <span v-for="s in agent.skills" :key="s" class="skill-tag">{{ s }}</span>
+                    <div class="section">
+                        <h3 class="section-title">Agent Info</h3>
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <span class="info-label">Name</span>
+                                <span class="info-value">{{ agent.agentName }}</span>
                             </div>
-                            <p v-else class="empty-hint">未配置技能</p>
-                        </div>
-                        <div class="info-card">
-                            <h4>工具</h4>
-                            <div class="tool-tags" v-if="agent.toolNames?.length">
-                                <code v-for="t in agent.toolNames" :key="t" class="tool-tag">{{ t }}</code>
+                            <div class="info-item">
+                                <span class="info-label">Type</span>
+                                <span class="info-value type-badge">{{ typeLabel }}</span>
                             </div>
-                            <p v-else class="empty-hint">未配置工具</p>
-                        </div>
-                        <div class="info-card">
-                            <h4>快速操作</h4>
-                            <div class="quick-actions">
-                                <button class="action-btn" @click="$router.push(`/workspace/${agent.agentId}`)">
-                                    进入 Workspace
-                                </button>
-                                <button class="action-btn secondary" @click="activeTab = 'runs'">
-                                    查看执行历史
-                                </button>
+                            <div class="info-item">
+                                <span class="info-label">Version</span>
+                                <span class="info-value">{{ agent.version }}</span>
                             </div>
+                            <div class="info-item">
+                                <span class="info-label">Description</span>
+                                <span class="info-value">{{ agent.description }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="section-separator"></div>
+
+                    <div class="section" v-if="agent.skills?.length">
+                        <h3 class="section-title">Skills</h3>
+                        <div class="chip-list">
+                            <span v-for="s in agent.skills" :key="s" class="chip skill-chip">{{ s }}</span>
+                        </div>
+                    </div>
+
+                    <div class="section-separator"></div>
+
+                    <div class="section" v-if="agent.toolNames?.length">
+                        <h3 class="section-title">Tools</h3>
+                        <div class="chip-list">
+                            <code v-for="t in agent.toolNames" :key="t" class="chip tool-chip">{{ t }}</code>
+                        </div>
+                    </div>
+
+                    <div class="section-separator"></div>
+
+                    <div class="section">
+                        <h3 class="section-title">Actions</h3>
+                        <div class="action-row">
+                            <button class="btn-primary" @click="$router.push(`/workspace/${agent.agentId}`)">
+                                Open Workspace
+                            </button>
+                            <button class="btn-secondary" @click="activeTab = 'runs'">
+                                View Runs
+                            </button>
                         </div>
                     </div>
                 </div>
 
                 <div v-else-if="activeTab === 'config'" class="tab-panel">
-                    <LoadingSpinner v-if="configLoading" text="加载配置中..." />
+                    <LoadingSpinner v-if="configLoading" text="Loading config..." />
                     <div class="config-section" v-else-if="agentStore.currentConfig">
-                        <div class="config-group">
-                            <h4>Identity</h4>
-                            <dl>
-                                <dt>名称</dt><dd>{{ agentStore.currentConfig.identity.name }}</dd>
-                                <dt>描述</dt><dd>{{ agentStore.currentConfig.identity.description }}</dd>
-                                <dt>版本</dt><dd>{{ agentStore.currentConfig.identity.version }}</dd>
-                                <dt>Agent 类型</dt><dd>{{ agentStore.currentConfig.identity.agentType }}</dd>
-                            </dl>
+                        <div class="section">
+                            <h3 class="section-title">Identity</h3>
+                            <div class="info-grid">
+                                <div class="info-item"><span class="info-label">Name</span><span class="info-value">{{ agentStore.currentConfig.identity.name }}</span></div>
+                                <div class="info-item"><span class="info-label">Description</span><span class="info-value">{{ agentStore.currentConfig.identity.description }}</span></div>
+                                <div class="info-item"><span class="info-label">Version</span><span class="info-value">{{ agentStore.currentConfig.identity.version }}</span></div>
+                                <div class="info-item"><span class="info-label">Agent Type</span><span class="info-value">{{ agentStore.currentConfig.identity.agentType }}</span></div>
+                            </div>
                         </div>
-                        <div class="config-group">
-                            <h4>Model</h4>
-                            <dl>
-                                <dt>Provider</dt><dd>{{ agentStore.currentConfig.model.provider }}</dd>
-                                <dt>Model</dt><dd>{{ agentStore.currentConfig.model.modelName }}</dd>
-                                <dt>Temperature</dt><dd>{{ agentStore.currentConfig.model.temperature }}</dd>
-                                <dt>Max Tokens</dt><dd>{{ agentStore.currentConfig.model.maxTokens }}</dd>
-                            </dl>
+                        <div class="section-separator"></div>
+                        <div class="section">
+                            <h3 class="section-title">Model</h3>
+                            <div class="info-grid">
+                                <div class="info-item"><span class="info-label">Provider</span><span class="info-value">{{ agentStore.currentConfig.model.provider }}</span></div>
+                                <div class="info-item"><span class="info-label">Model</span><span class="info-value">{{ agentStore.currentConfig.model.modelName }}</span></div>
+                                <div class="info-item"><span class="info-label">Temperature</span><span class="info-value">{{ agentStore.currentConfig.model.temperature }}</span></div>
+                                <div class="info-item"><span class="info-label">Max Tokens</span><span class="info-value">{{ agentStore.currentConfig.model.maxTokens }}</span></div>
+                            </div>
                         </div>
-                        <div class="config-group">
-                            <h4>Behavior</h4>
-                            <dl>
-                                <dt>Persona</dt><dd>{{ agentStore.currentConfig.behavior.persona }}</dd>
-                                <dt>Reflection</dt><dd>{{ agentStore.currentConfig.behavior.reflectionEnabled ? '启用' : '禁用' }}</dd>
-                                <dt>Max Iterations</dt><dd>{{ agentStore.currentConfig.behavior.maxIterations }}</dd>
-                            </dl>
+                        <div class="section-separator"></div>
+                        <div class="section">
+                            <h3 class="section-title">Behavior</h3>
+                            <div class="info-grid">
+                                <div class="info-item"><span class="info-label">Persona</span><span class="info-value">{{ agentStore.currentConfig.behavior.persona }}</span></div>
+                                <div class="info-item"><span class="info-label">Reflection</span><span class="info-value">{{ agentStore.currentConfig.behavior.reflectionEnabled ? 'Enabled' : 'Disabled' }}</span></div>
+                                <div class="info-item"><span class="info-label">Max Iterations</span><span class="info-value">{{ agentStore.currentConfig.behavior.maxIterations }}</span></div>
+                            </div>
                         </div>
-                        <div class="config-group">
-                            <h4>Context</h4>
-                            <dl>
-                                <dt>Memory</dt><dd>{{ agentStore.currentConfig.context.memoryEnabled ? '启用' : '禁用' }}</dd>
-                                <dt>Knowledge</dt><dd>{{ agentStore.currentConfig.context.knowledgeEnabled ? '启用' : '禁用' }}</dd>
-                                <dt>Workspace</dt><dd>{{ agentStore.currentConfig.context.workspaceEnabled ? '启用' : '禁用' }}</dd>
-                                <dt>Context Window</dt><dd>{{ agentStore.currentConfig.context.contextWindowSize }}</dd>
-                            </dl>
+                        <div class="section-separator"></div>
+                        <div class="section">
+                            <h3 class="section-title">Context</h3>
+                            <div class="info-grid">
+                                <div class="info-item"><span class="info-label">Memory</span><span class="info-value">{{ agentStore.currentConfig.context.memoryEnabled ? 'Enabled' : 'Disabled' }}</span></div>
+                                <div class="info-item"><span class="info-label">Knowledge</span><span class="info-value">{{ agentStore.currentConfig.context.knowledgeEnabled ? 'Enabled' : 'Disabled' }}</span></div>
+                                <div class="info-item"><span class="info-label">Workspace</span><span class="info-value">{{ agentStore.currentConfig.context.workspaceEnabled ? 'Enabled' : 'Disabled' }}</span></div>
+                                <div class="info-item"><span class="info-label">Context Window</span><span class="info-value">{{ agentStore.currentConfig.context.contextWindowSize }}</span></div>
+                            </div>
                         </div>
-                        <div class="config-group">
-                            <h4>Security</h4>
-                            <dl>
-                                <dt>Risk Level</dt><dd><RiskBadge :level="agentStore.currentConfig.security.riskLevel" /></dd>
-                                <dt>Sandbox</dt><dd>{{ agentStore.currentConfig.security.sandboxEnabled ? agentStore.currentConfig.security.sandboxType : '禁用' }}</dd>
-                                <dt>Confirmation</dt><dd>{{ agentStore.currentConfig.security.confirmationRequired ? '需要' : '不需要' }}</dd>
-                            </dl>
+                        <div class="section-separator"></div>
+                        <div class="section">
+                            <h3 class="section-title">Security</h3>
+                            <div class="info-grid">
+                                <div class="info-item"><span class="info-label">Risk Level</span><span class="info-value"><RiskBadge :level="agentStore.currentConfig.security.riskLevel" /></span></div>
+                                <div class="info-item"><span class="info-label">Sandbox</span><span class="info-value">{{ agentStore.currentConfig.security.sandboxEnabled ? agentStore.currentConfig.security.sandboxType : 'Disabled' }}</span></div>
+                                <div class="info-item"><span class="info-label">Confirmation</span><span class="info-value">{{ agentStore.currentConfig.security.confirmationRequired ? 'Required' : 'Not required' }}</span></div>
+                            </div>
                         </div>
                     </div>
-                    <button v-else class="btn-load" @click="loadConfig" :disabled="configLoading">
-                        {{ configLoading ? '加载中...' : '加载配置' }}
+                    <button v-else class="btn-secondary" @click="loadConfig" :disabled="configLoading">
+                        {{ configLoading ? 'Loading...' : 'Load Config' }}
                     </button>
                 </div>
 
                 <div v-else-if="activeTab === 'prompt'" class="tab-panel">
-                    <LoadingSpinner v-if="promptLoading" text="加载 Prompt 中..." />
-                    <div v-else-if="prompt" class="prompt-editor">
+                    <LoadingSpinner v-if="promptLoading" text="Loading prompt..." />
+                    <div v-else-if="prompt" class="section">
                         <div class="prompt-header">
                             <span class="prompt-name">{{ prompt.name }}</span>
-                            <button class="btn-save" @click="savePrompt" :disabled="promptSaving">
-                                {{ promptSaving ? '保存中...' : '保存' }}
+                            <button class="btn-primary" @click="savePrompt" :disabled="promptSaving">
+                                {{ promptSaving ? 'Saving...' : 'Save' }}
                             </button>
                         </div>
                         <textarea
                             v-model="promptTemplate"
                             class="prompt-textarea"
-                            placeholder="输入 System Prompt..."
+                            placeholder="Enter system prompt..."
                             rows="15"
                         ></textarea>
                         <div class="prompt-hint">
-                            <span>支持变量: {user_input}, {agent_name}, {current_date}, {tools_list}</span>
+                            <span>Variables: {user_input}, {agent_name}, {current_date}, {tools_list}</span>
                         </div>
                     </div>
-                    <button v-else class="btn-load" @click="loadPrompt" :disabled="promptLoading">
-                        {{ promptLoading ? '加载中...' : '加载 Prompt' }}
+                    <button v-else class="btn-secondary" @click="loadPrompt" :disabled="promptLoading">
+                        {{ promptLoading ? 'Loading...' : 'Load Prompt' }}
                     </button>
                 </div>
 
                 <div v-else-if="activeTab === 'memory'" class="tab-panel">
-                    <LoadingSpinner v-if="memoryLoading" text="加载记忆中..." />
+                    <LoadingSpinner v-if="memoryLoading" text="Loading memories..." />
                     <div v-else-if="agentMemories.length > 0" class="memory-list">
-                        <div v-for="item in agentMemories" :key="item.id" class="memory-card">
-                            <div class="memory-header">
+                        <div v-for="item in agentMemories" :key="item.id" class="memory-item">
+                            <div class="memory-item-header">
                                 <span :class="['type-badge', `type-${item.type}`]">{{ item.type }}</span>
-                                <span class="memory-importance" v-if="'importance' in item">
-                                    重要性: {{ (item as any).importance }}/10
+                                <span class="memory-item-importance" v-if="'importance' in item">
+                                    {{ (item as any).importance }}/10
                                 </span>
                             </div>
-                            <p class="memory-content">{{ 'content' in item ? item.content : (item as any).entry?.content }}</p>
-                            <div class="memory-footer">
-                                <span class="memory-meta">{{ formatDate(item.createdAt || (item as any).entry?.createdAt) }}</span>
-                            </div>
+                            <p class="memory-item-content">{{ 'content' in item ? item.content : (item as any).entry?.content }}</p>
+                            <span class="memory-item-meta">{{ formatDate(item.createdAt || (item as any).entry?.createdAt) }}</span>
                         </div>
                     </div>
-                    <EmptyState v-else text="该 Agent 暂无关联记忆" />
+                    <EmptyState v-else text="No memories for this agent" />
                 </div>
 
                 <div v-else-if="activeTab === 'tools'" class="tab-panel">
-                    <LoadingSpinner v-if="toolsLoading" text="加载工具中..." />
+                    <LoadingSpinner v-if="toolsLoading" text="Loading tools..." />
                     <div v-else-if="agentTools.length > 0" class="tools-section">
-                        <div class="tools-header">
-                            <span class="tools-count">共 {{ agentTools.length }} 个工具</span>
-                        </div>
-                        <div class="tool-grid">
-                            <div v-for="tool in agentTools" :key="tool.name" class="tool-card">
-                                <div class="tool-card-header">
-                                    <code class="tool-name">{{ tool.name }}</code>
+                        <span class="tools-count">{{ agentTools.length }} tools</span>
+                        <div class="tool-list">
+                            <div v-for="tool in agentTools" :key="tool.name" class="tool-item">
+                                <div class="tool-item-header">
+                                    <code class="tool-item-name">{{ tool.name }}</code>
                                     <RiskBadge v-if="tool.riskLevel" :level="tool.riskLevel" />
                                 </div>
-                                <p class="tool-desc">{{ tool.description }}</p>
-                                <div class="tool-meta">
-                                    <span v-if="tool.sandboxEnabled">沙箱: {{ tool.sandboxType }}</span>
-                                    <span>超时: {{ tool.timeout }}s</span>
+                                <p class="tool-item-desc">{{ tool.description }}</p>
+                                <div class="tool-item-meta">
+                                    <span v-if="tool.sandboxEnabled">Sandbox: {{ tool.sandboxType }}</span>
+                                    <span>Timeout: {{ tool.timeout }}s</span>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <EmptyState v-else text="该 Agent 未配置工具" />
+                    <EmptyState v-else text="No tools configured" />
                 </div>
 
                 <div v-else-if="activeTab === 'runs'" class="tab-panel">
-                    <LoadingSpinner v-if="runsLoading" text="加载执行历史中..." />
-                    <div v-else-if="agentRuns.length > 0" class="runs-section">
-                        <div class="run-list">
-                            <div
-                                v-for="run in agentRuns"
-                                :key="run.id"
-                                class="run-row"
-                                @click="$router.push(`/runs/${run.id}`)"
-                            >
-                                <div class="run-info">
-                                    <span class="run-intent">{{ run.intent }}</span>
-                                    <span class="run-meta">
-                                        {{ formatDuration(run.duration) }} · {{ run.toolCallCount }} tool calls
-                                    </span>
-                                </div>
-                                <StatusBadge
-                                    :type="runStatusType(run.status)"
-                                    :text="runStatusLabel(run.status)"
-                                />
+                    <LoadingSpinner v-if="runsLoading" text="Loading runs..." />
+                    <div v-else-if="agentRuns.length > 0" class="run-list">
+                        <div
+                            v-for="run in agentRuns"
+                            :key="run.id"
+                            class="list-item run-row"
+                            @click="$router.push(`/runs/${run.id}`)"
+                        >
+                            <div class="run-row-info">
+                                <span class="run-row-intent">{{ run.intent }}</span>
+                                <span class="run-row-meta">
+                                    {{ formatDuration(run.duration) }} · {{ run.toolCallCount }} tool calls
+                                </span>
                             </div>
+                            <StatusBadge
+                                :type="runStatusType(run.status)"
+                                :text="runStatusLabel(run.status)"
+                            />
                         </div>
                     </div>
-                    <EmptyState v-else text="该 Agent 暂无执行记录" />
+                    <EmptyState v-else text="No run history" />
                 </div>
 
                 <div v-else-if="activeTab === 'permissions'" class="tab-panel">
-                    <LoadingSpinner v-if="permLoading" text="加载权限中..." />
+                    <LoadingSpinner v-if="permLoading" text="Loading permissions..." />
                     <div v-else-if="agentPermissions" class="permissions-section">
-                        <div class="perm-group">
-                            <h4>Allowed Hosts</h4>
-                            <div class="perm-chips">
-                                <span v-for="h in agentPermissions.allowedHosts" :key="h" class="perm-chip allowed">{{ h }}</span>
-                                <span v-if="!agentPermissions.allowedHosts?.length" class="empty-hint">全部允许</span>
+                        <div class="section">
+                            <h3 class="section-title">Allowed Hosts</h3>
+                            <div class="chip-list">
+                                <span v-for="h in agentPermissions.allowedHosts" :key="h" class="chip allowed-chip">{{ h }}</span>
+                                <span v-if="!agentPermissions.allowedHosts?.length" class="empty-hint">All allowed</span>
                             </div>
                         </div>
-                        <div class="perm-group">
-                            <h4>Allowed Workspaces</h4>
-                            <div class="perm-chips">
-                                <span v-for="w in agentPermissions.allowedWorkspaces" :key="w" class="perm-chip allowed">{{ w }}</span>
-                                <span v-if="!agentPermissions.allowedWorkspaces?.length" class="empty-hint">全部允许</span>
+                        <div class="section-separator"></div>
+                        <div class="section">
+                            <h3 class="section-title">Allowed Workspaces</h3>
+                            <div class="chip-list">
+                                <span v-for="w in agentPermissions.allowedWorkspaces" :key="w" class="chip allowed-chip">{{ w }}</span>
+                                <span v-if="!agentPermissions.allowedWorkspaces?.length" class="empty-hint">All allowed</span>
                             </div>
                         </div>
-                        <div class="perm-group">
-                            <h4>Capability Permissions</h4>
+                        <div class="section-separator"></div>
+                        <div class="section">
+                            <h3 class="section-title">Capability Permissions</h3>
                             <div class="perm-list">
-                                <div v-for="(perm, cap) in agentPermissions.capabilities || {}" :key="cap" class="perm-row">
-                                    <span class="perm-capability">{{ cap }}</span>
+                                <div v-for="(perm, cap) in agentPermissions.capabilities || {}" :key="cap" class="perm-item">
+                                    <span class="perm-cap">{{ cap }}</span>
                                     <span :class="['perm-value', perm]">{{ perm }}</span>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <button v-else class="btn-load" @click="loadPermissions" :disabled="permLoading">
-                        {{ permLoading ? '加载中...' : '加载权限' }}
+                    <button v-else class="btn-secondary" @click="loadPermissions" :disabled="permLoading">
+                        {{ permLoading ? 'Loading...' : 'Load Permissions' }}
                     </button>
                 </div>
             </template>
-            <EmptyState v-else text="Agent 未找到" />
+            <EmptyState v-else text="Agent not found" />
         </div>
     </div>
 </template>
@@ -267,13 +285,13 @@ const toast = useToast()
 
 const activeTab = ref('overview')
 const tabs = [
-    { id: 'overview', label: '概览' },
-    { id: 'config', label: '配置' },
+    { id: 'overview', label: 'Overview' },
+    { id: 'config', label: 'Config' },
     { id: 'prompt', label: 'Prompt' },
-    { id: 'memory', label: '记忆' },
-    { id: 'tools', label: '工具' },
-    { id: 'runs', label: '执行历史' },
-    { id: 'permissions', label: '权限' },
+    { id: 'memory', label: 'Memory' },
+    { id: 'tools', label: 'Tools' },
+    { id: 'runs', label: 'Runs' },
+    { id: 'permissions', label: 'Permissions' },
 ]
 
 const agentId = computed(() => route.params.id as string)
@@ -297,10 +315,10 @@ const agentPermissions = ref<any>(null)
 
 const typeLabel = computed(() => {
     const labels: Record<string, string> = {
-        CHAT: '对话', CODE: '代码', SEARCH: '搜索', DOCUMENT: '文档',
-        PLANNER: '规划', EXECUTOR: '执行', GENERAL: '通用',
+        CHAT: 'Chat', CODE: 'Code', SEARCH: 'Search', DOCUMENT: 'Document',
+        PLANNER: 'Planner', EXECUTOR: 'Executor', GENERAL: 'General',
     }
-    return labels[agent.value?.agentType || ''] || agent.value?.agentType || '未知'
+    return labels[agent.value?.agentType || ''] || agent.value?.agentType || 'Unknown'
 })
 
 const statusType = computed(() => {
@@ -319,7 +337,7 @@ function runStatusType(status: string): 'success' | 'warning' | 'error' | 'info'
 }
 
 function runStatusLabel(status: string): string {
-    const labels: Record<string, string> = { pending: '等待', running: '执行中', completed: '完成', failed: '失败', cancelled: '取消' }
+    const labels: Record<string, string> = { pending: 'Pending', running: 'Running', completed: 'Done', failed: 'Failed', cancelled: 'Cancelled' }
     return labels[status] || status
 }
 
@@ -347,13 +365,8 @@ function switchTab(tabId: string) {
 
 async function loadConfig() {
     configLoading.value = true
-    try {
-        await agentStore.fetchAgentConfig(agentId.value)
-    } catch {
-        toast.error('加载配置失败')
-    } finally {
-        configLoading.value = false
-    }
+    try { await agentStore.fetchAgentConfig(agentId.value) } catch { toast.error('Failed to load config') }
+    finally { configLoading.value = false }
 }
 
 async function loadPrompt() {
@@ -361,11 +374,8 @@ async function loadPrompt() {
     try {
         prompt.value = await agentsApi.fetchAgentPrompt(agentId.value)
         promptTemplate.value = prompt.value?.templateText ?? ''
-    } catch {
-        toast.error('加载 Prompt 失败')
-    } finally {
-        promptLoading.value = false
-    }
+    } catch { toast.error('Failed to load prompt') }
+    finally { promptLoading.value = false }
 }
 
 async function savePrompt() {
@@ -374,12 +384,9 @@ async function savePrompt() {
     try {
         await agentsApi.updateAgentPrompt(agentId.value, { templateText: promptTemplate.value })
         prompt.value.templateText = promptTemplate.value
-        toast.success('Prompt 已保存')
-    } catch {
-        toast.error('保存 Prompt 失败')
-    } finally {
-        promptSaving.value = false
-    }
+        toast.success('Prompt saved')
+    } catch { toast.error('Failed to save prompt') }
+    finally { promptSaving.value = false }
 }
 
 async function loadMemories() {
@@ -387,11 +394,8 @@ async function loadMemories() {
     try {
         await memoryStore.fetchMemories()
         agentMemories.value = memoryStore.memories.filter((m) => m.agentId === agentId.value)
-    } catch {
-        toast.error('加载记忆失败')
-    } finally {
-        memoryLoading.value = false
-    }
+    } catch { toast.error('Failed to load memories') }
+    finally { memoryLoading.value = false }
 }
 
 async function loadTools() {
@@ -399,18 +403,10 @@ async function loadTools() {
     try {
         const names = await agentsApi.fetchAgentTools(agentId.value)
         agentTools.value = names.map((name: string) => ({
-            name,
-            description: '',
-            riskLevel: 'L2',
-            sandboxEnabled: false,
-            sandboxType: 'none',
-            timeout: 30,
+            name, description: '', riskLevel: 'L2', sandboxEnabled: false, sandboxType: 'none', timeout: 30,
         }))
-    } catch {
-        toast.error('加载工具失败')
-    } finally {
-        toolsLoading.value = false
-    }
+    } catch { toast.error('Failed to load tools') }
+    finally { toolsLoading.value = false }
 }
 
 async function loadRuns() {
@@ -418,79 +414,67 @@ async function loadRuns() {
     try {
         await runStore.fetchRuns({ agentId: agentId.value })
         agentRuns.value = runStore.runs
-    } catch {
-        toast.error('加载执行历史失败')
-    } finally {
-        runsLoading.value = false
-    }
+    } catch { toast.error('Failed to load runs') }
+    finally { runsLoading.value = false }
 }
 
 async function loadPermissions() {
     permLoading.value = true
-    try {
-        agentPermissions.value = await agentsApi.fetchAgentPermissions(agentId.value)
-    } catch {
-        toast.error('加载权限失败')
-    } finally {
-        permLoading.value = false
-    }
+    try { agentPermissions.value = await agentsApi.fetchAgentPermissions(agentId.value) } catch { toast.error('Failed to load permissions') }
+    finally { permLoading.value = false }
 }
 
 async function loadAgent() {
-    if (agentId.value) {
-        await agentStore.fetchAgentById(agentId.value)
-    }
+    if (agentId.value) await agentStore.fetchAgentById(agentId.value)
 }
 
-watch(agentId, () => {
-    agentStore.clearCurrentAgent()
-    activeTab.value = 'overview'
-    loadAgent()
-}, { immediate: false })
-
-onMounted(() => {
-    loadAgent()
-})
+watch(agentId, () => { agentStore.clearCurrentAgent(); activeTab.value = 'overview'; loadAgent() }, { immediate: false })
+onMounted(() => { loadAgent() })
 </script>
 
 <style scoped>
-.page {
-    padding: 24px 32px;
-    height: 100%;
-    overflow-y: auto;
-}
-
 .page-header {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 16px;
     margin-bottom: 24px;
+    flex-wrap: wrap;
 }
 
 .btn-back {
     padding: 6px 14px;
-    border-radius: 8px;
-    border: 1px solid rgba(0,0,0,0.1);
-    background: rgba(255,255,255,0.7);
-    cursor: pointer;
     font-size: 13px;
-    color: var(--color-text-secondary);
+}
+
+.header-main {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+}
+
+.header-main h2 {
+    font-size: 28px;
+    font-weight: 650;
+    letter-spacing: -0.3px;
+    margin: 0;
 }
 
 .agent-id {
     font-size: 12px;
     color: var(--color-text-secondary);
-    background: rgba(0,0,0,0.04);
-    padding: 4px 10px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    padding: 3px 10px;
     border-radius: 6px;
     font-family: monospace;
 }
 
 .tabs {
     display: flex;
-    gap: 4px;
-    margin-bottom: 24px;
-    border-bottom: 1px solid rgba(0,0,0,0.06);
+    gap: 2px;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--color-border);
     padding-bottom: 0;
 }
 
@@ -502,24 +486,20 @@ onMounted(() => {
     font-size: 14px;
     color: var(--color-text-secondary);
     border-bottom: 2px solid transparent;
-    transition: all 0.2s;
+    transition: color 0.15s, border-color 0.15s;
     display: flex;
     align-items: center;
     gap: 6px;
+    border-radius: 0;
+}
+
+.tab:hover {
+    box-shadow: none;
 }
 
 .tab.active {
-    color: var(--color-text);
-    border-bottom-color: #667eea;
-    font-weight: 600;
-}
-
-.tab-badge {
-    background: #667eea;
-    color: #fff;
-    font-size: 10px;
-    padding: 1px 6px;
-    border-radius: 10px;
+    color: var(--color-accent);
+    border-bottom-color: var(--color-accent);
     font-weight: 600;
 }
 
@@ -528,51 +508,43 @@ onMounted(() => {
 }
 
 .tab-panel {
-    animation: fadeIn 0.3s ease;
+    animation: fadeIn 0.2s ease;
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
-.empty-hint {
-    color: var(--color-text-secondary);
-    font-size: 13px;
-    padding: 20px 0;
-    text-align: center;
+.section {
+    margin-bottom: 0;
 }
 
-.overview-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 16px;
-}
-
-.info-card {
-    background: rgba(255,255,255,0.7);
-    backdrop-filter: blur(20px);
-    border-radius: 16px;
-    padding: 24px;
-    border: 1px solid rgba(255,255,255,0.8);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.04);
-}
-
-.info-card h4 {
-    font-size: 15px;
+.section-title {
+    font-size: 18px;
     font-weight: 600;
-    margin-bottom: 16px;
+    margin-bottom: 14px;
 }
 
-.info-card dl {
+.info-grid {
     display: grid;
-    grid-template-columns: 80px 1fr;
-    gap: 8px;
+    grid-template-columns: 140px 1fr;
+    gap: 10px;
     font-size: 13px;
 }
 
-.info-card dt {
+.info-item {
+    display: contents;
+}
+
+.info-label {
     color: var(--color-text-secondary);
+    font-weight: 500;
+    padding: 6px 0;
+}
+
+.info-value {
+    padding: 6px 0;
     font-weight: 500;
 }
 
@@ -580,108 +552,44 @@ onMounted(() => {
     padding: 2px 10px;
     border-radius: 20px;
     font-size: 12px;
-    background: rgba(102, 126, 234, 0.1);
-    color: #667eea;
-    font-weight: 600;
+    background: var(--accent-bg);
+    color: var(--color-accent);
+    font-weight: 500;
+    display: inline-block;
 }
 
-.skill-tags, .tool-tags {
+.chip-list {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
 }
 
-.skill-tag {
+.chip {
     padding: 4px 12px;
     border-radius: 20px;
     font-size: 12px;
-    background: rgba(39, 174, 96, 0.1);
-    color: #27ae60;
+    font-weight: 500;
 }
 
-.tool-tag {
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 12px;
+.skill-chip {
+    background: rgba(39, 174, 96, 0.08);
+    color: var(--color-success);
+}
+
+.tool-chip {
     background: rgba(0,0,0,0.04);
     font-family: monospace;
+    font-size: 12px;
 }
 
-.quick-actions {
+.action-row {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
-.action-btn {
-    padding: 10px 18px;
-    border-radius: 10px;
-    border: none;
-    background: var(--gradient-dream);
-    color: #fff;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
-}
-
-.action-btn.secondary {
-    background: rgba(102, 126, 234, 0.08);
-    color: #667eea;
-}
-
-.config-section {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 16px;
-}
-
-.config-group {
-    background: rgba(255,255,255,0.7);
-    border-radius: 12px;
-    padding: 20px;
-    border: 1px solid rgba(255,255,255,0.8);
-}
-
-.config-group h4 {
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 12px;
-    color: #667eea;
-}
-
-.config-group dl {
-    display: grid;
-    grid-template-columns: 100px 1fr;
-    gap: 6px;
-    font-size: 13px;
-}
-
-.config-group dt {
+.empty-hint {
     color: var(--color-text-secondary);
-    font-weight: 500;
-}
-
-.btn-load {
-    margin-top: 16px;
-    padding: 10px 24px;
-    border-radius: 10px;
-    border: 1px solid #667eea;
-    background: rgba(102, 126, 234, 0.08);
-    color: #667eea;
-    cursor: pointer;
     font-size: 13px;
-    font-weight: 500;
-}
-
-.btn-load:disabled {
-    opacity: 0.5;
-}
-
-.prompt-editor {
-    background: rgba(255,255,255,0.7);
-    border-radius: 16px;
-    padding: 24px;
-    border: 1px solid rgba(255,255,255,0.8);
 }
 
 .prompt-header {
@@ -696,27 +604,12 @@ onMounted(() => {
     font-size: 15px;
 }
 
-.btn-save {
-    padding: 8px 20px;
-    border-radius: 10px;
-    border: none;
-    background: var(--gradient-dream);
-    color: #fff;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
-}
-
-.btn-save:disabled {
-    opacity: 0.5;
-}
-
 .prompt-textarea {
     width: 100%;
     padding: 16px;
-    border-radius: 10px;
-    border: 1px solid rgba(0,0,0,0.1);
-    background: rgba(0,0,0,0.02);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
     font-size: 14px;
     font-family: monospace;
     line-height: 1.6;
@@ -729,24 +622,24 @@ onMounted(() => {
     font-size: 12px;
     color: var(--color-text-secondary);
     padding: 8px 14px;
-    background: rgba(102, 126, 234, 0.04);
-    border-radius: 8px;
+    background: var(--accent-bg);
+    border-radius: var(--radius-sm);
 }
 
 .memory-list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
 }
 
-.memory-card {
-    background: rgba(255,255,255,0.7);
-    border-radius: 12px;
-    padding: 16px 20px;
-    border: 1px solid rgba(255,255,255,0.8);
+.memory-item {
+    padding: 14px 18px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
 }
 
-.memory-header {
+.memory-item-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -757,99 +650,79 @@ onMounted(() => {
     padding: 3px 10px;
     border-radius: 20px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 500;
 }
 
 .type-badge.type-memory { background: #e3f2fd; color: #1565c0; }
 .type-badge.type-project { background: #e8f5e9; color: #2e7d32; }
 .type-badge.type-session { background: #fff3e0; color: #ef6c00; }
-.type-badge.type-user { background: rgba(102, 126, 234, 0.1); color: #667eea; }
+.type-badge.type-user { background: var(--accent-bg); color: var(--color-accent); }
 
-.memory-importance {
+.memory-item-importance {
     font-size: 12px;
     color: var(--color-text-secondary);
 }
 
-.memory-content {
+.memory-item-content {
     font-size: 14px;
     line-height: 1.5;
+    margin-bottom: 8px;
 }
 
-.memory-footer {
-    margin-top: 8px;
-}
-
-.memory-meta {
+.memory-item-meta {
     font-size: 12px;
     color: var(--color-text-secondary);
-}
-
-.tools-section {
-    background: rgba(255,255,255,0.7);
-    border-radius: 16px;
-    padding: 24px;
-    border: 1px solid rgba(255,255,255,0.8);
-}
-
-.tools-header {
-    margin-bottom: 16px;
 }
 
 .tools-count {
     font-size: 13px;
     color: var(--color-text-secondary);
+    margin-bottom: 12px;
+    display: block;
 }
 
-.tool-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 12px;
+.tool-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
-.tool-card {
-    background: rgba(255,255,255,0.7);
-    border-radius: 12px;
-    padding: 16px;
-    border: 1px solid rgba(255,255,255,0.8);
+.tool-item {
+    padding: 14px 18px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
 }
 
-.tool-card-header {
+.tool-item-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 8px;
 }
 
-.tool-name {
+.tool-item-name {
     font-weight: 600;
     font-size: 14px;
 }
 
-.tool-desc {
+.tool-item-desc {
     font-size: 13px;
     color: var(--color-text-secondary);
     margin-bottom: 8px;
     line-height: 1.4;
 }
 
-.tool-meta {
+.tool-item-meta {
     display: flex;
     gap: 14px;
     font-size: 12px;
     color: var(--color-text-secondary);
 }
 
-.runs-section {
-    background: rgba(255,255,255,0.7);
-    border-radius: 16px;
-    padding: 24px;
-    border: 1px solid rgba(255,255,255,0.8);
-}
-
 .run-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
 }
 
 .run-row {
@@ -857,69 +730,22 @@ onMounted(() => {
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    border-radius: 10px;
-    background: rgba(0,0,0,0.02);
-    cursor: pointer;
-    transition: background 0.2s;
 }
 
-.run-row:hover {
-    background: rgba(102, 126, 234, 0.06);
-}
-
-.run-info {
+.run-row-info {
     display: flex;
     flex-direction: column;
     gap: 4px;
 }
 
-.run-intent {
+.run-row-intent {
     font-weight: 600;
     font-size: 14px;
 }
 
-.run-meta {
+.run-row-meta {
     font-size: 12px;
     color: var(--color-text-secondary);
-}
-
-.permissions-section {
-    background: rgba(255,255,255,0.7);
-    border-radius: 16px;
-    padding: 24px;
-    border: 1px solid rgba(255,255,255,0.8);
-}
-
-.perm-group {
-    margin-bottom: 20px;
-}
-
-.perm-group:last-child {
-    margin-bottom: 0;
-}
-
-.perm-group h4 {
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 10px;
-    color: #667eea;
-}
-
-.perm-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-}
-
-.perm-chip {
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 12px;
-}
-
-.perm-chip.allowed {
-    background: rgba(39, 174, 96, 0.08);
-    color: #27ae60;
 }
 
 .perm-list {
@@ -928,28 +754,33 @@ onMounted(() => {
     gap: 8px;
 }
 
-.perm-row {
+.perm-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 8px 14px;
-    background: rgba(0,0,0,0.02);
-    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+}
+
+.perm-cap {
+    font-weight: 500;
     font-size: 13px;
 }
 
-.perm-capability {
-    font-weight: 500;
-}
-
 .perm-value {
+    font-size: 12px;
+    font-weight: 500;
     padding: 2px 10px;
     border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
 }
 
-.perm-value.allowed { background: #e8f5e9; color: #2e7d32; }
-.perm-value.denied { background: #ffebee; color: #c62828; }
-.perm-value.confirmation { background: #fff3e0; color: #ef6c00; }
+.perm-value.allow { background: #e8f5e9; color: #2e7d32; }
+.perm-value.deny { background: #ffebee; color: #c62828; }
+
+.allowed-chip {
+    background: rgba(39, 174, 96, 0.08);
+    color: var(--color-success);
+}
 </style>

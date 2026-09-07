@@ -31,18 +31,22 @@ data class IdeEvent(
 )
 
 data class OutgoingEnvelope(
-    @SerializedName("type") val type: String,           // "event" | "chat" | "capability_result" | "hello"
+    @SerializedName("type") val type: String,           // "event" | "chat" | "capability_result" | "hello" | "cancel_run"
     @SerializedName("hostType") val hostType: String = "ide",
     @SerializedName("ideType") val ideType: String = "Rider",
     @SerializedName("sessionId") val sessionId: String,
+    @SerializedName("userId") val userId: String? = null,
     @SerializedName("workspaceId") val workspaceId: String? = null,
     @SerializedName("event") val event: IdeEvent? = null,
     @SerializedName("content") val content: String? = null,
-    @SerializedName("context") val context: Map<String, Any?>? = null,
+    @SerializedName("hostContext") val hostContext: Map<String, Any?>? = null,
     @SerializedName("callId") val callId: String? = null,
+    @SerializedName("runId") val runId: String? = null,
     @SerializedName("capability") val capability: String? = null,
     @SerializedName("result") val result: Map<String, Any?>? = null,
-    @SerializedName("capabilities") val capabilities: List<Map<String, Any?>>? = null
+    @SerializedName("capabilities") val capabilities: List<Map<String, Any?>>? = null,
+    @SerializedName("mode") val mode: String? = null,
+    @SerializedName("model") val model: String? = null
 )
 
 data class IncomingEnvelope(

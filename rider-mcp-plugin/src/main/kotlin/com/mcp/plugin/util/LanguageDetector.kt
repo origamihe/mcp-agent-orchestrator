@@ -28,6 +28,7 @@ object LanguageDetector {
     )
 
     fun detect(file: VirtualFile): String {
-        return extensionMap[file.extension?.lowercase()] ?: file.fileType.name.lowercase()
+        return extensionMap[file.extension?.lowercase()]
+            ?: runCatching { file.fileType.name.lowercase() }.getOrDefault("unknown")
     }
 }

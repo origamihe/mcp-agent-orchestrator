@@ -1,13 +1,13 @@
 <template>
     <div class="page">
         <div class="page-header">
-            <h2>执行历史</h2>
-            <span class="subtitle">追踪所有 Agent 执行记录与 Token 用量</span>
+            <h2>Runs</h2>
+            <span class="subtitle">Execution history & token usage</span>
         </div>
 
         <div class="run-toolbar">
             <select v-model="filterStatus" class="filter-select" @change="loadRuns">
-                <option value="">全部状态</option>
+                <option value="">All statuses</option>
                 <option value="pending">Pending</option>
                 <option value="running">Running</option>
                 <option value="completed">Completed</option>
@@ -15,19 +15,20 @@
                 <option value="cancelled">Cancelled</option>
             </select>
             <select v-model="filterAgent" class="filter-select" @change="loadRuns">
-                <option value="">全部 Agent</option>
+                <option value="">All Agents</option>
                 <option v-for="a in agentStore.agents" :key="a.agentId" :value="a.agentId">{{ a.agentName }}</option>
             </select>
-            <button class="btn-refresh" @click="loadRuns" :disabled="runStore.isLoading">
-                {{ runStore.isLoading ? '刷新中...' : '刷新' }}
+            <div class="toolbar-spacer"></div>
+            <button class="btn-secondary" @click="loadRuns" :disabled="runStore.isLoading">
+                {{ runStore.isLoading ? 'Loading...' : 'Refresh' }}
             </button>
         </div>
 
-        <div v-if="runStore.isLoading" class="loading">加载中...</div>
+        <div v-if="runStore.isLoading" class="loading">Loading...</div>
 
         <div v-else-if="filteredRuns.length === 0" class="empty-state">
             <ClockIcon class="empty-icon" />
-            <p>暂无执行记录</p>
+            <p>No run records</p>
         </div>
 
         <div class="run-table-wrapper" v-else>
@@ -46,14 +47,14 @@
                 </thead>
                 <tbody>
                     <tr v-for="run in filteredRuns" :key="run.id" @click="viewDetail(run.id)" class="clickable-row">
-                        <td>{{ run.agentName }}</td>
+                        <td class="agent-cell">{{ run.agentName }}</td>
                         <td class="intent-cell">{{ run.intent }}</td>
-                        <td><span :class="['status-badge', `status-${run.status}`]">{{ statusLabel(run.status) }}</span></td>
-                        <td>{{ formatDuration(run.duration) }}</td>
-                        <td>{{ run.toolCallCount }}</td>
-                        <td class="token-cell">{{ run.tokenUsage.totalTokens }}</td>
-                        <td class="time-cell">{{ formatDate(run.createdAt) }}</td>
-                        <td><button class="btn-view" @click.stop="viewDetail(run.id)">详情</button></td>
+                        <td><StatusBadge :type="runStatusType(run.status)" :text="statusLabel(run.status)" /></td>
+                        <td class="mono-cell">{{ formatDuration(run.duration) }}</td>
+                        <td class="mono-cell">{{ run.toolCallCount }}</td>
+                        <td class="mono-cell">{{ run.tokenUsage.totalTokens }}</td>
+                        <td class="mono-cell">{{ formatDate(run.createdAt) }}</td>
+                        <td><button class="btn-tertiary" @click.stop="viewDetail(run.id)">Detail</button></td>
                     </tr>
                 </tbody>
             </table>
@@ -65,6 +66,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ClockIcon } from '@heroicons/vue/24/outline'
+import StatusBadge from '@/components/common/StatusBadge.vue'
 import { useRunStore } from '@/stores/runStore'
 import { useAgentStore } from '@/stores/agentStore'
 import type { RunStatus } from '@/types/run'
@@ -78,9 +80,16 @@ const filterAgent = ref('')
 
 function statusLabel(status: RunStatus): string {
     const labels: Record<RunStatus, string> = {
-        pending: '等待中', running: '执行中', completed: '已完成', failed: '失败', cancelled: '已取消',
+        pending: 'Pending', running: 'Running', completed: 'Done', failed: 'Failed', cancelled: 'Cancelled',
     }
     return labels[status] || status
+}
+
+function runStatusType(status: string): 'success' | 'warning' | 'error' | 'info' | 'neutral' {
+    const map: Record<string, string> = {
+        completed: 'success', failed: 'error', running: 'info', pending: 'warning', cancelled: 'neutral',
+    }
+    return (map[status] || 'neutral') as any
 }
 
 function formatDuration(ms: number): string {
@@ -123,19 +132,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page {
-    padding: 24px 32px;
-    height: 100%;
-    overflow-y: auto;
-}
-
 .page-header {
     margin-bottom: 24px;
 }
 
 .page-header h2 {
-    font-size: 22px;
-    font-weight: 700;
+    font-size: 28px;
+    font-weight: 650;
+    letter-spacing: -0.3px;
 }
 
 .subtitle {
@@ -147,32 +151,22 @@ onMounted(() => {
 
 .run-toolbar {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     margin-bottom: 20px;
     align-items: center;
 }
 
 .filter-select {
     padding: 8px 14px;
-    border-radius: 10px;
-    border: 1px solid rgba(0,0,0,0.1);
-    background: rgba(255,255,255,0.9);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
     font-size: 13px;
+    color: var(--color-text);
 }
 
-.btn-refresh {
-    padding: 8px 18px;
-    border-radius: 10px;
-    border: 1px solid #667eea;
-    background: rgba(102, 126, 234, 0.08);
-    color: #667eea;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
-}
-
-.btn-refresh:disabled {
-    opacity: 0.5;
+.toolbar-spacer {
+    flex: 1;
 }
 
 .loading, .empty-state {
@@ -182,19 +176,17 @@ onMounted(() => {
 }
 
 .empty-icon {
-    width: 48px;
-    height: 48px;
+    width: 40px;
+    height: 40px;
     margin-bottom: 12px;
-    opacity: 0.3;
+    opacity: 0.25;
 }
 
 .run-table-wrapper {
-    background: rgba(255,255,255,0.7);
-    backdrop-filter: blur(20px);
-    border-radius: 16px;
-    border: 1px solid rgba(255,255,255,0.8);
+    background: var(--color-surface);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
     overflow: hidden;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.04);
 }
 
 .run-table {
@@ -204,29 +196,33 @@ onMounted(() => {
 
 .run-table th {
     text-align: left;
-    padding: 14px 20px;
+    padding: 12px 18px;
     font-size: 12px;
     font-weight: 600;
     color: var(--color-text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    border-bottom: 1px solid rgba(0,0,0,0.06);
-    background: rgba(0,0,0,0.02);
+    border-bottom: 1px solid var(--color-border);
+    background: rgba(0,0,0,0.015);
 }
 
 .run-table td {
-    padding: 14px 20px;
+    padding: 12px 18px;
     font-size: 13px;
-    border-bottom: 1px solid rgba(0,0,0,0.04);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.run-table tbody tr:last-child td {
+    border-bottom: none;
 }
 
 .clickable-row {
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background 0.15s ease;
 }
 
 .clickable-row:hover {
-    background: rgba(102, 126, 234, 0.04);
+    background: var(--accent-bg);
 }
 
 .intent-cell {
@@ -236,32 +232,29 @@ onMounted(() => {
     white-space: nowrap;
 }
 
-.token-cell, .time-cell {
+.mono-cell {
     font-size: 12px;
     color: var(--color-text-secondary);
     font-family: monospace;
 }
 
-.status-badge {
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
+.agent-cell {
+    font-weight: 500;
 }
 
-.status-pending { background: #fff3e0; color: #ef6c00; }
-.status-running { background: #e3f2fd; color: #1565c0; }
-.status-completed { background: #e8f5e9; color: #2e7d32; }
-.status-failed { background: #ffebee; color: #c62828; }
-.status-cancelled { background: #f5f5f5; color: #757575; }
-
-.btn-view {
+.btn-tertiary {
     padding: 4px 12px;
     border-radius: 6px;
-    border: 1px solid #667eea;
-    background: rgba(102, 126, 234, 0.06);
-    color: #667eea;
+    border: none;
+    background: none;
     cursor: pointer;
     font-size: 12px;
+    color: var(--color-accent);
+    font-weight: 500;
+}
+
+.btn-tertiary:hover {
+    background: var(--accent-bg);
+    box-shadow: none;
 }
 </style>

@@ -20,6 +20,8 @@ class McpPluginSettings : PersistentStateComponent<McpPluginSettings> {
     var gatewayToken: String = ""
     var autoConnect: Boolean = true
     var agentName: String = "澪音"
+    var agentMode: String = "CHAT"
+    var agentModel: String = ""
 
     override fun getState(): McpPluginSettings = this
     override fun loadState(state: McpPluginSettings) {

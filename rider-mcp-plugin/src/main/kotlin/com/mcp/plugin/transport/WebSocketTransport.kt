@@ -20,6 +20,7 @@ import java.util.UUID
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.SwingUtilities
@@ -39,6 +40,9 @@ class WebSocketTransport(private val project: Project) : Transport {
     private val reconnectExecutor = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "ws-reconnect").apply { isDaemon = true }
     }
+    private val tokenRefreshExecutor = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "ws-token-refresh").apply { isDaemon = true }
+    }
     private val reconnectScheduled = AtomicBoolean(false)
     private val shouldReconnect = AtomicBoolean(true)
 
@@ -49,6 +53,15 @@ class WebSocketTransport(private val project: Project) : Transport {
 
     private val offlineMessageQueue = ConcurrentLinkedQueue<OutgoingEnvelope>()
     private val maxOfflineQueueSize = 200
+
+    @Volatile
+    private var tokenExpiry: Long = 0
+
+    private val tokenValidityDurationMs = TimeUnit.MINUTES.toMillis(30)
+    private val tokenRefreshFraction = 0.8f
+
+    @Volatile
+    private var scheduledTokenRefresh: ScheduledFuture<*>? = null
 
     private val unsupportedOfflineTypes = setOf("capability_result", "hello")
 
@@ -101,8 +114,22 @@ class WebSocketTransport(private val project: Project) : Transport {
     }
 
     private fun resolveToken(baseUri: String): String {
-        if (settings.gatewayToken.isNotBlank()) {
-            return settings.gatewayToken
+        if (reconnectAttempt > 0) {
+            settings.clearGatewayToken()
+            tokenExpiry = 0
+            cancelScheduledTokenRefresh()
+        }
+
+        if (isTokenValid()) {
+            val cachedToken = settings.getGatewayToken()
+            if (cachedToken.isNotBlank()) {
+                return cachedToken
+            }
+        }
+
+        val cachedToken = settings.getGatewayToken()
+        if (cachedToken.isNotBlank()) {
+            return cachedToken
         }
         return try {
             val tokenUrl = deriveHttpUrl(baseUri) + "/api/hosts/token"
@@ -118,7 +145,9 @@ class WebSocketTransport(private val project: Project) : Transport {
                 val token = tokenResp.token
                 if (token.isNotBlank()) {
                     logger.info("[Transport] Token fetched successfully")
-                    settings.gatewayToken = token
+                    settings.setGatewayToken(token)
+                    tokenExpiry = System.currentTimeMillis() + tokenValidityDurationMs
+                    scheduleTokenRefresh()
                     token
                 } else {
                     logger.warn("[Transport] Token response was empty")
@@ -132,6 +161,48 @@ class WebSocketTransport(private val project: Project) : Transport {
             logger.warn("[Transport] Token fetch error: ${e.message}")
             ""
         }
+    }
+
+    private fun isTokenValid(): Boolean {
+        return tokenExpiry > 0 && System.currentTimeMillis() < tokenExpiry
+    }
+
+    private fun scheduleTokenRefresh() {
+        cancelScheduledTokenRefresh()
+        val delayMs = ((tokenValidityDurationMs * tokenRefreshFraction).toLong())
+        logger.info("[Transport] Scheduling token refresh in ${delayMs / 1000}s")
+        scheduledTokenRefresh = tokenRefreshExecutor.schedule({
+            logger.info("[Transport] Proactively refreshing token before expiry")
+            val baseUri = settings.gatewayUrl
+            try {
+                val tokenUrl = deriveHttpUrl(baseUri) + "/api/hosts/token"
+                val request = HttpRequest.newBuilder()
+                    .uri(URI.create(tokenUrl))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET()
+                    .build()
+                val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+                if (response.statusCode() == 200) {
+                    val tokenResp = Gson().fromJson(response.body(), TokenResponse::class.java)
+                    val token = tokenResp.token
+                    if (token.isNotBlank()) {
+                        logger.info("[Transport] Token refreshed proactively")
+                        settings.setGatewayToken(token)
+                        tokenExpiry = System.currentTimeMillis() + tokenValidityDurationMs
+                        scheduleTokenRefresh()
+                    }
+                } else {
+                    logger.warn("[Transport] Token refresh failed: HTTP ${response.statusCode()}")
+                }
+            } catch (e: Exception) {
+                logger.warn("[Transport] Token refresh error: ${e.message}")
+            }
+        }, delayMs, TimeUnit.MILLISECONDS)
+    }
+
+    private fun cancelScheduledTokenRefresh() {
+        scheduledTokenRefresh?.cancel(false)
+        scheduledTokenRefresh = null
     }
 
     private fun deriveHttpUrl(wsUrl: String): String {
@@ -210,7 +281,9 @@ class WebSocketTransport(private val project: Project) : Transport {
 
     fun dispose() {
         disconnect()
+        cancelScheduledTokenRefresh()
         reconnectExecutor.shutdownNow()
+        tokenRefreshExecutor.shutdownNow()
         messageListeners.clear()
         connectionListeners.clear()
         offlineMessageQueue.clear()
@@ -278,6 +351,15 @@ class WebSocketTransport(private val project: Project) : Transport {
             } else {
                 logger.error("[Transport] Closed abnormally: $statusCode $reason")
                 PluginLogger.error("Transport", "WebSocket closed abnormally: $statusCode $reason", null)
+                cancelScheduledTokenRefresh()
+                if (isAuthFailure(statusCode, reason)) {
+                    logger.warn("[Transport] Auth failure detected, clearing token")
+                    settings.clearGatewayToken()
+                    tokenExpiry = 0
+                } else {
+                    settings.clearGatewayToken()
+                    tokenExpiry = 0
+                }
             }
             this@WebSocketTransport.webSocket = null
             isConnected = false
@@ -289,10 +371,24 @@ class WebSocketTransport(private val project: Project) : Transport {
         override fun onError(webSocket: WebSocket, error: Throwable?) {
             logger.error("[Transport] Error: ${error?.message}")
             PluginLogger.error("Transport", "WebSocket error: ${error?.message}", error)
+            cancelScheduledTokenRefresh()
+            settings.clearGatewayToken()
+            tokenExpiry = 0
             this@WebSocketTransport.webSocket = null
             isConnected = false
             notifyConnectionState(false)
             scheduleReconnect()
+        }
+
+        private fun isAuthFailure(statusCode: Int, reason: String): Boolean {
+            val reasonLower = reason.lowercase()
+            return statusCode == 4001
+                || statusCode == 4003
+                || reasonLower.contains("auth")
+                || reasonLower.contains("unauthorized")
+                || reasonLower.contains("401")
+                || reasonLower.contains("403")
+                || reasonLower.contains("token")
         }
     }
 }

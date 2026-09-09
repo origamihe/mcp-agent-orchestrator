@@ -55,7 +55,11 @@ data class IncomingEnvelope(
     @SerializedName("capability") val capability: String? = null,
     @SerializedName("params") val params: Map<String, Any?>? = null,
     @SerializedName("content") val content: String? = null,
-    @SerializedName("actions") val actions: List<Map<String, Any?>>? = null
+    @SerializedName("actions") val actions: List<Map<String, Any?>>? = null,
+    @SerializedName("generation") val generation: Int = 0,
+    @SerializedName("runId") val runId: String? = null,
+    @SerializedName("eventType") val eventType: String? = null,
+    @SerializedName("payload") val payload: Map<String, Any?>? = null
 )
 
 object Protocol {

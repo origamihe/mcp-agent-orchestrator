@@ -43,7 +43,7 @@ class McpPluginSettingsConfigurable : Configurable {
     override fun isModified(): Boolean {
         val settings = McpPluginSettings.instance
         return gatewayUrlField?.text != settings.gatewayUrl
-                || gatewayTokenField?.text != settings.gatewayToken
+                || gatewayTokenField?.text != settings.getGatewayToken()
                 || agentNameField?.text != settings.agentName
                 || autoConnectCheckbox?.isSelected != settings.autoConnect
     }
@@ -51,7 +51,7 @@ class McpPluginSettingsConfigurable : Configurable {
     override fun apply() {
         val settings = McpPluginSettings.instance
         settings.gatewayUrl = gatewayUrlField?.text ?: settings.gatewayUrl
-        settings.gatewayToken = gatewayTokenField?.text ?: settings.gatewayToken
+        settings.setGatewayToken(gatewayTokenField?.text ?: "")
         settings.agentName = agentNameField?.text ?: settings.agentName
         settings.autoConnect = autoConnectCheckbox?.isSelected ?: settings.autoConnect
     }
@@ -59,7 +59,7 @@ class McpPluginSettingsConfigurable : Configurable {
     override fun reset() {
         val settings = McpPluginSettings.instance
         gatewayUrlField?.text = settings.gatewayUrl
-        gatewayTokenField?.text = settings.gatewayToken
+        gatewayTokenField?.text = settings.getGatewayToken()
         agentNameField?.text = settings.agentName
         autoConnectCheckbox?.isSelected = settings.autoConnect
     }

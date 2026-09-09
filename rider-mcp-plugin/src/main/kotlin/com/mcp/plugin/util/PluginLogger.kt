@@ -42,11 +42,11 @@ object PluginLogger {
             flushQueue()
         }, 1, 1, TimeUnit.SECONDS)
 
-        Runtime.getRuntime().addShutdownHook(Thread {
+        Runtime.getRuntime().addShutdownHook(Thread({
             flushQueue()
             try { writer.close() } catch (_: Exception) {}
             flushExecutor.shutdownNow()
-        }, "plugin-log-shutdown")
+        }, "plugin-log-shutdown"))
     }
 
     private fun flushQueue() {
@@ -61,9 +61,9 @@ object PluginLogger {
         }
     }
 
-    fun getLogDir(): File = logDir
+    fun logDirectory(): File = logDir
 
-    fun getLogFile(): File = logFile
+    fun currentLogFile(): File = logFile
 
     fun getLogContent(maxLines: Int = 500): String {
         flushQueue()

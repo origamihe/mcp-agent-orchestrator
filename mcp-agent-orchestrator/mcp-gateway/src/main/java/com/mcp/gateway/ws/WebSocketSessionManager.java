@@ -32,6 +32,7 @@ public class WebSocketSessionManager {
         aliases.remove(sessionId);
     }
 
+    @Deprecated(since = "2026-09", forRemoval = true)
     public void broadcast(String message) {
         for (WebSocketSession session : sessions.values()) {
             if (session.isOpen()) {

@@ -6,10 +6,7 @@ import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.diagnostic.Logger
 import com.mcp.plugin.capability.CapabilityAdapter
-import com.mcp.plugin.event.IdeEventBus
-import com.mcp.plugin.event.OutgoingEnvelope
-import com.mcp.plugin.transport.Transport
-import com.mcp.plugin.transport.WebSocketTransport
+import com.mcp.plugin.session.AgentSessionController
 
 data class PromptDef(
     val id: String,
@@ -89,25 +86,29 @@ class PromptRegistry : DefaultActionGroup("MCP Agent", true) {
                     val selectedCode = editor?.selectionModel?.selectedText?.takeIf { it.isNotBlank() }
                         ?: editor?.document?.text ?: ""
 
-                    val transport: Transport? = project.getService(WebSocketTransport::class.java)
-                    val eventBus = project.getService(IdeEventBus::class.java)
-                    val capabilityAdapter = project.getService(CapabilityAdapter::class.java)
-
-                    val fullPrompt = "${prompt.prompt}\n\n```\n$selectedCode\n```"
-
-                    if (transport != null) {
-                        transport.send(OutgoingEnvelope(
-                            type = "chat",
-                            sessionId = transport.sessionId,
-                            userId = System.getProperty("user.name"),
-                            workspaceId = eventBus?.workspaceId,
-                            content = fullPrompt,
-                            hostContext = capabilityAdapter.execute("get_editor_state", emptyMap())
-                        ))
-                        logger.info("[PromptRegistry] Sent prompt: ${prompt.id}")
-                    } else {
-                        logger.error("[PromptRegistry] Transport not available, prompt not sent: ${prompt.id}")
+                    val sessionController = project.getService(AgentSessionController::class.java)
+                    if (sessionController == null) {
+                        logger.error("[PromptRegistry] SessionController not available for prompt: ${prompt.id}")
+                        return
                     }
+
+                    val fullPrompt = if (prompt.id == "generate_commit") {
+                        val capabilityAdapter = project.getService(CapabilityAdapter::class.java)
+                        val diffResult = capabilityAdapter?.execute("get_git_diff", emptyMap())
+                        @Suppress("UNCHECKED_CAST")
+                        val diffs = (diffResult?.get("diffs") as? List<Map<String, Any?>>) ?: emptyList()
+                        val diffSummary = diffs.joinToString("\n") { diff ->
+                            "  ${diff["status"]} ${diff["filePath"]}"
+                        }
+                        logger.info("[PromptRegistry] Git diff fetched: ${diffs.size} files changed")
+                        "${prompt.prompt}\n\nGit changes:\n$diffSummary"
+                    } else {
+                        "${prompt.prompt}\n\n```\n$selectedCode\n```"
+                    }
+
+                    sessionController.startSession()
+                    sessionController.sendMessageWithMode(fullPrompt, sessionController.session.mode, sessionController.session.modelConfigId)
+                    logger.info("[PromptRegistry] Sent prompt via SessionController: ${prompt.id}")
                 }
             }
         }.toTypedArray()

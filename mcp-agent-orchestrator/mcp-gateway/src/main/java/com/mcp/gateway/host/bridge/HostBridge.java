@@ -58,6 +58,7 @@ public class HostBridge {
             case "chat" -> handleChat(payload);
             case "capability_result" -> handleCapabilityResult(payload);
             case "hello" -> handleHello(payload, wsSessionId);
+            case "cancel_run" -> handleCancelRun(payload);
             default -> {
                 log.warn("[HostBridge] Unknown message type: {}", type);
                 yield Mono.empty();
@@ -131,6 +132,26 @@ public class HostBridge {
                     pluginSessionId, wsSessionId);
         } else {
             log.warn("[HostBridge] Hello message missing sessionId from {}", hostType);
+        }
+
+        return Mono.empty();
+    }
+
+    private Mono<Void> handleCancelRun(JsonNode payload) {
+        String runId = payload.has("runId") ? payload.get("runId").asText() : null;
+        String sessionId = payload.has("sessionId") ? payload.get("sessionId").asText() : null;
+        log.info("[HostBridge] Cancel run requested: runId={}, sessionId={}", runId, sessionId);
+
+        try {
+            Map<String, Object> ack = new LinkedHashMap<>();
+            ack.put("type", "cancel_run_ack");
+            ack.put("runId", runId != null ? runId : "");
+            String ackJson = objectMapper.writeValueAsString(ack);
+            if (sessionId != null) {
+                sessionManager.sendTo(sessionId, ackJson);
+            }
+        } catch (Exception e) {
+            log.error("[HostBridge] Failed to send cancel_run_ack: {}", e.getMessage());
         }
 
         return Mono.empty();

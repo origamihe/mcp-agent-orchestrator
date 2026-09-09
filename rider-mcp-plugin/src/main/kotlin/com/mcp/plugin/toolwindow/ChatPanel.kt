@@ -320,7 +320,7 @@ class ChatPanel(
 
     private fun showLogs() {
         val logContent = PluginLogger.getLogContent(500)
-        val logFile = PluginLogger.getLogFile()
+        val logFile = PluginLogger.currentLogFile()
         val dialog = JDialog(SwingUtilities.getWindowAncestor(this), "MCP Plugin Logs", Dialog.ModalityType.MODELESS)
         dialog.defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
 
@@ -348,7 +348,7 @@ class ChatPanel(
             font = Font(FONT_FAMILY, Font.PLAIN, 11)
             addActionListener {
                 try {
-                    val logDir = PluginLogger.getLogDir()
+                    val logDir = PluginLogger.logDirectory()
                     java.awt.Desktop.getDesktop().open(logDir)
                 } catch (e: Exception) {
                     logger.error("[ChatPanel] Failed to open log folder: ${e.message}")
@@ -428,7 +428,10 @@ class ChatPanel(
                 }
             }
 
-            is AgentEvent.UserMessage -> timeline.addEvent(event)
+            is AgentEvent.UserMessage -> {
+                timeline.addEvent(event)
+                renderUserMessageToAnswer(event)
+            }
 
             is AgentEvent.Thinking,
             is AgentEvent.ToolCallStarted,
@@ -444,18 +447,54 @@ class ChatPanel(
         }
     }
 
+    private fun renderUserMessageToAnswer(event: AgentEvent.UserMessage) {
+        try {
+            val doc = finalAnswerPane.styledDocument
+            if (doc.length > 0) {
+                doc.insertString(doc.length, "\n\n", userLabelStyle)
+            }
+            doc.insertString(doc.length, "You: ", userLabelStyle)
+            doc.insertString(doc.length, event.content, userTextStyle)
+            finalAnswerPane.caretPosition = doc.length
+        } catch (e: BadLocationException) {
+            logger.error("[ChatPanel] Failed to render user message: ${e.message}")
+        }
+    }
+
     private fun renderFinalAnswer(content: String) {
         try {
             val doc = finalAnswerPane.styledDocument
-            doc.remove(0, doc.length)
-            doc.insertString(0, content, finalAnswerStyle)
-            finalAnswerPane.caretPosition = 0
+            doc.insertString(doc.length, "\n\nAgent:\n", agentLabelStyle)
+            doc.insertString(doc.length, content, finalAnswerStyle)
+            finalAnswerPane.caretPosition = doc.length
         } catch (e: BadLocationException) {
             logger.error("[ChatPanel] Failed to render final answer: ${e.message}")
         }
     }
 
     private val finalAnswerStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setFontFamily(this, FONT_FAMILY)
+            StyleConstants.setFontSize(this, 12)
+        }
+
+    private val agentLabelStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setFontFamily(this, FONT_FAMILY)
+            StyleConstants.setFontSize(this, 12)
+            StyleConstants.setBold(this, true)
+            StyleConstants.setForeground(this, JBColor(0x0066CC, 0x6699FF))
+        }
+
+    private val userLabelStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setFontFamily(this, FONT_FAMILY)
+            StyleConstants.setFontSize(this, 12)
+            StyleConstants.setBold(this, true)
+            StyleConstants.setForeground(this, JBColor(0x009933, 0x66CC66))
+        }
+
+    private val userTextStyle: SimpleAttributeSet
         get() = SimpleAttributeSet().apply {
             StyleConstants.setFontFamily(this, FONT_FAMILY)
             StyleConstants.setFontSize(this, 12)

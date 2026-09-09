@@ -12,7 +12,7 @@ object PathValidator {
 
     private val SENSITIVE_DIRS = setOf(
         ".ssh", ".aws", ".config", ".gnupg", ".docker",
-        "AppData", "Windows", "System32", "/etc", "/root", "/home"
+        "AppData", "Windows", "System32", "etc", "root", "home"
     )
 
     private val SENSITIVE_FILES = setOf(

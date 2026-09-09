@@ -8,7 +8,9 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.mcp.plugin.McpPluginSettings
 import com.mcp.plugin.capability.CapabilityAdapter
+import com.mcp.plugin.event.IdeEventBus
 import com.mcp.plugin.event.OutgoingEnvelope
+import com.mcp.plugin.event.Protocol
 import com.mcp.plugin.transport.Transport
 import com.mcp.plugin.transport.WebSocketTransport
 import com.mcp.plugin.util.PluginLogger
@@ -40,9 +42,13 @@ class AgentSessionController(private val project: Project) {
     private val logger = Logger.getInstance(AgentSessionController::class.java)
     private val transport: Transport? = project.getService(WebSocketTransport::class.java)
     private val capabilityAdapter = project.getService(CapabilityAdapter::class.java)
+    private val eventBus: IdeEventBus? = project.getService(IdeEventBus::class.java)
     private val settings = ApplicationManager.getApplication().getService(McpPluginSettings::class.java) ?: McpPluginSettings()
 
     val session = AgentSession()
+
+    private val resolvedWorkspaceId: String
+        get() = eventBus?.workspaceId ?: "workspace-${project.name}"
 
     private val gson = Gson()
     private val httpClient = HttpClient.newBuilder().build()
@@ -82,62 +88,7 @@ class AgentSessionController(private val project: Project) {
         transport?.connect()
     }
 
-    fun sendMessage(text: String): String {
-        val runId = session.startRun(session.mode, session.modelConfigId)
-        val currentGen = activeGeneration
-        session.addUserMessage(text)
-
-        pushUiEvent(AgentEvent.UserMessage(session.sessionId, text, runId, currentGen))
-        pushUiEvent(AgentEvent.RunStarted(session.sessionId, runId, session.mode, session.modelConfigId, currentGen))
-
-        backgroundExecutor.submit {
-            val t = transport ?: return@submit
-            val hostContext = getEditorContext()
-
-            val envelope = OutgoingEnvelope(
-                type = "chat",
-                sessionId = t.sessionId,
-                userId = System.getProperty("user.name"),
-                workspaceId = "workspace-${project.name}",
-                content = text,
-                hostContext = hostContext,
-                mode = session.mode.toBackendMode(),
-                model = session.modelConfigId
-            )
-            t.send(envelope)
-        }
-        return runId
-    }
-
-    fun sendChat(text: String, onRunStarted: (String) -> Unit) {
-        val runId = session.startRun(session.mode, session.modelConfigId)
-        val currentGen = activeGeneration
-        session.addUserMessage(text)
-
-        pushUiEvent(AgentEvent.UserMessage(session.sessionId, text, runId, currentGen))
-        pushUiEvent(AgentEvent.RunStarted(session.sessionId, runId, session.mode, session.modelConfigId, currentGen))
-
-        SwingUtilities.invokeLater { onRunStarted(runId) }
-
-        backgroundExecutor.submit {
-            val t = transport ?: return@submit
-            val hostContext = getEditorContext()
-
-            val envelope = OutgoingEnvelope(
-                type = "chat",
-                sessionId = t.sessionId,
-                userId = System.getProperty("user.name"),
-                workspaceId = "workspace-${project.name}",
-                content = text,
-                hostContext = hostContext,
-                mode = session.mode.toBackendMode(),
-                model = session.modelConfigId
-            )
-            t.send(envelope)
-        }
-    }
-
-    fun sendMessageWithMode(text: String, mode: AgentMode, modelConfigId: String?): String {
+    private fun sendChatInternal(text: String, mode: AgentMode, modelConfigId: String?, onRunStarted: ((String) -> Unit)? = null): String {
         val runId = session.startRun(mode, modelConfigId)
         val currentGen = activeGeneration
         session.addUserMessage(text)
@@ -145,6 +96,8 @@ class AgentSessionController(private val project: Project) {
         pushUiEvent(AgentEvent.UserMessage(session.sessionId, text, runId, currentGen))
         pushUiEvent(AgentEvent.RunStarted(session.sessionId, runId, mode, modelConfigId, currentGen))
 
+        onRunStarted?.let { SwingUtilities.invokeLater { it(runId) } }
+
         backgroundExecutor.submit {
             val t = transport ?: return@submit
             val hostContext = getEditorContext()
@@ -153,16 +106,27 @@ class AgentSessionController(private val project: Project) {
                 type = "chat",
                 sessionId = t.sessionId,
                 userId = System.getProperty("user.name"),
-                workspaceId = "workspace-${project.name}",
+                workspaceId = resolvedWorkspaceId,
                 content = text,
                 hostContext = hostContext,
                 mode = mode.toBackendMode(),
                 model = modelConfigId
             )
-
             t.send(envelope)
         }
         return runId
+    }
+
+    fun sendMessage(text: String): String {
+        return sendChatInternal(text, session.mode, session.modelConfigId)
+    }
+
+    fun sendChat(text: String, onRunStarted: (String) -> Unit) {
+        sendChatInternal(text, session.mode, session.modelConfigId, onRunStarted)
+    }
+
+    fun sendMessageWithMode(text: String, mode: AgentMode, modelConfigId: String?): String {
+        return sendChatInternal(text, mode, modelConfigId)
     }
 
     fun cancelRun() {
@@ -174,7 +138,7 @@ class AgentSessionController(private val project: Project) {
             t.send(OutgoingEnvelope(
                 type = "cancel_run",
                 sessionId = t.sessionId,
-                workspaceId = "workspace-${project.name}",
+                workspaceId = resolvedWorkspaceId,
                 runId = runId
             ))
             logger.info("[AgentSessionController] Sent cancel_run for runId=$runId")
@@ -235,18 +199,17 @@ class AgentSessionController(private val project: Project) {
     fun handleMessage(json: String, onUiUpdate: (AgentEvent) -> Unit) {
         backgroundExecutor.submit {
             try {
-                val msg = gson.fromJson(json, Map::class.java) as? Map<String, Any?> ?: return@submit
-                val type = msg["type"] as? String ?: return@submit
+                val envelope = Protocol.fromJson(json)
+                val type = envelope.type ?: return@submit
                 val sessionId = session.sessionId
                 val runId = session.currentRunId
                 val currentGen = activeGeneration
 
                 when (type) {
                     "capability_call" -> {
-                        val callId = msg["callId"] as? String ?: return@submit
-                        val capability = msg["capability"] as? String ?: return@submit
-                        @Suppress("UNCHECKED_CAST")
-                        val params = (msg["params"] as? Map<String, Any?>) ?: emptyMap()
+                        val callId = envelope.callId ?: return@submit
+                        val capability = envelope.capability ?: return@submit
+                        val params = envelope.params ?: emptyMap()
 
                         val startTime = System.currentTimeMillis()
                         session.addToolCallStarted(capability, params)
@@ -294,9 +257,9 @@ class AgentSessionController(private val project: Project) {
                             }
                             "apply_full_content" -> {
                                 val filePath = params["filePath"] as? String ?: ""
-                                session.addEvent(AgentEvent.DiffApplied(sessionId, runId, filePath, success))
+                                session.addEvent(AgentEvent.DiffCreated(sessionId, runId, filePath))
                                 SwingUtilities.invokeLater {
-                                    onUiUpdate(AgentEvent.DiffApplied(sessionId, runId, filePath, success))
+                                    onUiUpdate(AgentEvent.DiffCreated(sessionId, runId, filePath))
                                 }
                             }
                         }
@@ -326,9 +289,9 @@ class AgentSessionController(private val project: Project) {
                     }
 
                     "reply" -> {
-                        val content = msg["content"] as? String ?: ""
+                        val content = envelope.content ?: ""
                         val replyRunId = runId ?: "unknown"
-                        val replyGen = (msg["generation"] as? Number)?.toInt() ?: 0
+                        val replyGen = envelope.generation
 
                         if (isStaleEvent(replyGen)) {
                             logger.warn("[AgentSessionController] Stale reply ignored (gen=$replyGen, current=$currentGen)")
@@ -344,19 +307,19 @@ class AgentSessionController(private val project: Project) {
                     }
 
                     "agent_event" -> {
-                        val eventType = msg["eventType"] as? String
-                        val eventRunId = msg["runId"] as? String ?: runId
-                        val eventGen = (msg["generation"] as? Number)?.toInt() ?: 0
+                        val eventType = envelope.eventType
+                        val eventRunId = envelope.runId ?: runId
+                        val eventGen = envelope.generation
 
                         if (isStaleEvent(eventGen)) {
                             logger.warn("[AgentSessionController] Stale agent_event ignored (type=$eventType, gen=$eventGen, current=$currentGen)")
                             return@submit
                         }
 
+                        val payload = envelope.payload
+
                         when (eventType) {
                             "TOOL_CALL" -> {
-                                @Suppress("UNCHECKED_CAST")
-                                val payload = msg["payload"] as? Map<String, Any?>
                                 val toolName = payload?.get("toolName") as? String ?: "unknown"
                                 session.addMCPToolCall(toolName, false, payload ?: emptyMap())
                                 SwingUtilities.invokeLater {
@@ -364,18 +327,14 @@ class AgentSessionController(private val project: Project) {
                                 }
                             }
                             "TOOL_RESULT" -> {
-                                @Suppress("UNCHECKED_CAST")
-                                val payload = msg["payload"] as? Map<String, Any?>
                                 val toolName = payload?.get("toolName") as? String ?: "unknown"
-                                val success = payload?.get("success") as? Boolean ?: true
-                                session.addMCPToolCall(toolName, success, payload ?: emptyMap())
+                                val toolSuccess = payload?.get("success") as? Boolean ?: true
+                                session.addMCPToolCall(toolName, toolSuccess, payload ?: emptyMap())
                                 SwingUtilities.invokeLater {
-                                    onUiUpdate(AgentEvent.MCPToolCall(sessionId, eventRunId, toolName, success, payload ?: emptyMap(), currentGen))
+                                    onUiUpdate(AgentEvent.MCPToolCall(sessionId, eventRunId, toolName, toolSuccess, payload ?: emptyMap(), currentGen))
                                 }
                             }
                             "TOOL_DECISION" -> {
-                                @Suppress("UNCHECKED_CAST")
-                                val payload = msg["payload"] as? Map<String, Any?>
                                 val decision = payload?.get("decision") as? String ?: ""
                                 session.addEvent(AgentEvent.Thinking(sessionId, eventRunId, "Decision: $decision", currentGen))
                                 SwingUtilities.invokeLater {
@@ -403,7 +362,7 @@ class AgentSessionController(private val project: Project) {
                     }
 
                     "cancel_run_ack" -> {
-                        val ackRunId = msg["runId"] as? String ?: runId
+                        val ackRunId = envelope.runId ?: runId
                         logger.info("[AgentSessionController] Backend acknowledged cancel for runId=$ackRunId")
                         session.confirmCancelled()
                         SwingUtilities.invokeLater {

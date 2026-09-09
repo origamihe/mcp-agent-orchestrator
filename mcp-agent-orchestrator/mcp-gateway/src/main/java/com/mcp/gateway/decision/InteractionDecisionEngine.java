@@ -37,6 +37,10 @@ public class InteractionDecisionEngine {
         String groupId = msg.getChatId();
         String userId = msg.getSenderId();
 
+        if (msg.getChatType() == ChannelMessage.ChatType.HOST) {
+            return new Decision(DecisionType.REPLY, "host-" + userId, 50, "Host 直接回复");
+        }
+
         // 兜底：非群聊或未 @Agent → IGNORE
         if (msg.getChatType() != ChannelMessage.ChatType.GROUP || !msg.isMentionedAgent()) {
             return Decision.IGNORE;

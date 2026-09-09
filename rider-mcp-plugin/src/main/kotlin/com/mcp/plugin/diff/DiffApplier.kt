@@ -35,10 +35,12 @@ class DiffApplier(private val project: Project) {
                     }
 
                     val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: run {
+                        logger.warn("[DiffApplier] VirtualFile not found for: $filePath")
                         return@invokeAndWait
                     }
 
                     val originalDoc = FileDocumentManager.getInstance().getDocument(vf) ?: run {
+                        logger.warn("[DiffApplier] Document not found for: $filePath")
                         return@invokeAndWait
                     }
 
@@ -88,8 +90,14 @@ class DiffApplier(private val project: Project) {
                         return@invokeAndWait
                     }
 
-                    val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: return@invokeAndWait
-                    val doc = FileDocumentManager.getInstance().getDocument(vf) ?: return@invokeAndWait
+                    val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: run {
+                        logger.warn("[DiffApplier] VirtualFile not found for full content: $filePath")
+                        return@invokeAndWait
+                    }
+                    val doc = FileDocumentManager.getInstance().getDocument(vf) ?: run {
+                        logger.warn("[DiffApplier] Document not found for full content: $filePath")
+                        return@invokeAndWait
+                    }
 
                     WriteCommandAction.runWriteCommandAction(project) {
                         doc.setText(newContent)

@@ -13,6 +13,7 @@ import com.intellij.util.messages.MessageBusConnection
 import com.mcp.plugin.transport.Transport
 import com.mcp.plugin.transport.WebSocketTransport
 import com.mcp.plugin.util.LanguageDetector
+import com.mcp.plugin.util.PluginLogger
 import java.util.UUID
 
 @Service(Service.Level.PROJECT)
@@ -60,13 +61,18 @@ class IdeEventBus(private val project: Project) {
     }
 
     private fun fire(type: IdeEventType, payload: Map<String, Any?> = emptyMap()) {
-        val event = IdeEvent(type = type, payload = payload)
+        try {
+            val event = IdeEvent(type = type, payload = payload)
 
-        transport?.send(OutgoingEnvelope(
-            type = "event",
-            sessionId = transport.sessionId,
-            workspaceId = workspaceId,
-            event = event
-        ))
+            transport?.send(OutgoingEnvelope(
+                type = "event",
+                sessionId = transport.sessionId,
+                workspaceId = workspaceId,
+                event = event
+            )) ?: logger.error("[IdeEventBus] Failed to send event: transport is null (type=$type)")
+        } catch (e: Exception) {
+            logger.error("[IdeEventBus] Failed to send event (type=$type): ${e.message}", e)
+            PluginLogger.error("IdeEventBus", "Failed to send event (type=$type): ${e.message}", e)
+        }
     }
 }

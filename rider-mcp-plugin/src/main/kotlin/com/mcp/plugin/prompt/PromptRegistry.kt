@@ -4,6 +4,7 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.diagnostic.Logger
 import com.mcp.plugin.capability.CapabilityAdapter
 import com.mcp.plugin.event.IdeEventBus
 import com.mcp.plugin.event.OutgoingEnvelope
@@ -18,6 +19,8 @@ data class PromptDef(
 )
 
 class PromptRegistry : DefaultActionGroup("MCP Agent", true) {
+
+    private val logger = Logger.getInstance(PromptRegistry::class.java)
 
     companion object {
         val prompts: List<PromptDef> = listOf(
@@ -76,7 +79,12 @@ class PromptRegistry : DefaultActionGroup("MCP Agent", true) {
         return prompts.map { prompt ->
             object : AnAction(prompt.label, prompt.description, null) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    val project = e.project ?: return
+                    val project = e.project
+                    if (project == null) {
+                        logger.error("[PromptRegistry] No project available for prompt: ${prompt.id}")
+                        return
+                    }
+
                     val editor = e.getData(CommonDataKeys.EDITOR)
                     val selectedCode = editor?.selectionModel?.selectedText?.takeIf { it.isNotBlank() }
                         ?: editor?.document?.text ?: ""
@@ -87,14 +95,19 @@ class PromptRegistry : DefaultActionGroup("MCP Agent", true) {
 
                     val fullPrompt = "${prompt.prompt}\n\n```\n$selectedCode\n```"
 
-                    transport?.send(OutgoingEnvelope(
-                        type = "chat",
-                        sessionId = transport.sessionId,
-                        userId = System.getProperty("user.name"),
-                        workspaceId = eventBus?.workspaceId,
-                        content = fullPrompt,
-                        hostContext = capabilityAdapter.execute("get_editor_state", emptyMap())
-                    ))
+                    if (transport != null) {
+                        transport.send(OutgoingEnvelope(
+                            type = "chat",
+                            sessionId = transport.sessionId,
+                            userId = System.getProperty("user.name"),
+                            workspaceId = eventBus?.workspaceId,
+                            content = fullPrompt,
+                            hostContext = capabilityAdapter.execute("get_editor_state", emptyMap())
+                        ))
+                        logger.info("[PromptRegistry] Sent prompt: ${prompt.id}")
+                    } else {
+                        logger.error("[PromptRegistry] Transport not available, prompt not sent: ${prompt.id}")
+                    }
                 }
             }
         }.toTypedArray()

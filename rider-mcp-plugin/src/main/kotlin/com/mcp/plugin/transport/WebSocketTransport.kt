@@ -8,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.mcp.plugin.McpPluginSettings
 import com.mcp.plugin.event.OutgoingEnvelope
 import com.mcp.plugin.event.Protocol
+import com.mcp.plugin.util.PluginLogger
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -90,6 +91,7 @@ class WebSocketTransport(private val project: Project) : Transport {
             flushOfflineQueue()
         } catch (e: Exception) {
             logger.error("[Transport] Connection failed: ${e.message}")
+            PluginLogger.error("Transport", "Connection failed: ${e.message}", e)
             isConnected = false
             SwingUtilities.invokeLater {
                 connectionListeners.forEach { it(false) }
@@ -227,7 +229,7 @@ class WebSocketTransport(private val project: Project) : Transport {
             if (offlineMessageQueue.size < maxOfflineQueueSize) {
                 offlineMessageQueue.add(message)
             } else {
-                logger.warn("[Transport] Offline queue full ($maxOfflineQueueSize), dropping message")
+                logger.error("[Transport] Offline queue full ($maxOfflineQueueSize), dropping message")
             }
         }
     }
@@ -271,7 +273,12 @@ class WebSocketTransport(private val project: Project) : Transport {
         }
 
         override fun onClose(webSocket: WebSocket, statusCode: Int, reason: String): CompletionStage<*>? {
-            logger.info("[Transport] Closed: $statusCode $reason")
+            if (statusCode == WebSocket.NORMAL_CLOSURE || statusCode == 1001) {
+                logger.info("[Transport] Closed normally: $statusCode $reason")
+            } else {
+                logger.error("[Transport] Closed abnormally: $statusCode $reason")
+                PluginLogger.error("Transport", "WebSocket closed abnormally: $statusCode $reason", null)
+            }
             this@WebSocketTransport.webSocket = null
             isConnected = false
             notifyConnectionState(false)
@@ -281,6 +288,7 @@ class WebSocketTransport(private val project: Project) : Transport {
 
         override fun onError(webSocket: WebSocket, error: Throwable?) {
             logger.error("[Transport] Error: ${error?.message}")
+            PluginLogger.error("Transport", "WebSocket error: ${error?.message}", error)
             this@WebSocketTransport.webSocket = null
             isConnected = false
             notifyConnectionState(false)

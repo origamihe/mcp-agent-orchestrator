@@ -144,20 +144,25 @@ class CapabilityAdapter(private val project: Project) {
     }
 
     private fun getEditorState(params: Map<String, Any?>): Map<String, Any?> {
-        val editor = FileEditorManager.getInstance(project).selectedTextEditor
-        val currentFile = FileEditorManager.getInstance(project).selectedFiles.firstOrNull()
+        return try {
+            val editor = FileEditorManager.getInstance(project).selectedTextEditor
+            val currentFile = FileEditorManager.getInstance(project).selectedFiles.firstOrNull()
 
-        return mapOf(
-            "currentFilePath" to (currentFile?.path),
-            "cursorLine" to (editor?.let { editor.document.getLineNumber(editor.caretModel.primaryCaret.offset) + 1 } ?: 0),
-            "cursorColumn" to (editor?.let {
-                val caret = it.caretModel.primaryCaret
-                caret.offset - it.document.getLineStartOffset(it.document.getLineNumber(caret.offset)) + 1
-            } ?: 0),
-            "selectedCode" to (editor?.selectionModel?.selectedText?.takeIf { s -> !s.isNullOrBlank() }),
-            "language" to (currentFile?.let { LanguageDetector.detect(it) }),
-            "openFiles" to FileEditorManager.getInstance(project).openFiles.map { it.path }
-        )
+            mapOf(
+                "currentFilePath" to (currentFile?.path),
+                "cursorLine" to (editor?.let { editor.document.getLineNumber(editor.caretModel.primaryCaret.offset) + 1 } ?: 0),
+                "cursorColumn" to (editor?.let {
+                    val caret = it.caretModel.primaryCaret
+                    caret.offset - it.document.getLineStartOffset(it.document.getLineNumber(caret.offset)) + 1
+                } ?: 0),
+                "selectedCode" to (editor?.selectionModel?.selectedText?.takeIf { s -> !s.isNullOrBlank() }),
+                "language" to (currentFile?.let { LanguageDetector.detect(it) }),
+                "openFiles" to FileEditorManager.getInstance(project).openFiles.map { it.path }
+            )
+        } catch (e: Exception) {
+            logger.error("[CapabilityAdapter] getEditorState error: ${e.message}", e)
+            mapOf("error" to e.message)
+        }
     }
 
     private fun getDiagnostics(params: Map<String, Any?>): Map<String, Any?> {
@@ -242,6 +247,7 @@ class CapabilityAdapter(private val project: Project) {
             }
             mapOf("path" to path, "changes" to result)
         } catch (e: Exception) {
+            logger.error("[CapabilityAdapter] getGitStatus error: ${e.message}", e)
             mapOf("error" to e.message)
         }
     }
@@ -274,6 +280,7 @@ class CapabilityAdapter(private val project: Project) {
             }
             mapOf("diffs" to diffs, "staged" to (staged as? Boolean))
         } catch (e: Exception) {
+            logger.error("[CapabilityAdapter] getGitDiff error: ${e.message}", e)
             mapOf("error" to e.message)
         }
     }
@@ -308,6 +315,7 @@ class CapabilityAdapter(private val project: Project) {
             }
             mapOf("success" to true, "filePath" to filePath, "line" to line)
         } catch (e: Exception) {
+            logger.error("[CapabilityAdapter] openFile error: ${e.message}", e)
             mapOf("error" to e.message)
         }
     }
@@ -315,22 +323,27 @@ class CapabilityAdapter(private val project: Project) {
     private fun searchFiles(params: Map<String, Any?>): Map<String, Any?> {
         val pattern = params["pattern"] as? String ?: return mapOf("error" to "pattern required")
         val basePath = project.basePath ?: return mapOf("error" to "no project")
-        val dir = File(basePath)
-        val excludedDirs = listOf(".git", ".idea", "node_modules", "target", "__pycache__", ".svn", ".hg")
-        val sep = File.separator
-        val results = mutableListOf<String>()
-        dir.walkTopDown()
-            .filter { it.isFile }
-            .filter { file ->
-                excludedDirs.none { excluded ->
-                    file.path.contains("$sep$excluded$sep") || file.path.endsWith("$sep$excluded")
+        return try {
+            val dir = File(basePath)
+            val excludedDirs = listOf(".git", ".idea", "node_modules", "target", "__pycache__", ".svn", ".hg")
+            val sep = File.separator
+            val results = mutableListOf<String>()
+            dir.walkTopDown()
+                .filter { it.isFile }
+                .filter { file ->
+                    excludedDirs.none { excluded ->
+                        file.path.contains("$sep$excluded$sep") || file.path.endsWith("$sep$excluded")
+                    }
                 }
-            }
-            .filter { !PathValidator.isSensitivePath(it.path) }
-            .filter { it.name.contains(pattern, ignoreCase = true) }
-            .take(20)
-            .forEach { results.add(it.relativeTo(dir).path) }
-        return mapOf("pattern" to pattern, "matches" to results)
+                .filter { !PathValidator.isSensitivePath(it.path) }
+                .filter { it.name.contains(pattern, ignoreCase = true) }
+                .take(20)
+                .forEach { results.add(it.relativeTo(dir).path) }
+            mapOf("pattern" to pattern, "matches" to results)
+        } catch (e: Exception) {
+            logger.error("[CapabilityAdapter] searchFiles error: ${e.message}", e)
+            mapOf("error" to e.message)
+        }
     }
 
     private fun runTerminal(params: Map<String, Any?>): Map<String, Any?> {
@@ -363,7 +376,8 @@ class CapabilityAdapter(private val project: Project) {
 
             if (!finished) {
                 process.destroyForcibly()
-                logger.warn("[CapabilityAdapter] runTerminal timed out after ${timeoutSeconds}s: $command")
+                val stillAlive = process.isAlive
+                logger.warn("[CapabilityAdapter] runTerminal timed out after ${timeoutSeconds}s: $command (process still alive: $stillAlive)")
                 return mapOf(
                     "error" to "Command timed out after ${timeoutSeconds}s",
                     "output" to output,

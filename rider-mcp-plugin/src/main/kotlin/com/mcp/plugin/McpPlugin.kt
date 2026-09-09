@@ -14,28 +14,40 @@ import com.mcp.plugin.transport.Transport
 import com.mcp.plugin.transport.WebSocketTransport
 
 class McpPlugin : ProjectActivity {
+    private val logger = Logger.getInstance(McpPlugin::class.java)
+
     override suspend fun execute(project: Project) {
-        val eventBus = project.getService(IdeEventBus::class.java)
-        eventBus.init()
+        logger.info("[McpPlugin] Initializing for project: ${project.name}")
 
-        ProjectManager.getInstance().addProjectManagerListener(
-            project,
-            ProjectCloseListener()
-        )
+        try {
+            val eventBus = project.getService(IdeEventBus::class.java)
+            eventBus.init()
 
-        val transport: Transport? = project.getService(WebSocketTransport::class.java)
-        transport?.send(OutgoingEnvelope(
-            type = "event",
-            sessionId = transport.sessionId,
-            workspaceId = eventBus.workspaceId,
-            event = com.mcp.plugin.event.IdeEvent(
-                type = IdeEventType.PROJECT_OPENED,
-                payload = mapOf(
-                    "projectName" to project.name,
-                    "projectPath" to (project.basePath ?: "")
-                )
+            ProjectManager.getInstance().addProjectManagerListener(
+                project,
+                ProjectCloseListener()
             )
-        ))
+
+            val transport: Transport? = project.getService(WebSocketTransport::class.java)
+            if (transport != null) {
+                transport.send(OutgoingEnvelope(
+                    type = "event",
+                    sessionId = transport.sessionId,
+                    workspaceId = eventBus.workspaceId,
+                    event = com.mcp.plugin.event.IdeEvent(
+                        type = IdeEventType.PROJECT_OPENED,
+                        payload = mapOf(
+                            "projectName" to project.name,
+                            "projectPath" to (project.basePath ?: "")
+                        )
+                    )
+                ))
+            } else {
+                logger.error("[McpPlugin] WebSocketTransport not available, PROJECT_OPENED event not sent")
+            }
+        } catch (e: Exception) {
+            logger.error("[McpPlugin] Initialization failed: ${e.message}", e)
+        }
     }
 }
 
@@ -45,31 +57,31 @@ class ProjectCloseListener : ProjectManagerListener {
     override fun projectClosed(project: Project) {
         logger.info("[ProjectCloseListener] Project closing: ${project.name}")
 
-        val sessionController: AgentSessionController? = project.getService(AgentSessionController::class.java)
-        val transport: WebSocketTransport? = project.getService(WebSocketTransport::class.java)
-        val eventBus: IdeEventBus? = project.getService(IdeEventBus::class.java)
+        try {
+            val sessionController: AgentSessionController? = project.getService(AgentSessionController::class.java)
+            val transport: WebSocketTransport? = project.getService(WebSocketTransport::class.java)
+            val eventBus: IdeEventBus? = project.getService(IdeEventBus::class.java)
 
-        // 1. Cancel active run if any
-        if (sessionController != null) {
-            val runId = sessionController.session.currentRunId
-            if (runId != null && sessionController.session.agentState == AgentState.RUNNING) {
-                logger.info("[ProjectCloseListener] Cancelling active run: $runId")
-                sessionController.session.cancelRun()
-                sessionController.session.confirmCancelled()
+            if (sessionController != null) {
+                val runId = sessionController.session.currentRunId
+                if (runId != null && sessionController.session.agentState == AgentState.RUNNING) {
+                    logger.info("[ProjectCloseListener] Cancelling active run: $runId")
+                    sessionController.session.cancelRun()
+                    sessionController.session.confirmCancelled()
+                }
+            } else {
+                logger.warn("[ProjectCloseListener] AgentSessionController not available")
             }
+
+            transport?.dispose()
+
+            sessionController?.dispose()
+
+            eventBus?.dispose()
+
+            logger.info("[ProjectCloseListener] Project closed: ${project.name}")
+        } catch (e: Exception) {
+            logger.error("[ProjectCloseListener] Error during project close: ${e.message}", e)
         }
-
-        // 2. Stop reconnect — transport.dispose() handles this
-        // 3. Stop callbacks — transport.dispose() clears listeners
-        // 4. Close transport
-        transport?.dispose()
-
-        // 5. Release session listeners
-        sessionController?.dispose()
-
-        // 6. Release event bus listeners
-        eventBus?.dispose()
-
-        logger.info("[ProjectCloseListener] Project closed: ${project.name}")
     }
 }

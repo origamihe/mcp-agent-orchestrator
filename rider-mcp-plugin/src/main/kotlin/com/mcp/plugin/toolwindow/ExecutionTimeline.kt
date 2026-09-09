@@ -1,11 +1,13 @@
 package com.mcp.plugin.toolwindow
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBScrollPane
 import com.mcp.plugin.session.AgentEvent
 import java.awt.Font
 import java.awt.event.AdjustmentEvent
 import java.awt.event.AdjustmentListener
-import javax.swing.JScrollPane
+import javax.swing.JComponent
 import javax.swing.JTextPane
 import javax.swing.SwingUtilities
 import javax.swing.text.BadLocationException
@@ -13,23 +15,22 @@ import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 import javax.swing.text.StyledDocument
 
-/**
- * 独立的执行时间线组件。
- *
- * 职责：
- * 1. 接收 AgentEvent 并渲染为时间线条目
- * 2. 管理自动滚动（autoFollow）
- * 3. 增量渲染（使用 StyledDocument.insertString）
- * 4. 支持大量事件（限制最大渲染条目数）
- *
- * 此组件不依赖 ChatPanel，不通过 LLM 文本推断 Agent 行为。
- * 所有渲染的事件必须来源于真实的 capability_call → execute → capability_result 链路。
- */
-class ExecutionTimeline(
-    private val chatPane: JTextPane,
-    private val scrollPane: JScrollPane
-) {
-    private val doc: StyledDocument get() = chatPane.styledDocument
+class ExecutionTimeline {
+
+    private val logger = Logger.getInstance(ExecutionTimeline::class.java)
+
+    private val textPane = JTextPane().apply {
+        isEditable = false
+    }
+
+    private val scrollPane = JBScrollPane(textPane).apply {
+        verticalScrollBarPolicy = javax.swing.JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+        horizontalScrollBarPolicy = javax.swing.JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+    }
+
+    val component: JComponent get() = scrollPane
+
+    private val doc: StyledDocument get() = textPane.styledDocument
 
     @Volatile
     private var autoFollow = true
@@ -37,7 +38,7 @@ class ExecutionTimeline(
     private var renderedEventCount = 0
     private val maxRenderedEvents = 1000
 
-    private var currentRunId: String? = null
+    private var lastGeneration = 0
 
     init {
         setupScrollTracking()
@@ -54,19 +55,24 @@ class ExecutionTimeline(
         })
     }
 
-    fun renderEvent(event: AgentEvent) {
+    fun addEvent(event: AgentEvent) {
         if (renderedEventCount >= maxRenderedEvents) {
-            return
+            logger.warn("[ExecutionTimeline] Event limit reached ($maxRenderedEvents), trimming old events")
+            trimOldEvents()
+        }
+
+        if (event.generation > 0 && event.generation != lastGeneration) {
+            lastGeneration = event.generation
+            appendLine("", normalStyle)
+            appendLine("--- Reconnected ---", systemStyle)
         }
 
         when (event) {
-            is AgentEvent.RunStarted -> {
-                currentRunId = event.runId
-                renderRunStarted(event)
-            }
+            is AgentEvent.RunStarted -> renderRunStarted(event)
             is AgentEvent.RunCompleted -> renderRunCompleted(event)
             is AgentEvent.RunFailed -> renderRunFailed(event)
             is AgentEvent.RunCancelled -> renderRunCancelled(event)
+            is AgentEvent.UserMessage -> renderUserMessage(event)
             is AgentEvent.ToolCallStarted -> renderToolCallStarted(event)
             is AgentEvent.ToolCallCompleted -> renderToolCallCompleted(event)
             is AgentEvent.ToolCallFailed -> renderToolCallFailed(event)
@@ -76,37 +82,67 @@ class ExecutionTimeline(
             is AgentEvent.DiffApplied -> renderDiffApplied(event)
             is AgentEvent.DiffCreated -> renderDiffCreated(event)
             is AgentEvent.Thinking -> renderThinking(event)
-            else -> { /* UserMessage and FinalAnswer are handled by ChatPanel */ }
+            is AgentEvent.FinalAnswer -> { /* rendered by ChatPanel */ }
         }
 
         renderedEventCount++
     }
 
+    fun clear() {
+        renderedEventCount = 0
+        lastGeneration = 0
+        autoFollow = true
+        try {
+            doc.remove(0, doc.length)
+        } catch (_: BadLocationException) {
+        }
+    }
+
+    fun getEventCount(): Int = renderedEventCount
+
+    private fun trimOldEvents() {
+        try {
+            val text = doc.getText(0, doc.length)
+            val lines = text.lines()
+            val toRemove = lines.size / 4
+            if (toRemove > 0) {
+                var pos = 0
+                repeat(toRemove) {
+                    pos = text.indexOf('\n', pos) + 1
+                    if (pos <= 0) return
+                }
+                doc.remove(0, pos)
+                renderedEventCount = maxRenderedEvents / 2
+            }
+        } catch (e: BadLocationException) {
+            logger.warn("[ExecutionTimeline] Failed to trim old events: ${e.message}")
+        }
+    }
+
     private fun renderRunStarted(event: AgentEvent.RunStarted) {
         val modelDisplay = event.modelConfigId ?: "default"
-        appendLine("━━━ Run started — ${event.mode.displayName} | $modelDisplay | ${event.runId} ━━━", runStyle)
         appendLine("", normalStyle)
+        appendLine("━━━ ${event.mode.displayName} | $modelDisplay ━━━", runStyle)
     }
 
     private fun renderRunCompleted(event: AgentEvent.RunCompleted) {
+        appendLine("→ completed (${event.durationMs}ms)", completedStyle)
         appendLine("", normalStyle)
-        appendLine("→ Agent completed (${event.durationMs}ms)", completedStyle)
-        appendLine("", normalStyle)
-        currentRunId = null
     }
 
     private fun renderRunFailed(event: AgentEvent.RunFailed) {
+        appendLine("✗ failed: ${event.error}", errorStyle)
         appendLine("", normalStyle)
-        appendLine("✗ Run failed: ${event.error}", errorStyle)
-        appendLine("", normalStyle)
-        currentRunId = null
     }
 
     private fun renderRunCancelled(event: AgentEvent.RunCancelled) {
+        appendLine("⊘ cancelled", cancelledStyle)
         appendLine("", normalStyle)
-        appendLine("⊘ Run cancelled — ${event.runId}", cancelledStyle)
-        appendLine("", normalStyle)
-        currentRunId = null
+    }
+
+    private fun renderUserMessage(event: AgentEvent.UserMessage) {
+        appendLine("You:", userLabelStyle)
+        appendLine("  ${event.content}", userTextStyle)
     }
 
     private fun renderToolCallStarted(event: AgentEvent.ToolCallStarted) {
@@ -115,7 +151,7 @@ class ExecutionTimeline(
 
     private fun renderToolCallCompleted(event: AgentEvent.ToolCallCompleted) {
         val check = if (event.success) "\u2713" else "\u2717"
-        val meta = buildMetadataDisplay(event.capability, event.metadata)
+        val meta = buildMetadata(event.capability, event.metadata)
         val style = if (event.success) successStyle else errorStyle
         appendLine("$check ${event.capability}$meta", style)
     }
@@ -127,7 +163,6 @@ class ExecutionTimeline(
 
     private fun renderFileRead(event: AgentEvent.FileRead) {
         val fileName = event.filePath.substringAfterLast("/").substringAfterLast("\\")
-        appendLine("\u2713 read_file", successStyle)
         appendLine("     $fileName", fileDetailStyle)
         if (event.lines > 0) {
             appendLine("     ${event.lines} lines", fileDetailStyle)
@@ -135,11 +170,7 @@ class ExecutionTimeline(
     }
 
     private fun renderFileSearch(event: AgentEvent.FileSearch) {
-        appendLine("\u2713 search_files", successStyle)
-        appendLine("     query: ${event.query}", fileDetailStyle)
-        if (event.matchCount > 0) {
-            appendLine("     ${event.matchCount} files found", fileDetailStyle)
-        }
+        appendLine("     ${event.matchCount} files found", fileDetailStyle)
     }
 
     private fun renderMCPToolCall(event: AgentEvent.MCPToolCall) {
@@ -171,7 +202,7 @@ class ExecutionTimeline(
         appendLine("  \u2026 ${event.message}", thinkingStyle)
     }
 
-    private fun buildMetadataDisplay(capability: String, metadata: Map<String, Any?>): String {
+    private fun buildMetadata(capability: String, metadata: Map<String, Any?>): String {
         return when (capability) {
             "read_file" -> {
                 val filePath = metadata["filePath"] as? String ?: ""
@@ -200,88 +231,92 @@ class ExecutionTimeline(
             doc.insertString(doc.length, "$text\n", attr)
             if (autoFollow) {
                 SwingUtilities.invokeLater {
-                    chatPane.caretPosition = doc.length
+                    textPane.caretPosition = doc.length
                 }
             }
-        } catch (e: BadLocationException) {
-            // Ignore: document was modified concurrently
-        } catch (e: NullPointerException) {
-            // Ignore: DefaultStyledDocument ElementBuffer corruption in headless mode
-            // In real IDE, the document is always properly initialized
+        } catch (_: BadLocationException) {
+        } catch (_: NullPointerException) {
         }
     }
 
-    fun getRenderedEventCount(): Int = renderedEventCount
+    private val runStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setBold(this, true)
+            StyleConstants.setForeground(this, JBColor(0x6666CC, 0x8888FF))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-    fun reset() {
-        renderedEventCount = 0
-        currentRunId = null
-        autoFollow = true
-    }
+    private val successStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, JBColor(0x3B8C3B, 0x50B86C))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-    companion object {
-        private const val FONT_FAMILY = "SansSerif"
+    private val errorStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setBold(this, true)
+            StyleConstants.setForeground(this, JBColor(0xCC3333, 0xFF5555))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-        private val runStyle: SimpleAttributeSet
-            get() = SimpleAttributeSet().apply {
-                StyleConstants.setBold(this, true)
-                StyleConstants.setForeground(this, JBColor(0x6666CC, 0x8888FF))
-                StyleConstants.setFontSize(this, 11)
-            }
+    private val errorDetailStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, JBColor(0xCC6666, 0xCC6666))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-        private val successStyle: SimpleAttributeSet
-            get() = SimpleAttributeSet().apply {
-                StyleConstants.setForeground(this, JBColor(0x50B86C, 0x50B86C))
-                StyleConstants.setFontSize(this, 11)
-            }
+    private val pendingStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, JBColor(0x999999, 0x888888))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-        private val errorStyle: SimpleAttributeSet
-            get() = SimpleAttributeSet().apply {
-                StyleConstants.setBold(this, true)
-                StyleConstants.setForeground(this, JBColor.RED)
-                StyleConstants.setFontSize(this, 11)
-            }
+    private val thinkingStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setItalic(this, true)
+            StyleConstants.setForeground(this, JBColor(0x888888, 0x888888))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-        private val errorDetailStyle: SimpleAttributeSet
-            get() = SimpleAttributeSet().apply {
-                StyleConstants.setForeground(this, JBColor(0xCC6666, 0xCC6666))
-                StyleConstants.setFontSize(this, 11)
-            }
+    private val fileDetailStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, JBColor(0x777777, 0x999999))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-        private val pendingStyle: SimpleAttributeSet
-            get() = SimpleAttributeSet().apply {
-                StyleConstants.setForeground(this, JBColor(0xAAAAAA, 0xAAAAAA))
-                StyleConstants.setFontSize(this, 11)
-            }
+    private val completedStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setBold(this, true)
+            StyleConstants.setForeground(this, JBColor(0x3B8C3B, 0x50B86C))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-        private val thinkingStyle: SimpleAttributeSet
-            get() = SimpleAttributeSet().apply {
-                StyleConstants.setItalic(this, true)
-                StyleConstants.setForeground(this, JBColor(0x888888, 0x888888))
-                StyleConstants.setFontSize(this, 11)
-            }
+    private val cancelledStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setBold(this, true)
+            StyleConstants.setForeground(this, JBColor(0xCC8800, 0xFFAA00))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-        private val fileDetailStyle: SimpleAttributeSet
-            get() = SimpleAttributeSet().apply {
-                StyleConstants.setForeground(this, JBColor(0x777777, 0x999999))
-                StyleConstants.setFontSize(this, 11)
-            }
+    private val userLabelStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setBold(this, true)
+            StyleConstants.setForeground(this, JBColor(0x4A90D9, 0x5A9FDF))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-        private val completedStyle: SimpleAttributeSet
-            get() = SimpleAttributeSet().apply {
-                StyleConstants.setBold(this, true)
-                StyleConstants.setForeground(this, JBColor(0x50B86C, 0x50B86C))
-                StyleConstants.setFontSize(this, 11)
-            }
+    private val userTextStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, JBColor(0x333333, 0xCCCCCC))
+            StyleConstants.setFontSize(this, 11)
+        }
 
-        private val cancelledStyle: SimpleAttributeSet
-            get() = SimpleAttributeSet().apply {
-                StyleConstants.setBold(this, true)
-                StyleConstants.setForeground(this, JBColor(0xCC8800, 0xFFAA00))
-                StyleConstants.setFontSize(this, 11)
-            }
+    private val systemStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, JBColor.GRAY)
+            StyleConstants.setFontSize(this, 10)
+        }
 
-        private val normalStyle: SimpleAttributeSet
-            get() = SimpleAttributeSet()
-    }
+    private val normalStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet()
 }

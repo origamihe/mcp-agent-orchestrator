@@ -1,8 +1,10 @@
 package com.mcp.gateway.controller;
 
+import com.mcp.core.domain.llm.ProviderAvailability;
 import com.mcp.core.entity.LlmConfigEntity;
 import com.mcp.core.repository.LlmConfigRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -11,16 +13,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/llm")
 @RequiredArgsConstructor
 public class LlmController {
 
     private final LlmConfigRepository llmConfigRepository;
+    private final ProviderAvailability providerAvailability;
 
     @GetMapping("/configs")
     public ResponseEntity<List<Map<String, Object>>> listConfigs() {
-        List<Map<String, Object>> configs = llmConfigRepository.findAll().stream()
+        List<Map<String, Object>> configs = llmConfigRepository.findByEnabledTrue().stream()
+                .filter(entity -> {
+                    boolean available = providerAvailability.isProviderAvailable(entity.getProvider());
+                    if (!available) {
+                        log.info("[LlmController] Skipping model {} (provider={}): not available at runtime",
+                                entity.getModelName(), entity.getProvider());
+                    }
+                    return available;
+                })
                 .map(this::toConfigMap)
                 .collect(Collectors.toList());
         return ResponseEntity.ok(configs);

@@ -101,12 +101,13 @@ public class LlmConfigService {
     }
 
     /**
-     * 获取所有可用配置（优先从缓存）
+     * 获取所有可用配置（优先从缓存，并过滤运行时不可用的 Provider）
      */
     public Mono<List<LlmModelConfig>> getAllEnabledConfigs() {
         if (cacheLoaded) {
             List<LlmModelConfig> enabled = configCache.values().stream()
                     .filter(LlmModelConfig::isEnabled)
+                    .filter(c -> providerAvailability.isProviderAvailable(c.getProvider()))
                     .distinct()
                     .toList();
             if (!enabled.isEmpty()) {
@@ -115,6 +116,7 @@ public class LlmConfigService {
         }
         return Mono.fromCallable(() -> repository.findByEnabledTrue().stream()
                 .map(mapper::toDomain)
+                .filter(c -> providerAvailability.isProviderAvailable(c.getProvider()))
                 .toList());
     }
 
@@ -161,7 +163,7 @@ public class LlmConfigService {
      */
     private LlmModelConfig getDefaultOllamaConfig() {
         return LlmModelConfig.builder()
-                .configId("default-ollama-qwen3")
+                .configId("default-ollama-qwen2")
                 .provider(LlmProviderType.LOCAL_OLLAMA)
                 .modelName("qwen3:8b")
                 .temperature(0.7)

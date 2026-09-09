@@ -66,7 +66,7 @@ class InteractionDecisionEngineTest {
         }
 
         @Test
-        @DisplayName("非群聊消息 → IGNORE")
+        @DisplayName("PRIVATE 非群聊消息 → IGNORE")
         void nonGroupChatIgnored() {
             ChannelMessage msg = ChannelMessage.builder()
                     .messageId("m1")
@@ -79,6 +79,30 @@ class InteractionDecisionEngineTest {
 
             Decision decision = engine.decide(msg);
             assertThat(decision.type()).isEqualTo(DecisionType.IGNORE);
+        }
+    }
+
+    // ==================== HOST 决策 ====================
+
+    @Nested
+    @DisplayName("HOST 决策")
+    class HostDecision {
+
+        @Test
+        @DisplayName("HOST 类型消息 → REPLY（直接回复）")
+        void hostMessageDirectReply() {
+            ChannelMessage msg = ChannelMessage.builder()
+                    .messageId("m1")
+                    .senderId("ide-user")
+                    .chatId("workspace-1")
+                    .chatType(ChannelMessage.ChatType.HOST)
+                    .content("帮我优化这段代码")
+                    .mentionedAgent(false)
+                    .build();
+
+            Decision decision = engine.decide(msg);
+            assertThat(decision.type()).isEqualTo(DecisionType.REPLY);
+            assertThat(decision.reason()).isEqualTo("Host 直接回复");
         }
     }
 

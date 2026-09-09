@@ -11,6 +11,7 @@ import com.mcp.plugin.capability.CapabilityAdapter
 import com.mcp.plugin.event.OutgoingEnvelope
 import com.mcp.plugin.transport.Transport
 import com.mcp.plugin.transport.WebSocketTransport
+import com.mcp.plugin.util.PluginLogger
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -50,6 +51,7 @@ class AgentSessionController(private val project: Project) {
     }
 
     private val modelListListeners = mutableListOf<(List<ModelInfo>) -> Unit>()
+    private val uiEventListeners = mutableListOf<(AgentEvent) -> Unit>()
 
     @Volatile
     private var availableModels: List<ModelInfo> = emptyList()
@@ -82,7 +84,11 @@ class AgentSessionController(private val project: Project) {
 
     fun sendMessage(text: String): String {
         val runId = session.startRun(session.mode, session.modelConfigId)
+        val currentGen = activeGeneration
         session.addUserMessage(text)
+
+        pushUiEvent(AgentEvent.UserMessage(session.sessionId, text, runId, currentGen))
+        pushUiEvent(AgentEvent.RunStarted(session.sessionId, runId, session.mode, session.modelConfigId, currentGen))
 
         backgroundExecutor.submit {
             val t = transport ?: return@submit
@@ -105,7 +111,11 @@ class AgentSessionController(private val project: Project) {
 
     fun sendChat(text: String, onRunStarted: (String) -> Unit) {
         val runId = session.startRun(session.mode, session.modelConfigId)
+        val currentGen = activeGeneration
         session.addUserMessage(text)
+
+        pushUiEvent(AgentEvent.UserMessage(session.sessionId, text, runId, currentGen))
+        pushUiEvent(AgentEvent.RunStarted(session.sessionId, runId, session.mode, session.modelConfigId, currentGen))
 
         SwingUtilities.invokeLater { onRunStarted(runId) }
 
@@ -129,7 +139,11 @@ class AgentSessionController(private val project: Project) {
 
     fun sendMessageWithMode(text: String, mode: AgentMode, modelConfigId: String?): String {
         val runId = session.startRun(mode, modelConfigId)
+        val currentGen = activeGeneration
         session.addUserMessage(text)
+
+        pushUiEvent(AgentEvent.UserMessage(session.sessionId, text, runId, currentGen))
+        pushUiEvent(AgentEvent.RunStarted(session.sessionId, runId, mode, modelConfigId, currentGen))
 
         backgroundExecutor.submit {
             val t = transport ?: return@submit
@@ -178,6 +192,7 @@ class AgentSessionController(private val project: Project) {
         val runId = session.currentRunId
         if (runId != null && session.agentState == AgentState.RUNNING) {
             logger.warn("[AgentSessionController] Disconnect during active run $runId, auto-cancelling")
+            PluginLogger.warn("AgentSession", "Disconnect during active run $runId, auto-cancelling")
             session.cancelRun()
             session.confirmCancelled()
         }
@@ -293,6 +308,7 @@ class AgentSessionController(private val project: Project) {
                             }
                         } else {
                             val error = result["error"] as? String ?: "Unknown error"
+                            logger.error("[AgentSessionController] Capability '$capability' failed: $error")
                             session.addToolCallFailed(capability, error)
                             SwingUtilities.invokeLater {
                                 onUiUpdate(AgentEvent.ToolCallFailed(sessionId, runId, capability, error))
@@ -397,6 +413,7 @@ class AgentSessionController(private val project: Project) {
                 }
             } catch (e: Exception) {
                 logger.error("[AgentSessionController] Error handling message: ${e.message}")
+                PluginLogger.error("AgentSession", "Error handling message: ${e.message}", e)
             }
         }
     }
@@ -414,24 +431,49 @@ class AgentSessionController(private val project: Project) {
                     .replace("/ws/host", "")
                     .trimEnd('/')
 
-                val request = HttpRequest.newBuilder()
+                val models = mutableListOf<ModelInfo>()
+
+                val dbRequest = HttpRequest.newBuilder()
                     .uri(URI.create("$baseUrl/api/llm/configs"))
                     .timeout(Duration.ofSeconds(10))
                     .GET()
                     .build()
 
-                val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-                if (response.statusCode() == 200) {
+                val dbResponse = httpClient.send(dbRequest, HttpResponse.BodyHandlers.ofString())
+                if (dbResponse.statusCode() == 200) {
                     val type = object : TypeToken<List<ModelInfo>>() {}.type
-                    val models: List<ModelInfo> = gson.fromJson(response.body(), type)
-                    availableModels = models.filter { it.enabled }
-                    val enabledModels = availableModels
-                    SwingUtilities.invokeLater {
-                        modelListListeners.forEach { it(enabledModels) }
-                    }
+                    val dbModels: List<ModelInfo> = gson.fromJson(dbResponse.body(), type)
+                    models.addAll(dbModels.filter { it.enabled })
+                    logger.info("[AgentSessionController] Fetched ${dbModels.size} models from /api/llm/configs, ${models.size} enabled")
                 } else {
-                    logger.warn("[AgentSessionController] Failed to fetch models: HTTP ${response.statusCode()}")
+                    logger.warn("[AgentSessionController] Failed to fetch DB models: HTTP ${dbResponse.statusCode()}")
                 }
+
+                try {
+                    val mcpRequest = HttpRequest.newBuilder()
+                        .uri(URI.create("$baseUrl/mcp/configs"))
+                        .timeout(Duration.ofSeconds(10))
+                        .GET()
+                        .build()
+
+                    val mcpResponse = httpClient.send(mcpRequest, HttpResponse.BodyHandlers.ofString())
+                    if (mcpResponse.statusCode() == 200) {
+                        val type = object : TypeToken<List<ModelInfo>>() {}.type
+                        val mcpModels: List<ModelInfo> = gson.fromJson(mcpResponse.body(), type)
+                        val existingIds = models.map { it.configId }.toSet()
+                        val newModels = mcpModels.filter { it.configId !in existingIds }
+                        models.addAll(newModels)
+                        logger.info("[AgentSessionController] Discovered ${newModels.size} additional models from /mcp/configs (Ollama auto-discovery)")
+                    }
+                } catch (e: Exception) {
+                    logger.warn("[AgentSessionController] Failed to discover Ollama models: ${e.message}")
+                }
+
+                availableModels = models
+                SwingUtilities.invokeLater {
+                    modelListListeners.forEach { it(models) }
+                }
+                logger.info("[AgentSessionController] Total available models: ${models.size}")
             } catch (e: Exception) {
                 logger.warn("[AgentSessionController] Failed to fetch models: ${e.message}")
             }
@@ -447,9 +489,31 @@ class AgentSessionController(private val project: Project) {
         }
     }
 
+    fun onUiEvent(listener: (AgentEvent) -> Unit) {
+        uiEventListeners.add(listener)
+    }
+
+    private fun pushUiEvent(event: AgentEvent) {
+        SwingUtilities.invokeLater {
+            uiEventListeners.forEach { it(event) }
+        }
+    }
+
+    fun startNewSession() {
+        val currentGen = session.generation
+        session.clear()
+        session.incrementGeneration()
+        activeGeneration = session.generation
+        pushUiEvent(AgentEvent.Thinking(session.sessionId, null, "New session started", activeGeneration))
+        logger.info("[AgentSessionController] New session started, generation=${session.generation} (was $currentGen)")
+    }
+
+    fun getSessionEventHistory(): List<AgentEvent> = session.getEvents()
+
     fun dispose() {
         backgroundExecutor.shutdownNow()
         modelListListeners.clear()
+        uiEventListeners.clear()
         session.clear()
     }
 }

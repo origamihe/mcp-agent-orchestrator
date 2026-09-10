@@ -42,6 +42,7 @@ data class OutgoingEnvelope(
     @SerializedName("hostContext") val hostContext: Map<String, Any?>? = null,
     @SerializedName("callId") val callId: String? = null,
     @SerializedName("runId") val runId: String? = null,
+    @SerializedName("generation") val generation: Int = 0,
     @SerializedName("capability") val capability: String? = null,
     @SerializedName("result") val result: Map<String, Any?>? = null,
     @SerializedName("capabilities") val capabilities: List<Map<String, Any?>>? = null,

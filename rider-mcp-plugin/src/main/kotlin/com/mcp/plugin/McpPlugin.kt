@@ -69,13 +69,12 @@ class ProjectCloseListener : ProjectManagerListener {
                     sessionController.session.cancelRun()
                     sessionController.session.confirmCancelled()
                 }
+                sessionController.dispose()
             } else {
                 logger.warn("[ProjectCloseListener] AgentSessionController not available")
             }
 
             transport?.dispose()
-
-            sessionController?.dispose()
 
             eventBus?.dispose()
 

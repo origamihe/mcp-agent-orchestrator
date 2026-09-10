@@ -22,10 +22,17 @@ class McpPluginSettings : PersistentStateComponent<McpPluginSettings> {
     }
 
     var gatewayUrl: String = "ws://localhost:8080/ws/host"
+    var gatewayHttpUrl: String = "http://localhost:8080"
     var autoConnect: Boolean = true
     var agentName: String = "澪音"
     var agentMode: String = "CHAT"
     var agentModel: String = ""
+
+    var maxRetries: Int = 3
+    var capabilityTimeout: Int = 30
+    var logLevel: String = "INFO"
+    var logMaxFileSize: Int = 20
+    var logRetentionDays: Int = 7
 
     fun getGatewayToken(): String {
         val attributes = credentialAttributes()

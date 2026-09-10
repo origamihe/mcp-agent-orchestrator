@@ -82,6 +82,7 @@ class ExecutionTimeline {
             is AgentEvent.DiffApplied -> renderDiffApplied(event)
             is AgentEvent.DiffCreated -> renderDiffCreated(event)
             is AgentEvent.Thinking -> renderThinking(event)
+            is AgentEvent.TokenUsage -> renderTokenUsage(event)
             is AgentEvent.FinalAnswer -> { /* rendered by ChatPanel */ }
         }
 
@@ -202,6 +203,10 @@ class ExecutionTimeline {
         appendLine("  \u2026 ${event.message}", thinkingStyle)
     }
 
+    private fun renderTokenUsage(event: AgentEvent.TokenUsage) {
+        appendLine("  \u2139 Tokens: ${event.totalTokens} (${event.promptTokens} prompt + ${event.completionTokens} completion)", tokenStyle)
+    }
+
     private fun buildMetadata(capability: String, metadata: Map<String, Any?>): String {
         return when (capability) {
             "read_file" -> {
@@ -275,6 +280,12 @@ class ExecutionTimeline {
         get() = SimpleAttributeSet().apply {
             StyleConstants.setItalic(this, true)
             StyleConstants.setForeground(this, JBColor(0x888888, 0x888888))
+            StyleConstants.setFontSize(this, 11)
+        }
+
+    private val tokenStyle: SimpleAttributeSet
+        get() = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, JBColor(0x6A5ACD, 0x9B8EC4))
             StyleConstants.setFontSize(this, 11)
         }
 

@@ -148,6 +148,16 @@ sealed class AgentEvent {
         override val generation: Int = 0,
         override val timestamp: Long = System.currentTimeMillis()
     ) : AgentEvent()
+
+    data class TokenUsage(
+        override val sessionId: String,
+        override val runId: String?,
+        val promptTokens: Int,
+        val completionTokens: Int,
+        val totalTokens: Int,
+        override val generation: Int = 0,
+        override val timestamp: Long = System.currentTimeMillis()
+    ) : AgentEvent()
 }
 
 /**

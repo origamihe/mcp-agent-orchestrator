@@ -10,6 +10,7 @@ import com.mcp.tools.tool.MultiSearchTool;
 import com.mcp.tools.tool.PptGeneratorTool;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.socket.WebSocketHandler;
+import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -48,9 +49,20 @@ public class McpWebSocketHandler implements WebSocketHandler {
         sessionManager.register(session.getId(), session);
 
         return session.receive()
-                .map(msg -> msg.getPayloadAsText())
+                .filter(msg -> msg.getType() == WebSocketMessage.Type.TEXT)
+                .map(msg -> {
+                    String text = msg.getPayloadAsText();
+                    if (text == null) {
+                        System.err.println("[McpWS] TEXT frame with null payload, sessionId=" + session.getId());
+                        return "";
+                    }
+                    return text;
+                })
                 .doOnNext(msg -> System.out.println("receive: " + msg))
                 .flatMap(rawMessage -> {
+                    if (rawMessage.isEmpty()) {
+                        return Mono.empty();
+                    }
                     ParsedMessage pm = parseMessage(rawMessage);
                     final String userMessage = pm.userMessage;
                     final String modelConfigId = pm.modelConfigId;

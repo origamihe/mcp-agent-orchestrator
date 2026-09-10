@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.socket.HandshakeInfo;
 import org.springframework.web.reactive.socket.WebSocketHandler;
+import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import reactor.core.publisher.Mono;
 
@@ -60,16 +61,45 @@ public class HostWebSocketHandler implements WebSocketHandler {
         authToken.registerSession(sessionId, token);
 
         return session.receive()
-                .map(msg -> msg.getPayloadAsText())
-                .doOnNext(msg -> log.debug("[HostWS] Received: {}", msg))
+                .doOnNext(msg -> {
+                    if (msg.getType() != WebSocketMessage.Type.TEXT) {
+                        log.debug("[HostWS] Non-TEXT frame: type={}, sessionId={}", msg.getType(), sessionId);
+                    }
+                })
+                .filter(msg -> msg.getType() == WebSocketMessage.Type.TEXT)
+                .map(msg -> {
+                    String text = msg.getPayloadAsText();
+                    if (text == null) {
+                        log.warn("[HostWS] TEXT frame with null payload, sessionId={}", sessionId);
+                        return "";
+                    }
+                    return text;
+                })
+                .doOnNext(msg -> log.info("[HostWS] Received: {} chars, start={}",
+                        msg.length(), msg.length() > 200 ? msg.substring(0, 200) : msg))
                 .flatMap(rawMessage -> {
+                    if (rawMessage.isEmpty()) {
+                        log.info("[HostWS] Empty TEXT frame, sessionId={}", sessionId);
+                        return Mono.empty();
+                    }
+                    JsonNode payload;
                     try {
-                        JsonNode payload = objectMapper.readTree(rawMessage);
+                        payload = objectMapper.readTree(rawMessage);
+                    } catch (Exception parseEx) {
+                        log.error("[HostWS] JSON parse failed: type={}, msg={}, raw={}",
+                                parseEx.getClass().getSimpleName(),
+                                parseEx.getMessage(),
+                                rawMessage.length() > 500 ? rawMessage.substring(0, 500) : rawMessage,
+                                parseEx);
+                        return Mono.empty();
+                    }
+                    try {
                         return hostBridge.handleMessage(payload, sessionId)
-                                .doOnError(e -> log.error("[HostWS] Error: {}", e.getMessage()))
+                                .doOnError(e -> log.error("[HostWS] Async error: {}", e.getMessage()))
                                 .onErrorResume(e -> Mono.empty());
-                    } catch (Exception e) {
-                        log.error("[HostWS] Failed to parse message: {}", e.getMessage());
+                    } catch (Exception handleEx) {
+                        log.error("[HostWS] handleMessage sync error: type={}, msg={}",
+                                handleEx.getClass().getSimpleName(), handleEx.getMessage(), handleEx);
                         return Mono.empty();
                     }
                 })

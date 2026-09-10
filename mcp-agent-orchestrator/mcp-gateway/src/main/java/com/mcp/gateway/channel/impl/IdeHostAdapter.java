@@ -114,6 +114,7 @@ public class IdeHostAdapter implements ChannelAdapter {
                 .channelType("ide")
                 .senderId(payload.has("userId") ? payload.get("userId").asText() : "ide-user")
                 .content(content)
+                .chatId(sessionId)
                 .chatType(ChannelMessage.ChatType.HOST)
                 .platformSessionId(sessionId)
                 .hostContext(hostContext)

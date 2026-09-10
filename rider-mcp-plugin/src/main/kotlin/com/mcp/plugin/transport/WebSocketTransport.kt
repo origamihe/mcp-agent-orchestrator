@@ -63,7 +63,7 @@ class WebSocketTransport(private val project: Project) : Transport {
     @Volatile
     private var scheduledTokenRefresh: ScheduledFuture<*>? = null
 
-    private val unsupportedOfflineTypes = setOf("capability_result", "hello")
+    private val unsupportedOfflineTypes = setOf("capability_result")
 
     @Volatile
     override var isConnected: Boolean = false
@@ -83,7 +83,7 @@ class WebSocketTransport(private val project: Project) : Transport {
     private fun doConnect() {
         try {
             val baseUri = settings.gatewayUrl
-            val token = resolveToken(baseUri)
+            val token = resolveToken()
             val uri = if (token.isNotBlank()) {
                 URI.create("$baseUri?token=$token")
             } else {
@@ -100,11 +100,13 @@ class WebSocketTransport(private val project: Project) : Transport {
                 connectionListeners.forEach { it(true) }
             }
             logger.info("[Transport] Connected! session=$sessionId")
+            PluginLogger.infoContext("Transport", "WebSocket connected", sessionId, null, 0)
 
             flushOfflineQueue()
         } catch (e: Exception) {
             logger.error("[Transport] Connection failed: ${e.message}")
             PluginLogger.error("Transport", "Connection failed: ${e.message}", e)
+            PluginLogger.errorContext("Transport", "Connection failed: ${e.message}", sessionId, null, 0, e)
             isConnected = false
             SwingUtilities.invokeLater {
                 connectionListeners.forEach { it(false) }
@@ -113,7 +115,7 @@ class WebSocketTransport(private val project: Project) : Transport {
         }
     }
 
-    private fun resolveToken(baseUri: String): String {
+    private fun resolveToken(): String {
         if (reconnectAttempt > 0) {
             settings.clearGatewayToken()
             tokenExpiry = 0
@@ -132,7 +134,7 @@ class WebSocketTransport(private val project: Project) : Transport {
             return cachedToken
         }
         return try {
-            val tokenUrl = deriveHttpUrl(baseUri) + "/api/hosts/token"
+            val tokenUrl = "${settings.gatewayHttpUrl}/api/hosts/token"
             logger.info("[Transport] Fetching token from: $tokenUrl")
             val request = HttpRequest.newBuilder()
                 .uri(URI.create(tokenUrl))
@@ -173,9 +175,8 @@ class WebSocketTransport(private val project: Project) : Transport {
         logger.info("[Transport] Scheduling token refresh in ${delayMs / 1000}s")
         scheduledTokenRefresh = tokenRefreshExecutor.schedule({
             logger.info("[Transport] Proactively refreshing token before expiry")
-            val baseUri = settings.gatewayUrl
             try {
-                val tokenUrl = deriveHttpUrl(baseUri) + "/api/hosts/token"
+                val tokenUrl = "${settings.gatewayHttpUrl}/api/hosts/token"
                 val request = HttpRequest.newBuilder()
                     .uri(URI.create(tokenUrl))
                     .timeout(Duration.ofSeconds(5))
@@ -205,14 +206,6 @@ class WebSocketTransport(private val project: Project) : Transport {
         scheduledTokenRefresh = null
     }
 
-    private fun deriveHttpUrl(wsUrl: String): String {
-        return wsUrl
-            .replace("ws://", "http://")
-            .replace("wss://", "https://")
-            .replaceAfterLast("/", "")
-            .trimEnd('/')
-    }
-
     private data class TokenResponse(@SerializedName("token") val token: String)
 
     private fun scheduleReconnect() {
@@ -232,7 +225,6 @@ class WebSocketTransport(private val project: Project) : Transport {
         reconnectExecutor.schedule({
             reconnectScheduled.set(false)
             if (shouldReconnect.get() && !isConnected) {
-                clearOfflineQueue()
                 doConnect()
             }
         }, delay, TimeUnit.MILLISECONDS)
@@ -241,6 +233,7 @@ class WebSocketTransport(private val project: Project) : Transport {
     private fun flushOfflineQueue() {
         var flushed = 0
         var skipped = 0
+        var failed = 0
         while (true) {
             val msg = offlineMessageQueue.poll() ?: break
             if (msg.type in unsupportedOfflineTypes) {
@@ -248,18 +241,32 @@ class WebSocketTransport(private val project: Project) : Transport {
                 logger.info("[Transport] Skipping offline message type=${msg.type}")
                 continue
             }
-            val json = Protocol.toJson(msg)
-            webSocket?.sendText(json, true)
-            flushed++
+            try {
+                val json = Protocol.toJson(msg)
+                val ws = webSocket
+                if (ws != null) {
+                    ws.sendText(json, true)
+                    flushed++
+                } else {
+                    offlineMessageQueue.add(msg)
+                    failed++
+                    break
+                }
+            } catch (e: Exception) {
+                logger.warn("[Transport] Failed to flush offline message, re-queuing: ${e.message}")
+                offlineMessageQueue.add(msg)
+                failed++
+                break
+            }
         }
-        if (flushed > 0 || skipped > 0) {
-            logger.info("[Transport] Flushed $flushed offline messages, skipped $skipped")
+        if (flushed > 0 || skipped > 0 || failed > 0) {
+            logger.info("[Transport] Flushed $flushed offline messages, skipped $skipped, failed $failed (re-queued)")
         }
     }
 
     /**
-     * 清除离线消息队列。
-     * 在 reconnect 时调用，防止旧 Session 的消息污染新连接。
+     * 清除离线消息队列�?
+     * �?reconnect 时调用，防止�?Session 的消息污染新连接�?
      */
     fun clearOfflineQueue() {
         val count = offlineMessageQueue.size
@@ -274,6 +281,7 @@ class WebSocketTransport(private val project: Project) : Transport {
         webSocket?.sendClose(WebSocket.NORMAL_CLOSURE, "Plugin closing")
         webSocket = null
         isConnected = false
+        PluginLogger.infoContext("Transport", "WebSocket disconnected", sessionId, null, 0)
         SwingUtilities.invokeLater {
             connectionListeners.forEach { it(false) }
         }
@@ -319,6 +327,13 @@ class WebSocketTransport(private val project: Project) : Transport {
         SwingUtilities.invokeLater {
             connectionListeners.forEach { it(connected) }
         }
+    }
+
+    enum class ConnectionState {
+        DISCONNECTED,
+        CONNECTING,
+        CONNECTED,
+        RECONNECTING
     }
 
     private inner class WebSocketListener : WebSocket.Listener {

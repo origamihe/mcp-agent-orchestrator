@@ -3,20 +3,18 @@ package com.mcp.plugin.toolwindow
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.wm.ToolWindow
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBScrollPane
 import com.mcp.plugin.McpPluginSettings
-import com.mcp.plugin.capability.ALL_CAPABILITIES
-import com.mcp.plugin.event.IdeEventBus
-import com.mcp.plugin.event.OutgoingEnvelope
 import com.mcp.plugin.session.AgentEvent
 import com.mcp.plugin.session.AgentMode
 import com.mcp.plugin.session.AgentSessionController
 import com.mcp.plugin.session.ModelInfo
-import com.mcp.plugin.transport.Transport
-import com.mcp.plugin.transport.WebSocketTransport
+import com.mcp.plugin.session.RunSummary
 import com.mcp.plugin.util.PluginLogger
 import java.awt.BorderLayout
 import java.awt.Dialog
@@ -45,11 +43,16 @@ class ChatPanel(
 
     private val logger = Logger.getInstance(ChatPanel::class.java)
     private val settings = ApplicationManager.getApplication().getService(McpPluginSettings::class.java) ?: McpPluginSettings()
-    private val transport: Transport? = project.getService(WebSocketTransport::class.java)
-    private val eventBus = project.getService(IdeEventBus::class.java)
     private val sessionController: AgentSessionController = project.getService(AgentSessionController::class.java)
 
     private val timeline = ExecutionTimeline()
+    private val runHistory = RunHistoryPanel()
+
+    private val timelineTabs = JTabbedPane().apply {
+        addTab("Timeline", timeline.component)
+        addTab("History", runHistory.component)
+        font = Font(FONT_FAMILY, Font.PLAIN, 11)
+    }
 
     private val finalAnswerPane = JTextPane().apply {
         isEditable = false
@@ -59,9 +62,35 @@ class ChatPanel(
         verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
     }
 
+    private val conversationPanel = JPanel(BorderLayout()).apply {
+        val headerPanel = JPanel(BorderLayout()).apply {
+            add(JLabel("Agent Response").apply {
+                font = Font(FONT_FAMILY, Font.BOLD, 12)
+                foreground = JBColor.GRAY
+                border = BorderFactory.createEmptyBorder(2, 4, 2, 0)
+            }, BorderLayout.WEST)
+            val clearBtn = JButton("Clear").apply {
+                font = Font(FONT_FAMILY, Font.PLAIN, 10)
+                margin = Insets(1, 6, 1, 6)
+                addActionListener {
+                    try {
+                        val doc = finalAnswerPane.styledDocument
+                        doc.remove(0, doc.length)
+                    } catch (e: BadLocationException) {
+                        logger.error("[ChatPanel] Failed to clear response: ${e.message}")
+                    }
+                }
+            }
+            add(clearBtn, BorderLayout.EAST)
+            border = BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.LIGHT_GRAY)
+        }
+        add(headerPanel, BorderLayout.NORTH)
+        add(finalAnswerScroll, BorderLayout.CENTER)
+    }
+
     private val splitter = JBSplitter(true, 0.55f).apply {
-        firstComponent = timeline.component
-        secondComponent = finalAnswerScroll
+        firstComponent = timelineTabs
+        secondComponent = conversationPanel
     }
 
     private val inputField = JTextArea(3, 30).apply {
@@ -110,11 +139,17 @@ class ChatPanel(
 
     private val modelCombo = JComboBox<ModelInfo>().apply {
         font = Font(FONT_FAMILY, Font.PLAIN, 12)
+        toolTipText = "Select an AI model for the agent"
         setRenderer { _, value, _, _, _ ->
             JLabel(value?.displayName ?: "Default")
         }
         addActionListener {
             val model = selectedItem as? ModelInfo
+            toolTipText = if (model != null && model.configId.isNotEmpty()) {
+                "Provider: ${model.provider ?: "N/A"} | Model: ${model.modelName ?: "N/A"} | Config: ${model.configId}"
+            } else {
+                "Select an AI model for the agent"
+            }
             sessionController.changeModel(model?.configId)
         }
     }
@@ -131,15 +166,22 @@ class ChatPanel(
         add(inputPanel, BorderLayout.SOUTH)
 
         setupInputKeyListener()
-        setupTransportListeners()
+        setupControllerListeners()
         setupSessionListeners()
+
+        PluginLogger.onFlushFailure { error ->
+            SwingUtilities.invokeLater {
+                val tw = ToolWindowManager.getInstance(project).getToolWindow("MCP Agent")
+                tw?.setIcon(com.intellij.icons.AllIcons.General.BalloonWarning)
+                logger.error("[ChatPanel] Plugin log failure: $error")
+            }
+        }
 
         sessionController.init()
 
         if (settings.autoConnect) {
             logger.info("[ChatPanel] Auto-connecting to: ${settings.gatewayUrl}")
-            transport?.connect()
-            sendHello()
+            sessionController.startSession()
         }
 
         timeline.addEvent(AgentEvent.Thinking("", null, WELCOME_MESSAGE, 0, System.currentTimeMillis()))
@@ -226,9 +268,8 @@ class ChatPanel(
         })
     }
 
-    private fun setupTransportListeners() {
-        transport?.onMessage { json -> handleIncoming(json) }
-        transport?.onConnectionChange { connected ->
+    private fun setupControllerListeners() {
+        sessionController.onConnectionStateChange { connected ->
             SwingUtilities.invokeLater {
                 if (connected) {
                     statusDot.foreground = JBColor(0x00AA00, 0x00AA00)
@@ -252,10 +293,26 @@ class ChatPanel(
                 modelCombo.removeAllItems()
                 modelCombo.addItem(ModelInfo("", "Default", null))
                 models.forEach { modelCombo.addItem(it) }
-                if (currentSelection != null) {
+                if (currentSelection != null && currentSelection.configId.isNotEmpty()) {
                     val idx = models.indexOfFirst { it.configId == currentSelection.configId }
                     if (idx >= 0) modelCombo.selectedIndex = idx + 1
+                } else if (models.isNotEmpty()) {
+                    modelCombo.selectedIndex = 1
                 }
+            }
+        }
+
+        sessionController.onDiffPreview = { filePath, diff, isFullContent ->
+            val dialog = DiffPreviewDialog(project, filePath, diff, isFullContent)
+            dialog.show()
+            dialog.isApproved
+        }
+
+        runHistory.onReplayRun = { run ->
+            val message = run.userMessage
+            if (message.isNotEmpty()) {
+                inputField.text = message
+                sendChat()
             }
         }
 
@@ -268,23 +325,6 @@ class ChatPanel(
                 renderEvent(event)
             }
         }
-    }
-
-    private fun sendHello() {
-        val t = transport
-        if (t == null) {
-            logger.error("[ChatPanel] Transport not available, hello not sent")
-            return
-        }
-        t.send(OutgoingEnvelope(
-            type = "hello",
-            sessionId = t.sessionId,
-            workspaceId = eventBus?.workspaceId,
-            capabilities = ALL_CAPABILITIES.map {
-                mapOf("name" to it.name, "description" to it.description, "params" to it.params)
-            }
-        ))
-        logger.info("[ChatPanel] Hello sent, sessionId=${t.sessionId}")
     }
 
     private fun sendChat() {
@@ -308,6 +348,7 @@ class ChatPanel(
 
     private fun startNewSession() {
         timeline.clear()
+        runHistory.clear()
         try {
             val doc = finalAnswerPane.styledDocument
             doc.remove(0, doc.length)
@@ -376,18 +417,6 @@ class ChatPanel(
         dialog.isVisible = true
     }
 
-    private fun handleIncoming(json: String) {
-        sessionController.handleMessage(json) { event ->
-            SwingUtilities.invokeLater {
-                if (sessionController.isStaleEvent(event.generation)) {
-                    logger.debug("[ChatPanel] Stale event ignored (gen=${event.generation})")
-                    return@invokeLater
-                }
-                renderEvent(event)
-            }
-        }
-    }
-
     private fun renderEvent(event: AgentEvent) {
         when (event) {
             is AgentEvent.FinalAnswer -> {
@@ -402,10 +431,25 @@ class ChatPanel(
                 if (event.generation > 0) {
                     timeline.addEvent(event)
                 }
+                val summary = RunSummary(
+                    runId = event.runId,
+                    sessionId = event.sessionId,
+                    mode = event.mode.toBackendMode(),
+                    model = event.modelConfigId ?: "default",
+                    userMessage = "",
+                    status = "RUNNING",
+                    startTime = System.currentTimeMillis(),
+                    endTime = 0L,
+                    generation = event.generation,
+                    toolCallCount = 0,
+                    fileChanges = emptyList()
+                )
+                runHistory.addRun(summary)
             }
 
             is AgentEvent.RunCompleted -> {
                 timeline.addEvent(event)
+                runHistory.updateRunStatus(event.runId, "COMPLETED", System.currentTimeMillis())
                 SwingUtilities.invokeLater {
                     cancelButton.isVisible = false
                     sendButton.isEnabled = true
@@ -414,6 +458,7 @@ class ChatPanel(
 
             is AgentEvent.RunFailed -> {
                 timeline.addEvent(event)
+                runHistory.updateRunStatus(event.runId, "FAILED", System.currentTimeMillis())
                 SwingUtilities.invokeLater {
                     cancelButton.isVisible = false
                     sendButton.isEnabled = true
@@ -422,6 +467,7 @@ class ChatPanel(
 
             is AgentEvent.RunCancelled -> {
                 timeline.addEvent(event)
+                runHistory.updateRunStatus(event.runId, "CANCELLED", System.currentTimeMillis())
                 SwingUtilities.invokeLater {
                     cancelButton.isVisible = false
                     sendButton.isEnabled = true
@@ -441,7 +487,8 @@ class ChatPanel(
             is AgentEvent.FileSearch,
             is AgentEvent.MCPToolCall,
             is AgentEvent.DiffCreated,
-            is AgentEvent.DiffApplied -> {
+            is AgentEvent.DiffApplied,
+            is AgentEvent.TokenUsage -> {
                 timeline.addEvent(event)
             }
         }

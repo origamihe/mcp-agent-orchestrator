@@ -16,7 +16,7 @@ dependencies {
 }
 
 intellij {
-    version.set("2023.3")
+    version.set("2024.3")
     type.set("IC")
     plugins.set(listOf(
         "com.intellij.java",
@@ -34,7 +34,7 @@ tasks {
         kotlinOptions.jvmTarget = "17"
     }
     patchPluginXml {
-        sinceBuild.set("233")
-        untilBuild.set("242.*")
+        sinceBuild.set("243")
+        untilBuild.set("251.*")
     }
 }

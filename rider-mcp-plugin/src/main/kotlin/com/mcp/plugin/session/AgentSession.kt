@@ -17,9 +17,9 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * 生命周期：与 Project 绑定，Project 关闭时销毁。
  */
-class AgentSession {
+class AgentSession(externalSessionId: String? = null) {
 
-    val sessionId: String = "rider-session-${UUID.randomUUID().toString().take(8)}"
+    val sessionId: String = externalSessionId ?: "rider-session-${UUID.randomUUID().toString().take(8)}"
 
     @Volatile
     var mode: AgentMode = AgentMode.CHAT
@@ -44,6 +44,27 @@ class AgentSession {
     var generation: Int = 0
         private set
 
+    @Volatile
+    var lastUserMessage: String? = null
+        private set
+
+    @Volatile
+    var runStartTime: Long = 0L
+        private set
+
+    val toolCallCount: Int get() = _toolCallCount.get()
+
+    val fileChanges: Set<String> get() = _fileChanges.toSet()
+
+    @Volatile
+    var totalPromptTokens: Int = 0
+
+    @Volatile
+    var totalCompletionTokens: Int = 0
+
+    private val _toolCallCount = AtomicInteger(0)
+    private val _fileChanges = ConcurrentLinkedQueue<String>()
+
     private val events = ConcurrentLinkedQueue<AgentEvent>()
     private val eventListeners = ConcurrentLinkedQueue<(AgentEvent) -> Unit>()
     private val stateListeners = ConcurrentLinkedQueue<(AgentState, AgentState) -> Unit>()
@@ -55,16 +76,23 @@ class AgentSession {
         this.currentRunId = runId
         this.mode = mode
         this.modelConfigId = modelConfigId
+        this.runStartTime = System.currentTimeMillis()
+        this._toolCallCount.set(0)
+        this._fileChanges.clear()
+        this.totalPromptTokens = 0
+        this.totalCompletionTokens = 0
         transitionAgentState(AgentState.CREATED)
         addEvent(AgentEvent.RunStarted(sessionId, runId, mode, modelConfigId, generation))
         transitionAgentState(AgentState.RUNNING)
         return runId
     }
 
-    fun completeRun(durationMs: Long = 0) {
-        val runId = currentRunId ?: return
-        addEvent(AgentEvent.RunCompleted(sessionId, runId, durationMs, generation))
-        currentRunId = null
+    fun completeRun(runId: String? = null, durationMs: Long = 0) {
+        val resolvedRunId = runId ?: currentRunId ?: return
+        addEvent(AgentEvent.RunCompleted(sessionId, resolvedRunId, durationMs, generation))
+        if (resolvedRunId == currentRunId) {
+            currentRunId = null
+        }
         transitionAgentState(AgentState.COMPLETED)
         transitionAgentState(AgentState.IDLE)
     }
@@ -92,10 +120,12 @@ class AgentSession {
     }
 
     fun addUserMessage(content: String) {
+        lastUserMessage = content
         addEvent(AgentEvent.UserMessage(sessionId, content, currentRunId, generation))
     }
 
     fun addToolCallStarted(capability: String, params: Map<String, Any?>) {
+        _toolCallCount.incrementAndGet()
         addEvent(AgentEvent.ToolCallStarted(sessionId, currentRunId, capability, params, generation))
     }
 
@@ -108,6 +138,7 @@ class AgentSession {
     }
 
     fun addFileRead(filePath: String, lines: Int = 0, bytes: Long = 0, durationMs: Long = 0) {
+        _fileChanges.add(filePath)
         addEvent(AgentEvent.FileRead(sessionId, currentRunId, filePath, lines, bytes, durationMs, generation))
     }
 

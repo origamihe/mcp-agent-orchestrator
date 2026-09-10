@@ -126,6 +126,7 @@ public class DesktopHostAdapter implements ChannelAdapter {
                 .channelType("desktop")
                 .senderId(payload.has("userId") ? payload.get("userId").asText() : "desktop-user")
                 .content(content)
+                .chatId(sessionId)
                 .chatType(ChannelMessage.ChatType.HOST)
                 .platformSessionId(sessionId)
                 .hostContext(hostContext)

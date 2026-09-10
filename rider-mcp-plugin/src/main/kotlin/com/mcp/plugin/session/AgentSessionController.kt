@@ -7,6 +7,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.mcp.plugin.McpPluginSettings
+import com.mcp.plugin.capability.ALL_CAPABILITIES
 import com.mcp.plugin.capability.CapabilityAdapter
 import com.mcp.plugin.event.IdeEventBus
 import com.mcp.plugin.event.OutgoingEnvelope
@@ -20,21 +21,22 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import javax.swing.SwingUtilities
 
 /**
- * Agent 会话控制器 — UI 与 Transport/Capability 之间的中间层。
+ * Agent 会话控制�?�?UI �?Transport/Capability 之间的中间层�?
  *
- * 职责：
+ * 职责�?
  * 1. startSession() / sendMessage() / cancelRun() / changeMode() / changeModel()
  * 2. 处理 Agent 事件，推送到 AgentSession
- * 3. 协调 Capability 执行（在后台线程）
- * 4. 模型列表获取（从 Backend REST API）
- * 5. 管理 cancel_run 协议与 Backend 通信
- * 6. 处理 WebSocket disconnect 时的 Run 状态
+ * 3. 协调 Capability 执行（在后台线程�?
+ * 4. 模型列表获取（从 Backend REST API�?
+ * 5. 管理 cancel_run 协议�?Backend 通信
+ * 6. 处理 WebSocket disconnect 时的 Run 状�?
  * 7. 过滤 stale events（generation 不匹配）
  *
- * UI 只负责 render() 和 user input。
+ * UI 只负�?render() �?user input�?
  */
 @Service(Service.Level.PROJECT)
 class AgentSessionController(private val project: Project) {
@@ -45,7 +47,7 @@ class AgentSessionController(private val project: Project) {
     private val eventBus: IdeEventBus? = project.getService(IdeEventBus::class.java)
     private val settings = ApplicationManager.getApplication().getService(McpPluginSettings::class.java) ?: McpPluginSettings()
 
-    val session = AgentSession()
+    val session = AgentSession(transport?.sessionId)
 
     private val resolvedWorkspaceId: String
         get() = eventBus?.workspaceId ?: "workspace-${project.name}"
@@ -56,8 +58,15 @@ class AgentSessionController(private val project: Project) {
         Thread(r, "agent-session-controller").apply { isDaemon = true }
     }
 
+    private val capabilityExecutor = Executors.newFixedThreadPool(2) { r ->
+        Thread(r, "agent-capability").apply { isDaemon = true }
+    }
+
     private val modelListListeners = mutableListOf<(List<ModelInfo>) -> Unit>()
     private val uiEventListeners = mutableListOf<(AgentEvent) -> Unit>()
+    private val connectionStateListeners = mutableListOf<(Boolean) -> Unit>()
+
+    var onDiffPreview: ((filePath: String, diff: String, isFullContent: Boolean) -> Boolean)? = null
 
     @Volatile
     private var availableModels: List<ModelInfo> = emptyList()
@@ -77,10 +86,15 @@ class AgentSessionController(private val project: Project) {
                     logger.info("[AgentSessionController] Reconnected, new generation=${session.generation}")
                 }
                 fetchModels()
+                sendHello()
             } else {
                 handleDisconnect()
             }
+
+            connectionStateListeners.forEach { it(connected) }
         }
+
+        transport?.onMessage { json -> handleMessageInternal(json) }
     }
 
     fun startSession() {
@@ -89,9 +103,22 @@ class AgentSessionController(private val project: Project) {
     }
 
     private fun sendChatInternal(text: String, mode: AgentMode, modelConfigId: String?, onRunStarted: ((String) -> Unit)? = null): String {
-        val runId = session.startRun(mode, modelConfigId)
+        val resolvedModel = modelConfigId ?: availableModels.firstOrNull()?.configId
+        if (resolvedModel == null) {
+            logger.warn("[AgentSessionController] No model available, cannot send chat")
+            pushUiEvent(AgentEvent.Thinking(session.sessionId, null, "No model available. Please check backend configuration.", activeGeneration))
+            return ""
+        }
+        if (modelConfigId == null) {
+            session.modelConfigId = resolvedModel
+            settings.agentModel = resolvedModel
+            logger.info("[AgentSessionController] Auto-resolved model to: $resolvedModel")
+        }
+        val runId = session.startRun(mode, resolvedModel)
         val currentGen = activeGeneration
         session.addUserMessage(text)
+
+        PluginLogger.infoContext("AgentSession", "Chat sent: mode=$mode model=$resolvedModel", session.sessionId, runId, currentGen)
 
         pushUiEvent(AgentEvent.UserMessage(session.sessionId, text, runId, currentGen))
         pushUiEvent(AgentEvent.RunStarted(session.sessionId, runId, mode, modelConfigId, currentGen))
@@ -110,7 +137,8 @@ class AgentSessionController(private val project: Project) {
                 content = text,
                 hostContext = hostContext,
                 mode = mode.toBackendMode(),
-                model = modelConfigId
+                model = resolvedModel,
+                generation = currentGen
             )
             t.send(envelope)
         }
@@ -139,9 +167,11 @@ class AgentSessionController(private val project: Project) {
                 type = "cancel_run",
                 sessionId = t.sessionId,
                 workspaceId = resolvedWorkspaceId,
-                runId = runId
+                runId = runId,
+                generation = activeGeneration
             ))
             logger.info("[AgentSessionController] Sent cancel_run for runId=$runId")
+            PluginLogger.warnContext("AgentSession", "Cancel run requested", session.sessionId, runId, activeGeneration)
         } else {
             session.confirmCancelled()
             logger.info("[AgentSessionController] Transport disconnected, confirmed cancelled locally for runId=$runId")
@@ -149,18 +179,33 @@ class AgentSessionController(private val project: Project) {
     }
 
     /**
-     * 处理 WebSocket 断开连接。
-     * 如果有活跃的 Run，自动取消它。
+     * 处理 WebSocket 断开连接�?
+     * 如果有活跃的 Run，自动取消它�?
      */
     private fun handleDisconnect() {
         val runId = session.currentRunId
         if (runId != null && session.agentState == AgentState.RUNNING) {
             logger.warn("[AgentSessionController] Disconnect during active run $runId, auto-cancelling")
-            PluginLogger.warn("AgentSession", "Disconnect during active run $runId, auto-cancelling")
+            PluginLogger.warnContext("AgentSession", "Disconnect during active run $runId, auto-cancelling", session.sessionId, runId, activeGeneration)
             session.cancelRun()
             session.confirmCancelled()
         }
         session.connectionState = ConnectionState.DISCONNECTED
+    }
+
+    private fun sendHello() {
+        val t = transport ?: return
+        t.send(OutgoingEnvelope(
+            type = "hello",
+            sessionId = t.sessionId,
+            workspaceId = resolvedWorkspaceId,
+            capabilities = ALL_CAPABILITIES.map {
+                mapOf("name" to it.name, "description" to it.description, "params" to it.params)
+            },
+            generation = activeGeneration
+        ))
+        logger.info("[AgentSessionController] Hello sent, sessionId=${t.sessionId}")
+        PluginLogger.infoContext("AgentSession", "Hello sent with ${ALL_CAPABILITIES.size} capabilities", session.sessionId, null, activeGeneration)
     }
 
     /**
@@ -173,6 +218,7 @@ class AgentSessionController(private val project: Project) {
     fun changeMode(mode: AgentMode) {
         session.mode = mode
         settings.agentMode = mode.name
+        PluginLogger.infoContext("AgentSession", "Mode changed to $mode", session.sessionId, session.currentRunId, activeGeneration)
     }
 
     fun changeModel(modelConfigId: String?) {
@@ -180,20 +226,21 @@ class AgentSessionController(private val project: Project) {
         if (modelConfigId != null) {
             settings.agentModel = modelConfigId
         }
+        PluginLogger.infoContext("AgentSession", "Model changed to $modelConfigId", session.sessionId, session.currentRunId, activeGeneration)
     }
 
     /**
-     * 处理从 Transport 收到的消息。
-     * 在后台线程执行 Capability，通过回调将结果推送回 UI。
+     * 处理�?Transport 收到的消息�?
+     * 在后台线程执�?Capability，通过回调将结果推送回 UI�?
      *
-     * 事件来源保证：
-     * - capability_call → CapabilityAdapter.execute() → capability_result
+     * 事件来源保证�?
+     * - capability_call �?CapabilityAdapter.execute() �?capability_result
      *   只有真实执行才会产生 ToolCallStarted/Completed/Failed 事件
-     * - agent_event → Backend 的 Agent 内部事件（MCP Tool Call 等）
-     * - reply → Agent 最终回复
+     * - agent_event �?Backend �?Agent 内部事件（MCP Tool Call 等）
+     * - reply �?Agent 最终回�?
      *
-     * Stale event 过滤：
-     * - 如果事件 generation 与当前 activeGeneration 不匹配，丢弃该事件
+     * Stale event 过滤�?
+     * - 如果事件 generation 与当�?activeGeneration 不匹配，丢弃该事�?
      * - generation=0 的事件（首次连接前的）总是允许通过
      */
     fun handleMessage(json: String, onUiUpdate: (AgentEvent) -> Unit) {
@@ -218,79 +265,124 @@ class AgentSessionController(private val project: Project) {
                             onUiUpdate(AgentEvent.ToolCallStarted(sessionId, runId, capability, params))
                         }
 
-                        val result = capabilityAdapter.execute(capability, params)
-                        val durationMs = System.currentTimeMillis() - startTime
-
-                        val success = result["error"] == null
-                        val metadata = mutableMapOf<String, Any?>(
-                            "durationMs" to durationMs
-                        )
-
-                        when (capability) {
-                            "read_file" -> {
-                                val filePath = params["filePath"] as? String ?: ""
-                                val lines = (result["content"] as? String)?.lines()?.size ?: 0
-                                metadata["filePath"] = filePath
-                                metadata["lines"] = lines
-                                session.addFileRead(filePath, lines, 0, durationMs)
-
-                                SwingUtilities.invokeLater {
-                                    onUiUpdate(AgentEvent.FileRead(sessionId, runId, filePath, lines, 0, durationMs))
-                                }
-                            }
-                            "search_files" -> {
-                                val pattern = params["pattern"] as? String ?: ""
-                                @Suppress("UNCHECKED_CAST")
-                                val matches = (result["matches"] as? List<String>) ?: emptyList()
-                                session.addFileSearch(pattern, matches.size)
-
-                                SwingUtilities.invokeLater {
-                                    onUiUpdate(AgentEvent.FileSearch(sessionId, runId, pattern, matches.size))
-                                }
-                            }
+                        val diffApproved = when (capability) {
                             "apply_diff" -> {
                                 val filePath = params["filePath"] as? String ?: ""
-                                session.addEvent(AgentEvent.DiffApplied(sessionId, runId, filePath, success))
-                                SwingUtilities.invokeLater {
-                                    onUiUpdate(AgentEvent.DiffApplied(sessionId, runId, filePath, success))
+                                val diff = params["diff"] as? String ?: ""
+                                val callback = onDiffPreview
+                                if (callback != null) {
+                                    callback(filePath, diff, false)
+                                } else {
+                                    true
                                 }
                             }
                             "apply_full_content" -> {
                                 val filePath = params["filePath"] as? String ?: ""
-                                session.addEvent(AgentEvent.DiffCreated(sessionId, runId, filePath))
-                                SwingUtilities.invokeLater {
-                                    onUiUpdate(AgentEvent.DiffCreated(sessionId, runId, filePath))
+                                val content = params["content"] as? String ?: ""
+                                val callback = onDiffPreview
+                                if (callback != null) {
+                                    callback(filePath, content, true)
+                                } else {
+                                    true
                                 }
                             }
+                            else -> true
                         }
 
-                        if (success) {
-                            session.addToolCallCompleted(capability, true, metadata)
+                        if (!diffApproved) {
+                            session.addToolCallFailed(capability, "User rejected the change")
                             SwingUtilities.invokeLater {
-                                onUiUpdate(AgentEvent.ToolCallCompleted(sessionId, runId, capability, true, metadata))
+                                onUiUpdate(AgentEvent.ToolCallFailed(sessionId, runId, capability, "User rejected the change"))
                             }
-                        } else {
-                            val error = result["error"] as? String ?: "Unknown error"
-                            logger.error("[AgentSessionController] Capability '$capability' failed: $error")
-                            session.addToolCallFailed(capability, error)
-                            SwingUtilities.invokeLater {
-                                onUiUpdate(AgentEvent.ToolCallFailed(sessionId, runId, capability, error))
-                            }
+
+                            val tReject = transport ?: return@submit
+                            tReject.send(OutgoingEnvelope(
+                                type = "capability_result",
+                                sessionId = tReject.sessionId,
+                                callId = callId,
+                                capability = capability,
+                                result = mapOf("error" to "User rejected the change", "filePath" to (params["filePath"] ?: "")),
+                                generation = currentGen
+                            ))
+                            return@submit
                         }
 
-                        val t = transport ?: return@submit
-                        t.send(OutgoingEnvelope(
-                            type = "capability_result",
-                            sessionId = t.sessionId,
-                            callId = callId,
-                            capability = capability,
-                            result = result
-                        ))
+                        capabilityExecutor.submit capability@{
+                            val result = capabilityAdapter.execute(capability, params)
+                            val durationMs = System.currentTimeMillis() - startTime
+
+                            val success = result["error"] == null
+                            val metadata = mutableMapOf<String, Any?>(
+                                "durationMs" to durationMs
+                            )
+
+                            when (capability) {
+                                "read_file" -> {
+                                    val filePath = params["filePath"] as? String ?: ""
+                                    val lines = (result["content"] as? String)?.lines()?.size ?: 0
+                                    metadata["filePath"] = filePath
+                                    metadata["lines"] = lines
+                                    session.addFileRead(filePath, lines, 0, durationMs)
+
+                                    SwingUtilities.invokeLater {
+                                        onUiUpdate(AgentEvent.FileRead(sessionId, runId, filePath, lines, 0, durationMs))
+                                    }
+                                }
+                                "search_files" -> {
+                                    val pattern = params["pattern"] as? String ?: ""
+                                    @Suppress("UNCHECKED_CAST")
+                                    val matches = (result["matches"] as? List<String>) ?: emptyList()
+                                    session.addFileSearch(pattern, matches.size)
+
+                                    SwingUtilities.invokeLater {
+                                        onUiUpdate(AgentEvent.FileSearch(sessionId, runId, pattern, matches.size))
+                                    }
+                                }
+                                "apply_diff" -> {
+                                    val filePath = params["filePath"] as? String ?: ""
+                                    session.addEvent(AgentEvent.DiffApplied(sessionId, runId, filePath, success))
+                                    SwingUtilities.invokeLater {
+                                        onUiUpdate(AgentEvent.DiffApplied(sessionId, runId, filePath, success))
+                                    }
+                                }
+                                "apply_full_content" -> {
+                                    val filePath = params["filePath"] as? String ?: ""
+                                    session.addEvent(AgentEvent.DiffCreated(sessionId, runId, filePath))
+                                    SwingUtilities.invokeLater {
+                                        onUiUpdate(AgentEvent.DiffCreated(sessionId, runId, filePath))
+                                    }
+                                }
+                            }
+
+                            if (success) {
+                                session.addToolCallCompleted(capability, true, metadata)
+                                SwingUtilities.invokeLater {
+                                    onUiUpdate(AgentEvent.ToolCallCompleted(sessionId, runId, capability, true, metadata))
+                                }
+                            } else {
+                                val error = result["error"] as? String ?: "Unknown error"
+                                logger.error("[AgentSessionController] Capability '$capability' failed: $error")
+                                session.addToolCallFailed(capability, error)
+                                SwingUtilities.invokeLater {
+                                    onUiUpdate(AgentEvent.ToolCallFailed(sessionId, runId, capability, error))
+                                }
+                            }
+
+                            val t = transport ?: return@capability
+                            t.send(OutgoingEnvelope(
+                                type = "capability_result",
+                                sessionId = t.sessionId,
+                                callId = callId,
+                                capability = capability,
+                                result = result,
+                                generation = currentGen
+                            ))
+                        }
                     }
 
                     "reply" -> {
                         val content = envelope.content ?: ""
-                        val replyRunId = runId ?: "unknown"
+                        val replyRunId = envelope.runId ?: runId ?: "unknown"
                         val replyGen = envelope.generation
 
                         if (isStaleEvent(replyGen)) {
@@ -298,8 +390,27 @@ class AgentSessionController(private val project: Project) {
                             return@submit
                         }
 
+                        if (replyRunId != runId) {
+                            logger.warn("[AgentSessionController] Reply runId mismatch: envelope=$replyRunId, current=$runId, using envelope.runId")
+                        }
+
                         session.addFinalAnswer(content, replyRunId)
-                        session.completeRun()
+                        session.completeRun(replyRunId)
+
+                        val estimatedTokens = estimateTokens(content)
+                        session.totalCompletionTokens = estimatedTokens
+                        session.totalPromptTokens = estimateTokens(envelope.params?.get("prompt") as? String ?: "")
+
+                        if (estimatedTokens > 0) {
+                            onUiUpdate(AgentEvent.TokenUsage(
+                                sessionId = sessionId,
+                                runId = replyRunId,
+                                promptTokens = session.totalPromptTokens,
+                                completionTokens = session.totalCompletionTokens,
+                                totalTokens = session.totalPromptTokens + session.totalCompletionTokens,
+                                generation = currentGen
+                            ))
+                        }
 
                         SwingUtilities.invokeLater {
                             onUiUpdate(AgentEvent.FinalAnswer(sessionId, replyRunId, content, currentGen))
@@ -350,9 +461,55 @@ class AgentSessionController(private val project: Project) {
                                 }
                             }
                             "EXECUTION_COMPLETED" -> {
-                                session.completeRun()
+                                session.completeRun(eventRunId)
                                 SwingUtilities.invokeLater {
                                     onUiUpdate(AgentEvent.RunCompleted(sessionId, eventRunId ?: "unknown", 0, currentGen))
+                                }
+                            }
+                            "LLM_CALL" -> {
+                                val modelName = payload?.get("model") as? String ?: "unknown"
+                                val promptLen = (payload?.get("promptLength") as? Number)?.toInt() ?: 0
+                                session.addEvent(AgentEvent.Thinking(sessionId, eventRunId, "LLM call: $modelName (${promptLen} chars)", currentGen))
+                                SwingUtilities.invokeLater {
+                                    onUiUpdate(AgentEvent.Thinking(sessionId, eventRunId, "LLM call: $modelName (${promptLen} chars)", currentGen))
+                                }
+                            }
+                            "LLM_RESPONSE" -> {
+                                val modelName = payload?.get("model") as? String ?: "unknown"
+                                val responseLen = (payload?.get("responseLength") as? Number)?.toInt() ?: 0
+                                val tokenCount = (payload?.get("tokenCount") as? Number)?.toInt()
+                                session.addEvent(AgentEvent.Thinking(sessionId, eventRunId, "LLM response: $modelName (${responseLen} chars)", currentGen))
+                                SwingUtilities.invokeLater {
+                                    onUiUpdate(AgentEvent.Thinking(sessionId, eventRunId, "LLM response: $modelName (${responseLen} chars)", currentGen))
+                                }
+                                if (tokenCount != null && tokenCount > 0) {
+                                    session.totalCompletionTokens += tokenCount
+                                    onUiUpdate(AgentEvent.TokenUsage(
+                                        sessionId = sessionId,
+                                        runId = eventRunId,
+                                        promptTokens = session.totalPromptTokens,
+                                        completionTokens = session.totalCompletionTokens,
+                                        totalTokens = session.totalPromptTokens + session.totalCompletionTokens,
+                                        generation = currentGen
+                                    ))
+                                }
+                            }
+                            "AGENT_ITERATION" -> {
+                                val iteration = (payload?.get("iteration") as? Number)?.toInt() ?: 0
+                                val action = payload?.get("action") as? String ?: ""
+                                val msg = if (action.isNotBlank()) "Iteration $iteration: $action" else "Iteration $iteration"
+                                session.addEvent(AgentEvent.Thinking(sessionId, eventRunId, msg, currentGen))
+                                SwingUtilities.invokeLater {
+                                    onUiUpdate(AgentEvent.Thinking(sessionId, eventRunId, msg, currentGen))
+                                }
+                            }
+                            "FINAL_RESPONSE" -> {
+                                val content = payload?.get("content") as? String ?: envelope.content ?: ""
+                                if (content.isNotBlank()) {
+                                    session.addFinalAnswer(content, eventRunId ?: "unknown")
+                                    SwingUtilities.invokeLater {
+                                        onUiUpdate(AgentEvent.FinalAnswer(sessionId, eventRunId ?: "unknown", content, currentGen))
+                                    }
                                 }
                             }
                             else -> {
@@ -372,23 +529,28 @@ class AgentSessionController(private val project: Project) {
                 }
             } catch (e: Exception) {
                 logger.error("[AgentSessionController] Error handling message: ${e.message}")
-                PluginLogger.error("AgentSession", "Error handling message: ${e.message}", e)
+                PluginLogger.errorContext("AgentSession", "Error handling message: ${e.message}", session.sessionId, session.currentRunId, activeGeneration, e)
             }
         }
+    }
+
+    private fun handleMessageInternal(json: String) {
+        handleMessage(json) { event -> pushUiEvent(event) }
     }
 
     fun getEditorContext(): Map<String, Any?> {
         return capabilityAdapter.execute("get_editor_state", emptyMap())
     }
 
+    private fun estimateTokens(text: String?): Int {
+        if (text.isNullOrEmpty()) return 0
+        return text.length / 4
+    }
+
     fun fetchModels() {
         backgroundExecutor.submit {
             try {
-                val baseUrl = settings.gatewayUrl
-                    .replace("ws://", "http://")
-                    .replace("wss://", "https://")
-                    .replace("/ws/host", "")
-                    .trimEnd('/')
+                val baseUrl = settings.gatewayHttpUrl.trimEnd('/')
 
                 val models = mutableListOf<ModelInfo>()
 
@@ -432,6 +594,25 @@ class AgentSessionController(private val project: Project) {
                 SwingUtilities.invokeLater {
                     modelListListeners.forEach { it(models) }
                 }
+
+                if (models.isNotEmpty() && session.modelConfigId == null) {
+                    val persistedModel = settings.agentModel
+                    val matchedModel = if (persistedModel.isNotBlank()) {
+                        models.firstOrNull { it.configId == persistedModel }
+                    } else null
+
+                    val defaultModel = matchedModel?.configId ?: models.firstOrNull()?.configId
+                    if (defaultModel != null) {
+                        session.modelConfigId = defaultModel
+                        settings.agentModel = defaultModel
+                        if (matchedModel != null) {
+                            logger.info("[AgentSessionController] Restored persisted model: $defaultModel")
+                        } else {
+                            logger.info("[AgentSessionController] Auto-selected default model: $defaultModel")
+                        }
+                    }
+                }
+
                 logger.info("[AgentSessionController] Total available models: ${models.size}")
             } catch (e: Exception) {
                 logger.warn("[AgentSessionController] Failed to fetch models: ${e.message}")
@@ -452,6 +633,10 @@ class AgentSessionController(private val project: Project) {
         uiEventListeners.add(listener)
     }
 
+    fun onConnectionStateChange(listener: (Boolean) -> Unit) {
+        connectionStateListeners.add(listener)
+    }
+
     private fun pushUiEvent(event: AgentEvent) {
         SwingUtilities.invokeLater {
             uiEventListeners.forEach { it(event) }
@@ -465,14 +650,17 @@ class AgentSessionController(private val project: Project) {
         activeGeneration = session.generation
         pushUiEvent(AgentEvent.Thinking(session.sessionId, null, "New session started", activeGeneration))
         logger.info("[AgentSessionController] New session started, generation=${session.generation} (was $currentGen)")
+        PluginLogger.infoContext("AgentSession", "New session started (gen=${session.generation}, was $currentGen)", session.sessionId, null, activeGeneration)
     }
 
     fun getSessionEventHistory(): List<AgentEvent> = session.getEvents()
 
     fun dispose() {
         backgroundExecutor.shutdownNow()
+        capabilityExecutor.shutdownNow()
         modelListListeners.clear()
         uiEventListeners.clear()
+        connectionStateListeners.clear()
         session.clear()
     }
 }

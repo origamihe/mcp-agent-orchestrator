@@ -67,7 +67,11 @@ public class AgentTaskScheduler {
      * 返回 true 表示立即执行，false 表示已入队等待。
      */
     public ScheduleResult submit(AgentTask task) {
-        String groupId = task.getGroupId();
+        String groupId = task.getGroupId() != null ? task.getGroupId() : task.getSessionId();
+        if (groupId == null) {
+            groupId = "default";
+            log.warn("[TaskScheduler] groupId is null, using 'default' as fallback. taskId={}", task.getTaskId());
+        }
         ConcurrentLinkedDeque<AgentTask> queue = groupQueues.computeIfAbsent(
                 groupId, k -> new ConcurrentLinkedDeque<>());
 

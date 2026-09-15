@@ -22,6 +22,7 @@ import com.mcp.common.identity.UserProfileService;
 import com.mcp.common.identity.UserProfile;
 import com.mcp.common.identity.UserRole;
 import com.mcp.common.identity.GroupContext;
+import com.mcp.common.channel.HostContext;
 import com.mcp.core.context.BuildContext;
 import com.mcp.core.context.PromptPolicy;
 import com.mcp.engine.execution.ExecutionPlan;
@@ -482,7 +483,11 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             }
 
             if (paths.isEmpty()) {
-                return buildFollowUpFileContext(request, workspace, sessionId);
+                String followUp = buildFollowUpFileContext(request, workspace, sessionId);
+                if (!followUp.isEmpty()) {
+                    return followUp;
+                }
+                return tryLoadLastActiveFile(workspace, sessionId);
             }
 
             List<String> filenames = new ArrayList<>();
@@ -871,6 +876,44 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
         }
         log.debug("[Orchestrator] Follow-up auto-reload: all {} opened files", workspace.getOpenedFiles().size());
         return sb.toString();
+    }
+
+    private String tryLoadLastActiveFile(Workspace workspace, String sessionId) {
+        if (workspace == null) {
+            return "";
+        }
+        String lastActiveFile = workspace.getLastActiveFile();
+        if (lastActiveFile == null) {
+            return "";
+        }
+        try {
+            Path p = Path.of(lastActiveFile).toAbsolutePath().normalize();
+            if (Files.isRegularFile(p) && Files.isReadable(p)) {
+                String content = Files.readString(p);
+                StringBuilder sb = new StringBuilder();
+                sb.append("【IDE 当前文件内容】\n");
+                sb.append("用户在 IDE 中正在查看此文件：\n\n");
+                sb.append("--- 文件: ").append(lastActiveFile).append(" ---\n");
+                sb.append(content).append("\n\n");
+                log.debug("[Orchestrator] Auto-loaded IDE current file: {} ({} chars)", lastActiveFile, content.length());
+                saveOpenedFileToWorkspace(workspace, lastActiveFile, content, p, sessionId);
+                return sb.toString();
+            }
+        } catch (IOException e) {
+            log.warn("[Orchestrator] Failed to load IDE current file: {}", lastActiveFile, e);
+        }
+        return "";
+    }
+
+    private String buildIdeHostContextPrompt(RequestContext ctx) {
+        if (ctx == null || ctx.getHostContext() == null) {
+            return "";
+        }
+        HostContext hostCtx = ctx.getHostContext();
+        if (hostCtx.isEmpty()) {
+            return "";
+        }
+        return hostCtx.buildHostContextPrompt();
     }
 
     @Override
@@ -1878,6 +1921,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     .baseSystemPrompt(resolvedSystemPrompt)
                     .personaPrompt(personaMemoryStore.getPersonaMemoryText())
                     .userMessage(request)
+                    .hostContextPrompt(buildIdeHostContextPrompt(ctx))
                     .userProfile(ctx.getUserProfile())
                     .groupContext(ctx.getGroupContext())
                     .state(ctx.getSessionState())
@@ -1977,6 +2021,7 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
                     .baseSystemPrompt(resolvedSystemPrompt)
                     .personaPrompt(personaMemoryStore.getPersonaMemoryText())
                     .userMessage(request)
+                    .hostContextPrompt(buildIdeHostContextPrompt(ctx))
                     .userProfile(ctx.getUserProfile())
                     .groupContext(ctx.getGroupContext())
                     .state(ctx.getSessionState())
@@ -2106,6 +2151,10 @@ public class DefaultAgentOrchestrator implements AgentOrchestrator {
             }
 
             String hostContext = !artifactContext.isEmpty() ? artifactContext : fileContext;
+            String ideHostPrompt = buildIdeHostContextPrompt(ctx);
+            if (!ideHostPrompt.isEmpty()) {
+                hostContext = hostContext.isEmpty() ? ideHostPrompt : hostContext + "\n\n" + ideHostPrompt;
+            }
             BuildContext buildCtx = BuildContext.builder()
                     .baseSystemPrompt(resolvedSystemPrompt)
                     .personaPrompt(personaMemoryStore.getPersonaMemoryText())

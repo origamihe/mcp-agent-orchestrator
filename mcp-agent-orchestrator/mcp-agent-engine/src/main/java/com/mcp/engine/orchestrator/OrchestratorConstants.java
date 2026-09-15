@@ -41,7 +41,7 @@ public final class OrchestratorConstants {
             Pattern.compile("[^\\s.,;:!?，。；：！？\"'<>`|]+\\.\\w{1,10}", Pattern.CASE_INSENSITIVE);
 
     public static final Pattern FOLLOW_UP_REFERENCE_PATTERN =
-            Pattern.compile("(这个|那个|它|其|该|上次|刚刚|刚才).*(?:文件|prompt|代码|文档|内容)",
+            Pattern.compile("(这个|那个|它|其|该|上次|刚刚|刚才|当前).*(?:文件|prompt|代码|文档|内容)",
                     Pattern.CASE_INSENSITIVE);
 
     /** 文本文件扩展名（用于文件预加载） */

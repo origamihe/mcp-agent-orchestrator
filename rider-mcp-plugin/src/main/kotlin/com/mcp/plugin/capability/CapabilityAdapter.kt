@@ -14,6 +14,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiFile
 import com.mcp.plugin.diff.DiffApplier
@@ -148,14 +149,27 @@ class CapabilityAdapter(private val project: Project) {
             val editor = FileEditorManager.getInstance(project).selectedTextEditor
             val currentFile = FileEditorManager.getInstance(project).selectedFiles.firstOrNull()
 
+            val selectedCode = editor?.selectionModel?.selectedText?.takeIf { s -> !s.isNullOrBlank() }
+
+            val fileContent = currentFile?.let { file ->
+                try {
+                    val content = VfsUtilCore.loadText(file)
+                    if (content.length <= 50000) content else content.take(50000) + "\n... (内容已截断，共 ${content.length} 字符)"
+                } catch (e: Exception) {
+                    logger.warn("[CapabilityAdapter] Failed to read file content: ${e.message}")
+                    null
+                }
+            }
+
             mapOf(
                 "currentFilePath" to (currentFile?.path),
+                "currentFileContent" to fileContent,
                 "cursorLine" to (editor?.let { editor.document.getLineNumber(editor.caretModel.primaryCaret.offset) + 1 } ?: 0),
                 "cursorColumn" to (editor?.let {
                     val caret = it.caretModel.primaryCaret
                     caret.offset - it.document.getLineStartOffset(it.document.getLineNumber(caret.offset)) + 1
                 } ?: 0),
-                "selectedCode" to (editor?.selectionModel?.selectedText?.takeIf { s -> !s.isNullOrBlank() }),
+                "selectedCode" to selectedCode,
                 "language" to (currentFile?.let { LanguageDetector.detect(it) }),
                 "openFiles" to FileEditorManager.getInstance(project).openFiles.map { it.path }
             )

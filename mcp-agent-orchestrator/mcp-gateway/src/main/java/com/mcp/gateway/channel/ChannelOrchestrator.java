@@ -226,6 +226,7 @@ public class ChannelOrchestrator {
                 .workspace(workspace)
                 .userMessage(userMessage)
                 .systemPrompt(systemPrompt)
+                .hostContext(msg.getHostContext())
                 .threadId(agentTask != null ? agentTask.getThreadId() : null)
                 .botUserId(adapter.getBotUserId())
                 .build();

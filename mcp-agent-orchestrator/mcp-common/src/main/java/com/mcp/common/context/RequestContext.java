@@ -3,6 +3,7 @@ package com.mcp.common.context;
 import com.mcp.common.identity.GroupContext;
 import com.mcp.common.identity.MemoryIdentity;
 import com.mcp.common.identity.UserProfile;
+import com.mcp.common.channel.HostContext;
 import com.mcp.common.channel.SessionState;
 import com.mcp.common.channel.WorkingContext;
 import com.mcp.common.workspace.Workspace;
@@ -55,4 +56,7 @@ public class RequestContext {
 
     /** Bot 在平台上的用户 ID（如 QQ 号），用于过滤群聊上下文中 Agent 自己的消息 */
     private final String botUserId;
+
+    /** Host 上下文 — IDE/Desktop 等客户端感知的环境状态（当前文件、光标位置、选中代码等） */
+    private final HostContext hostContext;
 }
